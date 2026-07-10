@@ -1,0 +1,199 @@
+// Personal finance dashboard, backed by SQLite.
+// Data is ingested from the Akahu API by `pnpm db:sync` (scripts/ingest.ts).
+//
+// Akahu ids are used as primary keys so that re-running a sync is idempotent.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// A connected financial account, mirrored from Akahu's `/accounts`.
+model Account {
+  /// Akahu account id, e.g. `acc_...`
+  id               String  @id
+  name             String
+  /// ACTIVE | INACTIVE
+  status           String
+  /// CHECKING | SAVINGS | CREDITCARD | LOAN | KIWISAVER | ...
+  type             String
+  formattedAccount String?
+
+  /// The institution the account is held at, flattened from `connection`.
+  connectionId   String
+  connectionName String
+
+  /// Latest balance, flattened from `balance`. Absent for some account types.
+  currency         String?
+  balanceCurrent   Float?
+  balanceAvailable Float?
+  balanceLimit     Float?
+  overdrawn        Boolean?
+
+  /// When Akahu last refreshed the account, distinct from when we last synced it.
+  refreshedAt DateTime?
+  syncedAt    DateTime  @updatedAt
+
+  transactions Transaction[]
+  balances     BalanceSnapshot[]
+
+  @@index([status])
+}
+
+/// A settled transaction, mirrored from Akahu's `/transactions`.
+/// Enriched fields (merchant, category, meta) are only present on enriched
+/// transactions, so they are all nullable.
+model Transaction {
+  /// Akahu transaction id, e.g. `trans_...`
+  id        String  @id
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  connectionId String
+  date         DateTime
+  description  String
+  /// Negative for money out, positive for money in.
+  amount       Float
+  /// Account balance after this transaction, when the institution reports it.
+  balance      Float?
+  /// DEBIT | CREDIT | TRANSFER | EFTPOS | FEE | ...
+  type         String
+  hash         String?
+
+  merchantId    String?
+  merchantName  String?
+  categoryId    String?
+  categoryName  String?
+  /// Akahu returns several category grouping schemes; we keep the
+  /// `personal_finance` group name, which is the one useful for budgeting.
+  categoryGroup String?
+
+  particulars  String?
+  code         String?
+  reference    String?
+  otherAccount String?
+  cardSuffix   String?
+
+  /// Timestamps as reported by Akahu, not by us.
+  createdAt DateTime?
+  updatedAt DateTime?
+  syncedAt  DateTime  @default(now())
+
+  // Derived by `pnpm db:classify`, never by the Akahu ingest. Recomputed from
+  // scratch on every run, so improving a rule fixes the whole history.
+
+  /// INCOME | EXPENSE | INTERNAL | REFUND | UNCATEGORIZED
+  flow          String?
+  /// override | pair | rule | merchant | default.
+  /// `merchant` — an inflow naming a business we pay elsewhere, so: a refund.
+  /// `default` — the bucket came from the sign of the amount alone: the money is
+  /// real and counted, but which bucket it belongs to was inferred. Those rows
+  /// are the review queue, and they set the width of every net figure's band.
+  flowSource    String?
+  /// Shared by both legs of a matched internal transfer.
+  transferId    String?
+  /// Only set on INCOME. Ours, not Akahu's: NZFCC assigns `personal_finance`
+  /// groups to spending categories only, so inflows arrive uncategorised.
+  incomeCategory String?
+
+  override TransactionOverride?
+
+  @@index([accountId, date])
+  @@index([date])
+  @@index([categoryGroup])
+  @@index([merchantName])
+  @@index([flow, date])
+  @@index([flowSource])
+  @@index([transferId])
+}
+
+/// A human correction to the classifier. Always wins, and is never rewritten by
+/// `pnpm db:classify` — this is the only place a person's judgement is stored,
+/// so it is the only thing in the derived pipeline that must not be regenerable.
+model TransactionOverride {
+  transactionId String      @id
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  /// INCOME | EXPENSE | INTERNAL
+  flow      String
+  note      String?
+  createdAt DateTime @default(now())
+}
+
+/// A user-editable classification rule.
+///
+/// These live in the database rather than in the repository because every one of
+/// them is personal: they name your employer, your banks, and you. The database
+/// is gitignored; the source tree is not. `classify.rules.example.json` shows the
+/// shape, and `pnpm db:rules <file>` imports one.
+model ClassificationRule {
+  id Int @id @default(autoincrement())
+
+  /// internal | refund | income
+  kind String
+  /// Case-insensitive regular expression, matched against `Transaction.description`.
+  /// Validated at import: a pattern that does not compile is rejected there rather
+  /// than thrown from the middle of a classification run.
+  pattern String
+  /// Required when `kind` is `income`. The bucket this payer's money lands in.
+  incomeCategory String?
+
+  /// Lower runs first, so a specific rule can pre-empt a general one.
+  priority Int     @default(0)
+  enabled  Boolean @default(true)
+  note     String?
+
+  createdAt DateTime @default(now())
+
+  @@unique([kind, pattern])
+  @@index([kind, enabled, priority])
+}
+
+/// Point-in-time balance, appended on each sync so the dashboard can chart
+/// net worth over time. Akahu only ever exposes the *current* balance, so this
+/// history only exists because we record it.
+model BalanceSnapshot {
+  id        Int     @id @default(autoincrement())
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  currency  String?
+  current   Float
+  available Float?
+  limit     Float?
+
+  capturedAt DateTime @default(now())
+
+  @@unique([accountId, capturedAt])
+  @@index([accountId, capturedAt])
+}
+
+/// Single-row table tracking incremental transaction sync progress.
+model SyncState {
+  id String @id @default("singleton")
+
+  /// High-water mark: the `date` of the newest transaction we have stored.
+  /// The next sync starts slightly before this to catch late-settling rows.
+  lastTransactionDate DateTime?
+  updatedAt           DateTime  @updatedAt
+}
+
+/// Audit log of ingest runs, so a silently failing cron is visible.
+model SyncRun {
+  id         Int       @id @default(autoincrement())
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  /// running | success | failed
+  status     String    @default("running")
+
+  accountsSynced     Int @default(0)
+  transactionsSynced Int @default(0)
+
+  error String?
+
+  @@index([startedAt])
+}

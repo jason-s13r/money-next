@@ -1,0 +1,87 @@
+@import "tailwindcss";
+
+:root {
+  --background: #ffffff;
+  --foreground: #171717;
+
+  /* Data-visualisation tokens. Validated against this app's real surfaces
+     (#ffffff light, #0a0a0a dark) with the dataviz palette validator: all four
+     checks pass in both modes. Change a value and re-run it. */
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --viz-series: #2a78d6;
+  --viz-track: #cde2fb;
+  --viz-grid: #e1e0d9;
+  --viz-axis: #c3c2b7;
+  --status-good: #0ca30c;
+  --status-warning: #fab219;
+  --status-critical: #d03b3b;
+
+  /* Categorical slots, in fixed order. The ordering is the colourblind-safety
+     mechanism, not cosmetic — never cycle past slot 8, never reassign by rank.
+     Three light slots sit below 3:1 on white, so every chart using them ships a
+     labelled legend and a table view. */
+  --viz-1: #2a78d6;
+  --viz-2: #1baf7a;
+  --viz-3: #eda100;
+  --viz-4: #008300;
+  --viz-5: #4a3aa7;
+  --viz-6: #e34948;
+  --viz-7: #e87ba4;
+  --viz-8: #eb6834;
+  /* Not a categorical slot: the de-emphasis grey for "we don't know yet". */
+  --viz-unknown: #898781;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-secondary: var(--text-secondary);
+  --color-muted: var(--text-muted);
+  --color-viz-series: var(--viz-series);
+  --color-viz-track: var(--viz-track);
+  --color-viz-grid: var(--viz-grid);
+  --color-viz-axis: var(--viz-axis);
+  --color-status-good: var(--status-good);
+  --color-status-warning: var(--status-warning);
+  --color-status-critical: var(--status-critical);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --background: #0a0a0a;
+    --foreground: #ededed;
+
+    /* The dark steps are selected for the dark surface, not flipped from light. */
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --viz-series: #3987e5;
+    /* Step 700, not the 600 the ordinal ramp would suggest: an unfilled meter
+       track has to read as *empty*, and 600 is saturated enough on this surface
+       that a 0% meter looks full. The track is chrome, not a mark. */
+    --viz-track: #0d366b;
+    --viz-grid: #2c2c2a;
+    --viz-axis: #383835;
+
+    /* The same eight hues stepped for the dark surface, not an automatic flip.
+       Worst adjacent CVD separation lands in the 8–12 floor band, which is legal
+       only with secondary encoding — hence the 2px gaps, legend, and table. */
+    --viz-1: #3987e5;
+    --viz-2: #199e70;
+    --viz-3: #c98500;
+    --viz-4: #008300;
+    --viz-5: #9085e9;
+    --viz-6: #e66767;
+    --viz-7: #d55181;
+    --viz-8: #d95926;
+    --viz-unknown: #898781;
+  }
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+}
