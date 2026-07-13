@@ -21,9 +21,9 @@ export default async function UncategorisedPage(props: PageProps<"/categories/un
     <Listing
       back={{ href: "/", label: "Dashboard" }}
       title="Uncategorised"
-      subtitle="Spending that matched no enrichment rule. Counted, but nothing said what it was — every row here is one an internal transfer could be hiding in."
+      subtitle="Transactions with no specific category, in either direction. Counted in the totals, but not yet assigned one."
       stats={[
-        { label: "Spent", value: formatMoney(-net, null) },
+        { label: "Net", value: formatMoney(net, null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },
       ]}
       basePath="/categories/uncategorised"

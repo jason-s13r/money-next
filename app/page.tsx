@@ -8,7 +8,7 @@ import {
   getSpendSummary,
   runwayMonths,
 } from "@/lib/metrics";
-import { isPeriod, type Period } from "@/lib/periods";
+import { isPeriod, offsetForStartDate, periodStart, periodWindow, type Period } from "@/lib/periods";
 import { Meter } from "./_components/charts";
 import { ComparisonSection } from "./_components/comparison";
 import { Hero, StatTile, type Status } from "./_components/stat-tile";
@@ -16,20 +16,33 @@ import { Hero, StatTile, type Status } from "./_components/stat-tile";
 export const metadata = { title: "Financial health" };
 
 const DEFAULT_PERIOD: Period = "month";
-const DEFAULT_COUNT = 6;
-const ALLOWED_COUNTS = [3, 6, 12];
+/** Periods shown at once. Fixed: six reads as a trend without crowding the row. */
+const WINDOW = 6;
+/** Periods a page shifts by. Half the window, so consecutive pages overlap. */
+const STEP = 3;
 
-/** `?period=` and `?n=` are user input; anything unexpected falls back. */
-function parseWindow(searchParams: Record<string, string | string[] | undefined>) {
+/**
+ * `?period=` and `?from=` are user input; anything unexpected falls back.
+ *
+ * `from` is the start date of the oldest visible period — a time is a more
+ * honest url than an opaque page number, and it snaps to the nearest window.
+ * Absent, the window ends with the period in progress (offset 0).
+ */
+function parseWindow(searchParams: Record<string, string | string[] | undefined>, now: Date) {
   const rawPeriod = Array.isArray(searchParams.period) ? searchParams.period[0] : searchParams.period;
-  const rawCount = Array.isArray(searchParams.n) ? searchParams.n[0] : searchParams.n;
+  const rawFrom = Array.isArray(searchParams.from) ? searchParams.from[0] : searchParams.from;
 
   const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
-  const parsed = Number(rawCount);
-  const count = ALLOWED_COUNTS.includes(parsed) ? parsed : DEFAULT_COUNT;
 
-  return { period, count };
+  const from = rawFrom ? new Date(rawFrom) : null;
+  const offset =
+    from && !Number.isNaN(from.getTime()) ? offsetForStartDate(now, period, WINDOW, from) : 0;
+
+  return { period, offset };
 }
+
+/** `Date` → `YYYY-MM-DD`. Period starts are UTC midnight, so this is exact. */
+const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 
 /** Six months of essential spend in the bank is the conventional line. */
 function runwayStatus(months: number): { status: Status; label: string } {
@@ -39,17 +52,34 @@ function runwayStatus(months: number): { status: Status; label: string } {
 }
 
 export default async function DashboardPage(props: PageProps<"/">) {
-  const { period, count } = parseWindow(await props.searchParams);
+  const now = new Date();
+  const { period, offset } = parseWindow(await props.searchParams, now);
 
   const [balances, spend, comparison, review, lastSync] = await Promise.all([
     getBalanceSummary(),
     getSpendSummary(),
-    getComparison(period, count),
+    getComparison(period, WINDOW, offset, now),
     getReviewQueue(),
     getLastSync(),
   ]);
 
   const runway = runwayMonths(balances, spend);
+
+  // The window pages by STEP periods, overlapping the last by half. Time runs
+  // left-to-right, so "Earlier" steps the anchor back and "More recent" forward;
+  // each link carries the start date of the window it lands on. A window ending
+  // at the current period needs no `?from=`, keeping the dashboard's url clean.
+  const base = `/?period=${period}`;
+  const windowStart = (o: number) => periodStart(periodWindow(now, period, WINDOW, o)[0], period);
+  const earlierHref = comparison.hasOlder
+    ? `${base}&from=${isoDate(windowStart(offset + STEP))}`
+    : null;
+  const moreRecentHref =
+    offset > 0
+      ? offset - STEP <= 0
+        ? base
+        : `${base}&from=${isoDate(windowStart(offset - STEP))}`
+      : null;
 
   return (
     <main className="mx-auto w-full max-w-5xl p-6">
@@ -57,6 +87,10 @@ export default async function DashboardPage(props: PageProps<"/">) {
         <h1 className="text-2xl font-semibold">Financial health</h1>
         <p className="text-sm text-muted">
           {lastSync ? `Synced ${formatDateTime(lastSync.finishedAt)}` : "Never synced"} ·{" "}
+          <Link href="/transactions/search" className="underline underline-offset-2">
+            Search
+          </Link>{" "}
+          ·{" "}
           <Link href="/accounts" className="underline underline-offset-2">
             Accounts
           </Link>
@@ -130,21 +164,18 @@ export default async function DashboardPage(props: PageProps<"/">) {
         </section>
       ) : null}
 
-      {/* These rows are counted, but only their direction was established. Saying
-          so is the point: a number built on silent guesses is worse than one that
-          admits its own range. */}
+      {/* Spending Akahu left without a category. Surfacing the count is the point:
+          a total that admits how much of itself is still unaccounted for is more
+          honest than one that quietly folds the remainder in. */}
       {review.rows > 0 ? (
         <section className="mb-8 rounded-lg border border-status-warning/40 bg-status-warning/5 p-4">
           <p className="flex items-center gap-2 text-sm font-medium">
             <span className="inline-block size-2 shrink-0 rounded-full bg-status-warning" />
-            {review.rows.toLocaleString("en-NZ")} transactions bucketed by direction only
+            {review.rows.toLocaleString("en-NZ")} uncategorised transactions
           </p>
           <p className="mt-1 text-sm text-secondary">
-            {formatMoneyWhole(review.inflow)} in and {formatMoneyWhole(review.outflow)} out are
-            counted as income and spending because that is which way the money went, but no rule
-            established what they are. They appear in grey, and an internal transfer hiding among
-            them would be counted as real. Only {review.overThreshold} are over $500 — clearing
-            those narrows every net range below.
+            {formatMoneyWhole(review.outflow)} of spending has no category and is shown in grey.
+            Only {review.overThreshold} are over $500 — those are the ones worth categorising first.
           </p>
           {spend.unknownGroups.length > 0 ? (
             <p className="mt-2 text-sm text-secondary">
@@ -158,7 +189,11 @@ export default async function DashboardPage(props: PageProps<"/">) {
       ) : null}
 
       <div className="mb-10">
-        <ComparisonSection comparison={comparison} count={count} />
+        <ComparisonSection
+          comparison={comparison}
+          earlierHref={earlierHref}
+          moreRecentHref={moreRecentHref}
+        />
       </div>
     </main>
   );

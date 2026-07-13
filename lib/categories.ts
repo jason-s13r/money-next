@@ -39,12 +39,25 @@ export const SPENDING_GROUPS = {
   Household: "discretionary",
   Lifestyle: "discretionary",
   "Professional Services": "discretionary",
+  'Periodic Income': "essential",
+  'Other Income': "essential",
+  'Uncategorised': "discretionary",
 } as const satisfies Record<string, Necessity>;
 
 export type SpendingGroup = keyof typeof SPENDING_GROUPS;
 
 export function isKnownGroup(group: string): group is SpendingGroup {
   return group in SPENDING_GROUPS;
+}
+
+// The invented income groups (see lib/nzfcc.ts). Inflows carry no NZFCC group, so
+// a credit category is filed under one of these — "Periodic Income" for recurring
+// receipts, "Other Income" for the rest. Kept as one list so a query can exclude
+// income in a single place and pages can tell an income group from a spending one.
+export const INCOME_GROUP_NAMES = ["Periodic Income", "Other Income"] as const;
+
+export function isIncomeGroup(group: string): boolean {
+  return (INCOME_GROUP_NAMES as readonly string[]).includes(group);
 }
 
 export function isEssential(group: string): boolean {

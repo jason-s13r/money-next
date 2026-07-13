@@ -12,9 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts",
-    "db:classify": "tsx --env-file-if-exists=.env scripts/classify.ts",
-    "db:rules": "tsx --env-file-if-exists=.env scripts/rules-import.ts"
+    "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"

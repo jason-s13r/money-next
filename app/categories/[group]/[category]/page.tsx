@@ -2,7 +2,7 @@ import { notFound, redirect } from "next/navigation";
 import { Listing } from "@/app/_components/listing";
 import { parsePage } from "@/app/_components/pagination";
 import { TransactionTable } from "@/app/_components/transaction-table";
-import { groupFromSlug } from "@/lib/categories";
+import { groupFromSlug, isIncomeGroup } from "@/lib/categories";
 import { TRANSACTIONS_PER_PAGE, getCategoryNames, getCategoryTransactions } from "@/lib/data";
 import { formatMoney } from "@/lib/format";
 import { fromSlug, slugify } from "@/lib/slug";
@@ -44,13 +44,15 @@ export default async function CategoryPage(props: PageProps<"/categories/[group]
       title={category}
       subtitle={group}
       stats={[
-        { label: "Spent", value: formatMoney(-net, null) },
+        isIncomeGroup(group) || net > 0
+          ? { label: "Earnt", value: formatMoney(net, null) }
+          : { label: "Spent", value: formatMoney(-net, null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },
       ]}
       basePath={basePath}
       page={page}
       totalPages={totalPages}
-      empty="No spending in this category."
+      empty={isIncomeGroup(group) ? "No income in this category." : "No spending in this category."}
     >
       {/* The Category column would read the same on every row. */}
       <TransactionTable items={items} showCategory={false} />

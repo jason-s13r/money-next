@@ -66,11 +66,18 @@ model Transaction {
 
   merchantId    String?
   merchantName  String?
+  merchant      Merchant? @relation(fields: [merchantId], references: [id])
   categoryId    String?
   categoryName  String?
   /// Akahu returns several category grouping schemes; we keep the
   /// `personal_finance` group name, which is the one useful for budgeting.
   categoryGroup String?
+
+  /// Who owns the enrichment, per editable field: `akahu` (mirrored, and the
+  /// sync may overwrite it) or `user` (hand-set, and the sync must not clobber
+  /// it — it records a TransactionConflict instead when Akahu later disagrees).
+  categorySource String @default("akahu")
+  merchantSource String @default("akahu")
 
   particulars  String?
   code         String?
@@ -83,74 +90,90 @@ model Transaction {
   updatedAt DateTime?
   syncedAt  DateTime  @default(now())
 
-  // Derived by `pnpm db:classify`, never by the Akahu ingest. Recomputed from
-  // scratch on every run, so improving a rule fixes the whole history.
+  // A transaction's nature is derived, not stored: money in (`amount > 0`) is
+  // income; money out (`amount < 0`) is spending, categorised when Akahu supplied
+  // a `categoryGroup` and uncategorised otherwise. No classifier writes here.
 
-  /// INCOME | EXPENSE | INTERNAL | REFUND | UNCATEGORIZED
-  flow          String?
-  /// override | pair | rule | merchant | default.
-  /// `merchant` — an inflow naming a business we pay elsewhere, so: a refund.
-  /// `default` — the bucket came from the sign of the amount alone: the money is
-  /// real and counted, but which bucket it belongs to was inferred. Those rows
-  /// are the review queue, and they set the width of every net figure's band.
-  flowSource    String?
-  /// Shared by both legs of a matched internal transfer.
-  transferId    String?
-  /// Only set on INCOME. Ours, not Akahu's: NZFCC assigns `personal_finance`
-  /// groups to spending categories only, so inflows arrive uncategorised.
-  incomeCategory String?
-
-  override TransactionOverride?
+  conflicts TransactionConflict[]
 
   @@index([accountId, date])
   @@index([date])
   @@index([categoryGroup])
   @@index([merchantName])
-  @@index([flow, date])
-  @@index([flowSource])
-  @@index([transferId])
+  @@index([merchantId])
 }
 
-/// A human correction to the classifier. Always wins, and is never rewritten by
-/// `pnpm db:classify` — this is the only place a person's judgement is stored,
-/// so it is the only thing in the derived pipeline that must not be regenerable.
-model TransactionOverride {
-  transactionId String      @id
+/// A divergence between a user-set enrichment field and what a later Akahu sync
+/// reported for it. Raised only when a `user`-owned field (see
+/// `Transaction.categorySource`/`merchantSource`) receives a *different, non-null*
+/// value from Akahu — an inflow Akahu simply leaves uncategorised never conflicts.
+/// The user's value is kept; this row is the prompt to reconcile on the tx page.
+model TransactionConflict {
+  id            Int         @id @default(autoincrement())
+  transactionId String
   transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
 
-  /// INCOME | EXPENSE | INTERNAL
-  flow      String
-  note      String?
-  createdAt DateTime @default(now())
+  /// Which enrichment field diverged: `category` | `merchant`.
+  field String
+
+  /// The value the user set (and that we are keeping), for display without a join.
+  userValueId    String?
+  userValueLabel String?
+  /// The value Akahu reported on the sync that raised this, for a side-by-side.
+  akahuValueId    String?
+  akahuValueLabel String?
+
+  /// `open` (awaiting the user) | `dismissed` (user kept theirs; don't re-nag
+  /// unless Akahu's value changes again).
+  status String @default("open")
+
+  detectedAt DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  // One live conflict per field per transaction: a new sync updates it in place
+  // rather than stacking duplicates.
+  @@unique([transactionId, field])
+  @@index([status])
 }
 
-/// A user-editable classification rule.
-///
-/// These live in the database rather than in the repository because every one of
-/// them is personal: they name your employer, your banks, and you. The database
-/// is gitignored; the source tree is not. `classify.rules.example.json` shows the
-/// shape, and `pnpm db:rules <file>` imports one.
-model ClassificationRule {
-  id Int @id @default(autoincrement())
+/// A merchant, mirrored from Akahu's transaction enrichment. One `merchant`
+/// object recurs across thousands of transactions, so it is stored once here and
+/// referenced by `Transaction.merchantId` rather than copied onto every row.
+/// https://developers.akahu.nz/docs/the-transaction-model#merchant
+model Merchant {
+  /// Akahu merchant id, e.g. `merchant_...`
+  id   String @id
+  name String
+  /// The merchant's website, when Akahu resolved one. Previously discarded at
+  /// ingest; kept now so no enrichment field is lost.
+  website String?
 
-  /// internal | refund | income
-  kind String
-  /// Case-insensitive regular expression, matched against `Transaction.description`.
-  /// Validated at import: a pattern that does not compile is rejected there rather
-  /// than thrown from the middle of a classification run.
-  pattern String
-  /// Required when `kind` is `income`. The bucket this payer's money lands in.
-  incomeCategory String?
+  transactions Transaction[]
 
-  /// Lower runs first, so a specific rule can pre-empt a general one.
-  priority Int     @default(0)
-  enabled  Boolean @default(true)
-  note     String?
+  // A business can arrive under more than one id (Akahu has two for "Kamo Vets"),
+  // so name is not unique — it is indexed for lookup, not constrained.
+  @@index([name])
+}
 
-  createdAt DateTime @default(now())
+/// The NZFCC category catalog, mirrored from nzfcc.org so an `nzfcc_...` id can
+/// be resolved to its name and spending group locally. Refreshed on every
+/// `db:sync`, so a category the standard adds appears the next run.
+model Category {
+  /// NZFCC category id, e.g. `nzfcc_...`
+  id        String @id
+  name      String
+  /// debit (spending) | credit (income)
+  direction String
 
-  @@unique([kind, pattern])
-  @@index([kind, enabled, priority])
+  /// The `personal_finance` group. NZFCC leaves this absent on credit categories,
+  /// so the catalog fills those with a custom income group — "Periodic Income" or
+  /// "Other Income" (see lib/nzfcc.ts) — to match the `categoryGroup` on inflows.
+  groupId   String?
+  groupName String?
+
+  syncedAt DateTime @updatedAt
+
+  @@index([groupName])
 }
 
 /// Point-in-time balance, appended on each sync so the dashboard can chart

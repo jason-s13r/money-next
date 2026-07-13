@@ -30,6 +30,7 @@ export function TransactionTable({
           <th className={th}>Description</th>
           <th className={th}>Account</th>
           {showCategory ? <th className={th}>Category</th> : null}
+          <th className={th}>Type</th>
           <th className="py-2 pl-4 text-right font-medium">Amount</th>
         </tr>
       </thead>
@@ -72,6 +73,10 @@ export function TransactionTable({
                 )}
               </td>
             ) : null}
+
+            <td className={`${td} opacity-60`}>
+                {tx.type}
+            </td>
 
             <td
               className={`py-2 pl-4 text-right font-mono tabular-nums ${

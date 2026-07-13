@@ -1,8 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getTransaction } from "@/lib/data";
+import { SearchableSelect, type SelectOption } from "@/app/_components/searchable-select";
+import {
+  getCategories,
+  getMerchants,
+  getSimilarTransactions,
+  getTransaction,
+} from "@/lib/data";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
+import { setTransactionCategory, setTransactionMerchant } from "./actions";
+import { ConflictBanner } from "./conflict-banner";
+import { SimilarTransactions } from "./similar-transactions";
 
 export async function generateMetadata(props: PageProps<"/transactions/[transactionId]">) {
   const { transactionId } = await props.params;
@@ -22,6 +31,28 @@ export default async function TransactionPage(
   if (!tx) notFound();
 
   const { account } = tx;
+
+  // Options for the enrichment pickers. Loaded here so the page stays one server
+  // round-trip; both are small enough to hand to the client whole (see
+  // SearchableSelect). The bound actions carry this transaction's id.
+  const [categories, merchants, similar] = await Promise.all([
+    getCategories(),
+    getMerchants(),
+    getSimilarTransactions(tx),
+  ]);
+
+  const categoryOptions: SelectOption[] = categories.map((c) => ({
+    value: c.id,
+    label: c.name,
+    hint: c.groupName ?? undefined,
+  }));
+  const merchantOptions: SelectOption[] = merchants.map((m) => ({
+    value: m.id,
+    label: m.name,
+  }));
+
+  const categoryConflict = tx.conflicts.find((c) => c.field === "category");
+  const merchantConflict = tx.conflicts.find((c) => c.field === "merchant");
 
   return (
     <main className="mx-auto w-full max-w-3xl p-6">
@@ -60,26 +91,77 @@ export default async function TransactionPage(
       </Section>
 
       <Section title="Enrichment">
-        <Field
+        <EditableField
           label="Merchant"
-          value={tx.merchantName}
           href={tx.merchantName ? `/merchants/${slugify(tx.merchantName)}` : null}
-        />
-        <Field
+          value={tx.merchantName}
+        >
+          <SearchableSelect
+            ariaLabel="Merchant"
+            options={merchantOptions}
+            value={tx.merchantId}
+            valueLabel={tx.merchantName}
+            placeholder="Set merchant…"
+            clearLabel="No merchant"
+            onSelect={setTransactionMerchant.bind(null, tx.id)}
+          />
+          {merchantConflict ? (
+            <ConflictBanner
+              conflictId={merchantConflict.id}
+              field="merchant"
+              userLabel={merchantConflict.userValueLabel}
+              akahuLabel={merchantConflict.akahuValueLabel}
+            />
+          ) : null}
+        </EditableField>
+        <EditableField
           label="Category"
-          value={tx.categoryName}
           href={
             tx.categoryGroup && tx.categoryName
               ? `/categories/${slugify(tx.categoryGroup)}/${slugify(tx.categoryName)}`
               : null
           }
-        />
+          value={tx.categoryName}
+        >
+          <SearchableSelect
+            ariaLabel="Category"
+            options={categoryOptions}
+            value={tx.categoryId}
+            valueLabel={tx.categoryName}
+            placeholder="Set category…"
+            clearLabel="Uncategorised"
+            onSelect={setTransactionCategory.bind(null, tx.id)}
+          />
+          {categoryConflict ? (
+            <ConflictBanner
+              conflictId={categoryConflict.id}
+              field="category"
+              userLabel={categoryConflict.userValueLabel}
+              akahuLabel={categoryConflict.akahuValueLabel}
+            />
+          ) : null}
+        </EditableField>
         <Field
           label="Category group"
           value={tx.categoryGroup}
           href={tx.categoryGroup ? `/categories/${slugify(tx.categoryGroup)}` : null}
         />
       </Section>
+
+      <SimilarTransactions
+        sourceId={tx.id}
+        items={similar}
+        category={
+          tx.categoryId && tx.categoryName
+            ? { id: tx.categoryId, name: tx.categoryName }
+            : null
+        }
+        merchant={
+          tx.merchantId && tx.merchantName
+            ? { id: tx.merchantId, name: tx.merchantName }
+            : null
+        }
+      />
 
       <Section title="Bank metadata">
         <Field label="Particulars" value={tx.particulars} />
@@ -117,6 +199,40 @@ function Section({ title, children }: { title: string; children: React.ReactNode
         {children}
       </dl>
     </section>
+  );
+}
+
+/**
+ * A labelled row whose value is editable: the control fills the value cell, and
+ * when the current value has a list page a small link sits beneath it so the
+ * page is still one click away.
+ */
+function EditableField({
+  label,
+  value,
+  href,
+  children,
+}: {
+  label: string;
+  value: string | null;
+  href: string | null;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      <dt className="opacity-60">{label}</dt>
+      <dd className="flex flex-col items-start gap-1">
+        {children}
+        {value && href ? (
+          <Link
+            href={href}
+            className="text-xs text-muted underline underline-offset-2 hover:text-foreground"
+          >
+            View {value}
+          </Link>
+        ) : null}
+      </dd>
+    </>
   );
 }
 

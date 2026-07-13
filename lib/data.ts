@@ -59,6 +59,7 @@ export async function getAccountTransactions(
       orderBy: [{ date: "desc" }, { id: "desc" }],
       skip: (page - 1) * perPage,
       take: perPage,
+      include: { merchant: { select: { name: true } } },
     }),
     db.transaction.count({ where: { accountId } }),
   ]);
@@ -79,11 +80,17 @@ async function listTransactions(
   await connection();
   const [items, total, aggregate] = await Promise.all([
     db.transaction.findMany({
-      where,
+      where: {
+        ...where,
+        'type': { 'notIn': ['TRANSFER']},
+      },
       orderBy: [{ date: "desc" }, { id: "desc" }],
       skip: (page - 1) * perPage,
       take: perPage,
-      include: { account: { select: { id: true, name: true, currency: true } } },
+      include: {
+        account: { select: { id: true, name: true, currency: true } },
+        merchant: { select: { name: true } },
+      },
     }),
     db.transaction.count({ where }),
     db.transaction.aggregate({ where, _sum: { amount: true } }),
@@ -95,27 +102,82 @@ async function listTransactions(
 export type TransactionListItem = Awaited<ReturnType<typeof listTransactions>>["items"][number];
 
 /**
- * Spending, and only spending.
- *
- * NZFCC assigns `personal_finance` groups to spending categories alone, but the
- * classifier can still mark a categorised row INTERNAL once it is matched to the
- * other leg of a transfer. Those rows are excluded from the dashboard's category
- * bars, so excluding them here too keeps a category page's total equal to the
- * number the reader clicked on.
+ * Spending, and only spending: money out is any transaction with a negative
+ * amount. Categorised spending additionally carries an Akahu `categoryGroup`;
+ * income (money in) is excluded here by the sign alone.
  */
-const SPENDING: Prisma.TransactionWhereInput = { flow: "EXPENSE" };
+const SPENDING: Prisma.TransactionWhereInput = { amount: { lt: 0 } };
 
 export function getGroupTransactions(group: string, page: number) {
-  return listTransactions({ ...SPENDING, categoryGroup: group }, page);
+  return listTransactions({ categoryGroup: group }, page);
 }
 
 export function getCategoryTransactions(group: string, category: string, page: number) {
-  return listTransactions({ ...SPENDING, categoryGroup: group, categoryName: category }, page);
+  return listTransactions({ categoryGroup: group, categoryName: category }, page);
 }
 
-/** Spending no rule could name. The same rows the dashboard greys out. */
+// Every text field a reader might recognise a transaction by: the raw bank
+// description, the enriched merchant/category names, and the
+// particulars/code/reference/counterparty fields a bank splits a payment across.
+// `contains` on SQLite compiles to `LIKE`, which is case-insensitive for ASCII —
+// Prisma's `mode: "insensitive"` isn't supported on this provider and isn't
+// needed for it.
+const searchableFields = [
+  "description",
+  "merchantName",
+  "categoryName",
+  "particulars",
+  "code",
+  "reference",
+  "otherAccount",
+] as const;
+
+/**
+ * Transactions whose text matches a free-text query, newest first, with the
+ * whole result set's count and net amount for the header.
+ *
+ * Unlike the category and merchant listings this does *not* hide transfers: a
+ * search for an account number or a payment reference should surface the
+ * transfer that carries it, which is often the whole point of searching.
+ */
+export async function searchTransactions(query: string, page: number, perPage = TRANSACTIONS_PER_PAGE) {
+  await connection();
+  const where: Prisma.TransactionWhereInput = {
+    OR: searchableFields.map((field) => ({ [field]: { contains: query } })),
+  };
+  const [items, total, aggregate] = await Promise.all([
+    db.transaction.findMany({
+      where,
+      orderBy: [{ date: "desc" }, { id: "desc" }],
+      skip: (page - 1) * perPage,
+      take: perPage,
+      include: {
+        account: { select: { id: true, name: true, currency: true } },
+        merchant: { select: { name: true } },
+      },
+    }),
+    db.transaction.count({ where }),
+    db.transaction.aggregate({ where, _sum: { amount: true } }),
+  ]);
+
+  return { items, total, net: aggregate._sum.amount ?? 0 };
+}
+
+/**
+ * Money in: every inflow, defined by sign rather than group so it stays correct
+ * whatever income group (Periodic/Other) a row does or doesn't yet carry.
+ */
+export function getIncomeTransactions(page: number) {
+  return listTransactions({ amount: { gt: 0 } }, page);
+}
+
+/**
+ * Transactions no rule could name, in either direction. The same rows the
+ * dashboard greys out — the sign filter is deliberately absent so an
+ * uncategorised inflow shows here rather than being silently dropped.
+ */
 export function getUncategorisedTransactions(page: number) {
-  return listTransactions({ ...SPENDING, categoryGroup: null }, page);
+  return listTransactions({ categoryId: null }, page);
 }
 
 /**
@@ -123,7 +185,9 @@ export function getUncategorisedTransactions(page: number) {
  * merchant page that hid the refunds would misstate what the merchant cost.
  */
 export function getMerchantTransactions(merchant: string, page: number) {
-  return listTransactions({ merchantName: merchant }, page);
+  // Matched on the linked merchant's name, not an id: one business can hold more
+  // than one merchant id, and this page is keyed by the name the reader sees.
+  return listTransactions({ merchant: { is: { name: merchant } } }, page);
 }
 
 /**
@@ -153,7 +217,7 @@ export const getCardSuffixes = cache(async () => {
 export const getCategoryNames = cache(async (group: string) => {
   await connection();
   const rows = await db.transaction.findMany({
-    where: { ...SPENDING, categoryGroup: group, categoryName: { not: null } },
+    where: { categoryGroup: group, categoryName: { not: null } },
     distinct: ["categoryName"],
     select: { categoryName: true },
   });
@@ -171,11 +235,110 @@ export const getMerchantNames = cache(async () => {
   return rows.map((row) => row.merchantName!);
 });
 
+/**
+ * The whole NZFCC catalog, for the category picker on a transaction. Ordered by
+ * group then name so the dropdown can show categories under their spending group.
+ */
+export const getCategories = cache(async () => {
+  await connection();
+  return db.category.findMany({
+    orderBy: [{ groupName: "asc" }, { name: "asc" }],
+    select: { id: true, name: true, groupName: true, direction: true },
+  });
+});
+
+/** Every merchant on record, for the merchant picker on a transaction. */
+export const getMerchants = cache(async () => {
+  await connection();
+  return db.merchant.findMany({
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+});
+
+// A description is split into comparable tokens on whitespace and `#`, with
+// leading/trailing punctuation trimmed but internal punctuation kept — so a
+// counterparty's dashed account number (a stable signal) survives intact while a
+// `#`-glued reference like `<ref>#<name>` separates into its volatile and stable
+// halves.
+function descriptionTokens(text: string): Set<string> {
+  return new Set(
+    text
+      .toLowerCase()
+      .split(/[\s#]+/)
+      .map((t) => t.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
+      .filter(Boolean),
+  );
+}
+
+/** Jaccard overlap of two token sets: shared tokens over their union, in [0, 1]. */
+function tokenOverlap(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 || b.size === 0) return 0;
+  let shared = 0;
+  for (const t of a) if (b.has(t)) shared++;
+  return shared / (a.size + b.size - shared);
+}
+
+// How much description overlap counts as "similar". Two instances of the same
+// recurring credit that differ only in their reference number score ~0.75;
+// unrelated direct credits sharing just "direct"/"credit" score well under this.
+const SIMILAR_THRESHOLD = 0.5;
+
+/**
+ * Other transactions that look like this one, so a category or merchant set here
+ * can be applied to the whole recurring set (e.g. every salary deposit, or every
+ * tax refund) in one go.
+ *
+ * A candidate must share this transaction's `type` — a refund is never "like" a
+ * payment. Beyond that it counts as similar if it shares the same linked merchant,
+ * or if its description overlaps enough (see `SIMILAR_THRESHOLD`). Text matching is
+ * scored in JS rather than SQL because recurring bank descriptions carry a volatile
+ * reference number that an exact `WHERE description = …` would never group: the
+ * same recurring credit reads `…<ref-A>#<name> <party> <acct>` one month and
+ * `…<ref-B># <name> <party> <acct>` the next.
+ */
+export async function getSimilarTransactions(
+  tx: { id: string; type: string; description: string; merchantId: string | null },
+  limit = 100,
+) {
+  await connection();
+
+  // Same-type rows are the candidate pool; at this app's scale (a personal ledger
+  // on local SQLite) scoring them in memory is cheap, and it is the only way to
+  // catch the reference-number drift above.
+  const candidates = await db.transaction.findMany({
+    where: { type: tx.type, id: { not: tx.id } },
+    orderBy: [{ date: "desc" }, { id: "desc" }],
+    include: { account: { select: { name: true, currency: true } } },
+  });
+
+  const sourceTokens = descriptionTokens(tx.description);
+
+  return candidates
+    .map((c) => {
+      // A shared merchant is a definitive match; text overlap is the fallback for
+      // the merchant-less inflows (salary, refunds) this feature mainly serves.
+      const sameMerchant = tx.merchantId != null && c.merchantId === tx.merchantId;
+      const score = sameMerchant ? 1 : tokenOverlap(sourceTokens, descriptionTokens(c.description));
+      return { tx: c, score, sameMerchant };
+    })
+    .filter((s) => s.sameMerchant || s.score >= SIMILAR_THRESHOLD)
+    // Best matches first; the sort is stable, so equal scores keep the newest-first
+    // order the query already imposed.
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((s) => s.tx);
+}
+
+export type SimilarTransaction = Awaited<ReturnType<typeof getSimilarTransactions>>[number];
+
 export const getTransaction = cache(async (id: string) => {
   await connection();
   return db.transaction.findUnique({
     where: { id },
-    include: { account: true },
+    // Only unresolved conflicts surface on the page; a dismissed one is settled
+    // and stays out of the way until a future sync re-opens it.
+    include: { account: true, conflicts: { where: { status: "open" } } },
   });
 });
 

@@ -1,14 +1,21 @@
 import "server-only";
 import { connection } from "next/server";
 import { db } from "./db";
-import { isEssential, isKnownGroup, LIQUID_TYPES, LOCKED_TYPES } from "./categories";
-import { fetchCutoff, periodKey, periodsThrough, type Period } from "./periods";
+import {
+  INCOME_GROUP_NAMES,
+  isEssential,
+  isKnownGroup,
+  LIQUID_TYPES,
+  LOCKED_TYPES,
+} from "./categories";
+import { fetchCutoff, periodKey, periodWindow, type Period } from "./periods";
 
-// Dashboard metrics. Deliberately limited to numbers that are honest *without*
-// transaction flow classification (see docs/metrics.md, Part 0). Income, savings
-// rate, and net cash flow are absent because they cannot be computed correctly
-// until internal transfers are separated from real money movement: a naive
-// income sum overstates the truth by roughly 2.3x.
+// Dashboard metrics. A transaction's nature is derived from two facts Akahu gives
+// us at sync: the sign of `amount` (money in is income, money out is spending) and
+// whether it carries a `categoryGroup` (categorised vs uncategorised spending).
+// There is no classifier, so income and net cash flow will overstate the truth
+// wherever an internal transfer is counted as real money — accepted until an
+// in-app classification step exists (see docs/metrics.md, Part 0).
 //
 // Month bucketing happens in JavaScript against an explicit NZ timezone rather
 // than in SQL. SQLite's `localtime` modifier reads the *server's* timezone, and
@@ -156,11 +163,11 @@ export async function getSpendSummary(): Promise<SpendSummary> {
   await connection();
 
   const cutoff = new Date(Date.now() - FETCH_DAYS * 24 * 60 * 60 * 1000);
-  // Only classified spending. Before `flow` existed this had to read every
-  // outflow and report how much had no category — but three quarters of that was
-  // internal movement between accounts, not spending we failed to categorise.
+  // Categorised spending: money out that Akahu tagged with a `categoryGroup`.
+  // This drives the essential/median runway, so it deliberately ignores both
+  // income and the uncategorised outflow that no group could name.
   const rows = await db.transaction.findMany({
-    where: { flow: "EXPENSE", date: { gte: cutoff } },
+    where: { amount: { lt: 0 }, categoryGroup: { not: null }, date: { gte: cutoff } },
     select: { date: true, amount: true, categoryGroup: true },
   });
 
@@ -208,52 +215,39 @@ export async function getSpendSummary(): Promise<SpendSummary> {
 
 export type ReviewQueue = {
   rows: number;
-  inflow: number;
   outflow: number;
   /** Rows big enough to be worth an evening. Clearing these moves the numbers. */
   overThreshold: number;
 };
 
 /**
- * Money that was bucketed from the sign of the amount alone. It is counted, but
- * no rule established what it is — so an internal transfer hiding in here would
- * show up as income or spending.
+ * Spending with no `categoryId` — no specific NZFCC category, whether or not a
+ * group was inferred. It is counted in the totals but belongs to no category, so
+ * it is the queue a future classification step works through. Income is excluded:
+ * its own uncategorised inflows are surfaced under the Income breakdown instead.
  */
 export async function getReviewQueue(threshold = 500): Promise<ReviewQueue> {
   await connection();
   const rows = await db.transaction.findMany({
-    where: { flowSource: "default" },
+    where: { amount: { lt: 0 }, categoryId: null },
     select: { amount: true },
   });
 
   return {
     rows: rows.length,
-    inflow: rows.filter((r) => r.amount > 0).reduce((sum, r) => sum + r.amount, 0),
-    outflow: rows.filter((r) => r.amount < 0).reduce((sum, r) => sum - r.amount, 0),
+    outflow: rows.reduce((sum, r) => sum - r.amount, 0),
     overThreshold: rows.filter((r) => Math.abs(r.amount) > threshold).length,
   };
 }
 
-/**
- * Categorical palettes hold eight slots, and a ninth hue is indistinguishable
- * from an existing one under colour-blindness. The tail folds into "Other".
- */
-const MAX_SPEND_SLOTS = 7;
-const OTHER = "Other";
-/** Counted, but no rule said what it was. Rendered in the de-emphasis grey. */
+/** Counted, but Akahu named no category. Rendered in the de-emphasis grey. */
 const UNCATEGORISED = "Uncategorised";
-/** Money returned rather than earned. No refund row carries a spend category, so
- *  it cannot be netted off the category it came from; it stands as its own
- *  inflow instead. Net is identical either way. */
-const REFUNDS = "Refunds";
 /** A merchant the enrichment never named. Kept as a row so its money stays visible. */
 const UNKNOWN_MERCHANT = "Unknown";
 
 /**
- * One subcategory row, and the merchants beneath it.
- *
- * `total` is carried rather than summed from `merchants` because "Other"'s rows
- * are whole categories, which have a total but no merchants of their own.
+ * One subcategory row, and the merchants beneath it. `total` equals the sum of
+ * `merchants`; it is stored rather than recomputed so the caller reads it once.
  */
 export type SpendDetail = {
   total: number;
@@ -262,41 +256,28 @@ export type SpendDetail = {
 
 export type PeriodBreakdown = {
   key: string;
-  income: Map<string, number>;
   spend: Map<string, number>;
   /**
-   * What each spending row is made of, keyed by the row above it. A real category
-   * breaks down into its subcategories, and each of those into its merchants;
-   * "Other" breaks down into the whole categories it swallowed, and stops there —
-   * those rows lead to a group's own page instead. Either way the values sum to
-   * the row above.
+   * What each spending row is made of, keyed by the row above it: a category
+   * breaks down into its subcategories, and each of those into its merchants.
+   * The values sum to the row above.
    */
   spendDetail: Map<string, Map<string, SpendDetail>>;
+  /**
+   * Income broken into its NZFCC subcategories (Wages, Refunds…), and each of
+   * those into the merchants beneath — the income source. Inflows nothing named
+   * fall under "Uncategorised" so the totals sum to `incomeTotal`.
+   */
+  incomeDetail: Map<string, SpendDetail>;
   incomeTotal: number;
   spendTotal: number;
-  /**
-   * The slice of the totals above that was bucketed from the sign of the amount
-   * alone. An internal transfer hiding in here would be counted as real, so these
-   * set the width of the net figure's uncertainty band.
-   */
-  defaultedIn: number;
-  defaultedOut: number;
   /** Still in progress. Its totals are not comparable with a full period's. */
   partial: boolean;
 };
 
-/** Income − spending. Refunds sit inside income. */
+/** Income − spending. Overstated wherever a transfer is counted as either. */
 export function netOf(p: PeriodBreakdown): number {
   return p.incomeTotal - p.spendTotal;
-}
-
-/**
- * If every defaulted inflow turned out to be an internal transfer, the net falls
- * by that much; if every defaulted outflow did, it rises. The truth is inside.
- */
-export function netRange(p: PeriodBreakdown): [low: number, high: number] {
-  const net = netOf(p);
-  return [net - p.defaultedIn, net + p.defaultedOut];
 }
 
 export type Comparison = {
@@ -305,12 +286,26 @@ export type Comparison = {
   /** Stable slot order, computed over the whole window so a category keeps its
    *  colour from one period to the next. Colour follows the entity, not its rank
    *  within a single bar. */
-  incomeCategories: string[];
   spendCategories: string[];
   /**
+   * The income subcategories (Wages, Refunds…), ranked over the whole window so
+   * each keeps its place — and its colour — from one period to the next. This is
+   * the flat list that colours the bar and legend; the table groups these under
+   * their income group (see `incomeGroups`/`incomeGroupOf`).
+   */
+  incomeSubcategories: string[];
+  /** The income groups present ("Periodic Income", "Other Income"), in that fixed
+   *  order — the collapsible parent rows the table groups subcategories under. */
+  incomeGroups: string[];
+  /** Which income group each subcategory belongs to, so the table can nest it.
+   *  Null only for a subcategory whose rows carry no group at all. */
+  incomeGroupOf: Map<string, string | null>;
+  /** Merchants beneath each income subcategory, ranked. Empty until a source is
+   *  named — an all-unnamed level would only restate the row above it. */
+  incomeMerchants: Map<string, string[]>;
+  /**
    * Disclosure rows for each spending category, ranked over the whole window so a
-   * subcategory keeps its place from one period to the next. A category with one
-   * subcategory is absent: the breakdown would only restate the row above it.
+   * subcategory keeps its place from one period to the next.
    */
   spendSubcategories: Map<string, string[]>;
   /** The same, one level down: category → subcategory → merchants, ranked. */
@@ -318,8 +313,6 @@ export type Comparison = {
   /** One axis shared by every bar in every period, so lengths are comparable
    *  both within a period and across them. */
   max: number;
-  /** Transactions bucketed by sign alone, across the window. */
-  defaultedRows: number;
   /**
    * How far the partial period's data actually reaches — the most recent
    * transaction, not today. A sync that ran an hour ago and a sync that ran last
@@ -327,32 +320,33 @@ export type Comparison = {
    * Null when the period in progress holds no transactions yet.
    */
   through: Date | null;
+  /** Whether income/spending data exists in a period older than this window —
+   *  i.e. whether paging further back would show anything. */
+  hasOlder: boolean;
 };
 
 /**
- * Income and spending per period, split by category, for the comparison view.
- *
- * INTERNAL rows are excluded entirely — that is the whole point of classifying
- * them. UNCATEGORIZED rows are *not* excluded: they are surfaced as their own
- * segment, because dropping them silently would make income and spending look
- * complete when a fifth of the money is unaccounted for.
+ * Income and spending per period, for the comparison view. Income is one bucket
+ * (inflows carry no categories); spending is split by Akahu's `categoryGroup`,
+ * with the ungrouped remainder surfaced as its own "Uncategorised" segment rather
+ * than dropped — hiding it would make the totals look complete when they are not.
  */
-export async function getComparison(period: Period, count: number): Promise<Comparison> {
+export async function getComparison(
+  period: Period,
+  count: number,
+  offset = 0,
+  now: Date = new Date(),
+): Promise<Comparison> {
   await connection();
 
-  const now = new Date();
   const rows = await db.transaction.findMany({
     where: {
-      date: { gte: fetchCutoff(now, period, count) },
-      // INTERNAL is excluded — that is the entire point of classifying it.
-      flow: { in: ["INCOME", "EXPENSE", "REFUND"] },
+      date: { gte: fetchCutoff(now, period, count + offset) },
+      type: { notIn: ["TRANSFER"] },
     },
     select: {
       date: true,
       amount: true,
-      flow: true,
-      flowSource: true,
-      incomeCategory: true,
       categoryGroup: true,
       categoryName: true,
       merchantName: true,
@@ -362,18 +356,11 @@ export async function getComparison(period: Period, count: number): Promise<Comp
   // Slot order is decided over *all* history, not the selected window. Ranking
   // within the window would repaint every category whenever the period changed —
   // a reader who learned "Food is blue" would be misled by switching to quarters.
-  const [spendRanking, incomeRanking] = await Promise.all([
-    db.transaction.groupBy({
-      by: ["categoryGroup"],
-      where: { flow: "EXPENSE", categoryGroup: { not: null } },
-      _sum: { amount: true },
-    }),
-    db.transaction.groupBy({
-      by: ["incomeCategory"],
-      where: { flow: "INCOME", incomeCategory: { not: null } },
-      _sum: { amount: true },
-    }),
-  ]);
+  const spendRanking = await db.transaction.groupBy({
+    by: ["categoryGroup"],
+    where: { categoryGroup: { notIn: [...INCOME_GROUP_NAMES] } },
+    _sum: { amount: true },
+  });
 
   const byMagnitude = <T,>(rows: T[], value: (row: T) => number) =>
     [...rows].sort((a, b) => Math.abs(value(b)) - Math.abs(value(a)));
@@ -381,37 +368,46 @@ export async function getComparison(period: Period, count: number): Promise<Comp
   const allSpendCategories = byMagnitude(spendRanking, (r) => r._sum.amount ?? 0).map(
     (r) => r.categoryGroup!,
   );
-  const allIncomeCategories = byMagnitude(incomeRanking, (r) => r._sum.amount ?? 0).map(
-    (r) => r.incomeCategory!,
-  );
 
-  // Ends with the period in progress. It is flagged `partial` rather than hidden:
-  // the current month is the one the reader most wants to see, and the one most
-  // easily misread beside its complete neighbours.
-  const keys = periodsThrough(now, period, count);
+  // The window, oldest first. At `offset` 0 it ends with the period in progress,
+  // flagged `partial` rather than hidden — the current month is the one the reader
+  // most wants to see, and the one most easily misread beside full neighbours.
+  // A larger offset pages further back, and holds no partial period.
+  const keys = periodWindow(now, period, count, offset);
   const currentKey = periodKey(now, period);
   const window = new Set(keys);
 
   const blank = (key: string): PeriodBreakdown => ({
     key,
-    income: new Map(),
     spend: new Map(),
     spendDetail: new Map(),
+    incomeDetail: new Map(),
     incomeTotal: 0,
     spendTotal: 0,
-    defaultedIn: 0,
-    defaultedOut: 0,
     partial: key === currentKey,
   });
   const periods = new Map(keys.map((key) => [key, blank(key)]));
 
-  // The newest transaction of *any* flow — an internal transfer still tells you
-  // how current the data is. Null unless it lands in the period in progress.
+  // Which income group each subcategory belongs to, learned from the rows: a
+  // subcategory's group is the same on every row that carries it, so a first-write
+  // wins. Read out below to nest the subcategories under their group in the table.
+  const incomeGroupOf = new Map<string, string | null>();
+
+  // The newest transaction, whatever its direction — it still tells you how
+  // current the data is. Null unless it lands in the period in progress.
   const newest = await db.transaction.aggregate({ _max: { date: true } });
   const latest = newest._max.date;
   const through = latest && periodKey(latest, period) === currentKey ? latest : null;
 
-  let defaultedRows = 0;
+  // The oldest income/spending row decides whether paging further back is worth
+  // offering. Period keys sort lexicographically within a period type, so an
+  // earlier bucket is simply a key below the oldest one on screen.
+  const oldest = await db.transaction.aggregate({
+    where: { amount: { not: 0 } },
+    _min: { date: true },
+  });
+  const earliest = oldest._min.date;
+  const hasOlder = earliest !== null && periodKey(earliest, period) < keys[0];
 
   for (const row of rows) {
     const key = periodKey(row.date, period);
@@ -419,24 +415,29 @@ export async function getComparison(period: Period, count: number): Promise<Comp
     if (!bucket) continue;
 
     const value = Math.abs(row.amount);
-    const defaulted = row.flowSource === "default";
-    if (defaulted) {
-      defaultedRows++;
-      if (row.amount > 0) bucket.defaultedIn += value;
-      else bucket.defaultedOut += value;
-    }
 
-    if (row.flow === "REFUND" || row.flow === "INCOME") {
-      // A payer no rule recognised is still a payer; it just has no category.
-      const category = row.flow === "REFUND" ? REFUNDS : (row.incomeCategory ?? UNCATEGORISED);
-      bucket.income.set(category, (bucket.income.get(category) ?? 0) + value);
+    // Money in is income, shown on the shared axis but broken into its NZFCC
+    // subcategories beneath, each nested under its income group and split into the
+    // merchants that are its source. Inflows the user hasn't classified default to
+    // "Other Income" (ingest) with an "Uncategorised" subcategory, so the rows still
+    // sum to the income total. Enrichment names a merchant on almost no inflow
+    // today, so the unnamed remainder collects under "Unknown" and the merchant
+    // level stays hidden (ranked away below) until a source is actually linked.
+    if (row.amount > 0) {
       bucket.incomeTotal += value;
+
+      const label = row.categoryName ?? UNCATEGORISED;
+      // First row to carry this subcategory fixes its group; every later row agrees.
+      if (!incomeGroupOf.has(label)) incomeGroupOf.set(label, row.categoryGroup);
+      const detail = bucket.incomeDetail.get(label) ?? { total: 0, merchants: new Map() };
+      detail.total += value;
+      const merchant = row.merchantName ?? UNKNOWN_MERCHANT;
+      detail.merchants.set(merchant, (detail.merchants.get(merchant) ?? 0) + value);
+      bucket.incomeDetail.set(label, detail);
       continue;
     }
 
-    // EXPENSE. A row matched by an enrichment rule always has a `categoryGroup`
-    // (NZFCC assigns one to spending categories only); a row that fell through to
-    // the sign default has none.
+    // Money out is spending, split by Akahu's group when it named one.
     const category = row.categoryGroup ?? UNCATEGORISED;
     bucket.spend.set(category, (bucket.spend.get(category) ?? 0) + value);
     bucket.spendTotal += value;
@@ -459,30 +460,6 @@ export async function getComparison(period: Period, count: number): Promise<Comp
     }
   }
 
-  const kept = allSpendCategories.slice(0, MAX_SPEND_SLOTS);
-  const tail = new Set(allSpendCategories.slice(MAX_SPEND_SLOTS));
-
-  if (tail.size > 0) {
-    for (const bucket of periods.values()) {
-      let other = 0;
-      // "Other" is composed of whole categories, not of subcategories: expanding it
-      // should name the categories it swallowed, which is the question it raises.
-      // They carry no merchants — each links to its group page, which has them all.
-      const otherDetail = new Map<string, SpendDetail>();
-      for (const category of tail) {
-        const amount = bucket.spend.get(category) ?? 0;
-        if (amount > 0) otherDetail.set(category, { total: amount, merchants: new Map() });
-        other += amount;
-        bucket.spend.delete(category);
-        bucket.spendDetail.delete(category);
-      }
-      if (other > 0) {
-        bucket.spend.set(OTHER, other);
-        bucket.spendDetail.set(OTHER, otherDetail);
-      }
-    }
-  }
-
   const ordered = [...periods.values()];
   const max = Math.max(1, ...ordered.map((p) => Math.max(p.incomeTotal, p.spendTotal)));
 
@@ -491,13 +468,10 @@ export async function getComparison(period: Period, count: number): Promise<Comp
   const present = (pick: (p: PeriodBreakdown) => Map<string, number>, category: string) =>
     ordered.some((p) => (pick(p).get(category) ?? 0) > 0);
 
-  const spendBase = tail.size > 0 ? [...kept, OTHER] : kept;
-
-  // Refunds are appended rather than ranked too: they sit outside the income
-  // ranking query, and appending keeps every payer's colour where it was.
-  const incomeBase = present((p) => p.income, REFUNDS)
-    ? [...allIncomeCategories, REFUNDS]
-    : allIncomeCategories;
+  // Every spending group, ranked. There is no "Other" tail: the palette runs out
+  // at eight, so the ninth and tenth groups wear the overflow grey rather than
+  // being folded away or falsely twinned with a major group's colour.
+  const spendBase = allSpendCategories;
 
   // Ranked across the window, not within a period, for the same reason the colour
   // slots are: a row that jumped position every period would be unreadable.
@@ -525,39 +499,74 @@ export async function getComparison(period: Period, count: number): Promise<Comp
     }
   }
 
-  /** Descending by money, and dropped entirely when one child restates its parent. */
+  /** Descending by money. */
   const ranked = (totals: Map<string, number>) =>
     [...totals].sort((a, b) => b[1] - a[1]).map(([label]) => label);
 
+  // A merchant level with no *named* merchant reveals nothing but the total it
+  // sits under, so it is not offered — the "Unknown" remainder alone is a reveal
+  // that restates the row above. Income names a merchant on almost no inflow
+  // today, so this keeps its rows flat until a real source is linked.
+  const rankedMerchants = (totals: Map<string, number>) =>
+    [...totals.keys()].some((m) => m !== UNKNOWN_MERCHANT) ? ranked(totals) : [];
+
+  // Every level keeps its rows even when there is only one — a lone subcategory
+  // repeats its group's number, but it is the way down to the merchants beneath
+  // it, and a lone merchant still adds a name and a link the row above lacks. The
+  // reveal is always there when there is a level below to reveal.
   const spendSubcategories = new Map(
-    [...subTotals]
-      .filter(([, totals]) => totals.size > 1)
-      .map(([category, totals]) => [category, ranked(totals)]),
+    [...subTotals].map(([category, totals]) => [category, ranked(totals)]),
+  );
+
+  // The income subcategories, ranked flat across both groups — this is the order
+  // that colours the bar and legend. The table re-nests them under their group
+  // (see incomeGroupOf); the ranking still governs order within each group. One
+  // level down are the merchants beneath each subcategory.
+  const incomeSubTotals = new Map<string, number>();
+  const incomeMerchantTotals = new Map<string, Map<string, number>>();
+  for (const p of ordered) {
+    for (const [label, detail] of p.incomeDetail) {
+      incomeSubTotals.set(label, (incomeSubTotals.get(label) ?? 0) + detail.total);
+
+      const merchants = incomeMerchantTotals.get(label) ?? new Map<string, number>();
+      for (const [merchant, amount] of detail.merchants) {
+        merchants.set(merchant, (merchants.get(merchant) ?? 0) + amount);
+      }
+      incomeMerchantTotals.set(label, merchants);
+    }
+  }
+  const incomeSubcategories = ranked(incomeSubTotals);
+  const incomeMerchants = new Map(
+    [...incomeMerchantTotals].map(([label, merchants]) => [label, rankedMerchants(merchants)]),
+  );
+
+  // The income groups actually present, in the fixed "Periodic Income" → "Other
+  // Income" order the reader expects — not ranked, so the two parents never swap
+  // places from one window to the next.
+  const incomeGroups = INCOME_GROUP_NAMES.filter((group) =>
+    [...incomeGroupOf.values()].includes(group),
   );
 
   const spendMerchants = new Map(
     [...merchantTotals].map(([category, byMerchant]) => [
       category,
-      new Map(
-        [...byMerchant]
-          .filter(([, merchants]) => merchants.size > 1)
-          .map(([label, merchants]) => [label, ranked(merchants)]),
-      ),
+      new Map([...byMerchant].map(([label, merchants]) => [label, rankedMerchants(merchants)])),
     ]),
   );
 
   return {
     period,
     periods: ordered,
-    incomeCategories: present((p) => p.income, UNCATEGORISED)
-      ? [...incomeBase, UNCATEGORISED]
-      : incomeBase,
     spendCategories: present((p) => p.spend, UNCATEGORISED) ? [...spendBase, UNCATEGORISED] : spendBase,
+    incomeSubcategories,
+    incomeGroups,
+    incomeGroupOf,
+    incomeMerchants,
     spendSubcategories,
     spendMerchants,
     max,
-    defaultedRows,
     through,
+    hasOlder,
   };
 }
 
