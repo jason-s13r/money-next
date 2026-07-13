@@ -6,12 +6,22 @@
 // Auckland, so hundreds of rows land in a different bucket under UTC — enough to
 // visibly move a monthly total.
 
-export const PERIODS = ["week", "month", "quarter", "year"] as const;
+export const PERIODS = ["week", "month", "quarter", "year", "taxyear"] as const;
 export type Period = (typeof PERIODS)[number];
 
 export function isPeriod(value: string): value is Period {
   return (PERIODS as readonly string[]).includes(value);
 }
+
+/** Button text for the period selector. "taxyear" is the only key whose plain
+ *  form ("Taxyear") reads wrong; the rest are just their capitalised selves. */
+export const PERIOD_LABELS: Record<Period, string> = {
+  week: "Week",
+  month: "Month",
+  quarter: "Quarter",
+  year: "Year",
+  taxyear: "Tax year",
+};
 
 const NZ_TIMEZONE = "Pacific/Auckland";
 
@@ -50,7 +60,16 @@ function isoWeek({ year, month, day }: YMD): { isoYear: number; week: number } {
   return { isoYear, week };
 }
 
-/** A sortable bucket key: `2026-W28`, `2026-07`, `2026-Q3`, `2026`. */
+/**
+ * The NZ tax year runs 1 April – 31 March, and is named by the calendar year it
+ * *ends* in: the span 1 Apr 2026 – 31 Mar 2027 is "FY27". The key carries the full
+ * ending year (`FY2027`) so it sorts lexicographically alongside the other kinds.
+ */
+function taxYearEnd({ year, month }: YMD): number {
+  return month >= 4 ? year + 1 : year;
+}
+
+/** A sortable bucket key: `2026-W28`, `2026-07`, `2026-Q3`, `2026`, `FY2027`. */
 export function periodKey(date: Date, period: Period): string {
   const ymd = nzDate(date);
   switch (period) {
@@ -64,6 +83,8 @@ export function periodKey(date: Date, period: Period): string {
       return `${ymd.year}-Q${Math.ceil(ymd.month / 3)}`;
     case "year":
       return String(ymd.year);
+    case "taxyear":
+      return `FY${taxYearEnd(ymd)}`;
   }
 }
 
@@ -89,6 +110,9 @@ function periodBack(now: Date, period: Period, i: number): string {
   }
 
   if (period === "year") return String(ymd.year - i);
+
+  // Whole tax years step like calendar years, off the tax year `now` falls in.
+  if (period === "taxyear") return `FY${taxYearEnd(ymd) - i}`;
 
   const step = period === "quarter" ? 3 : 1;
   // Snap to the start of the current period, then walk back `i` steps.
@@ -136,7 +160,7 @@ export function periodsThrough(now: Date, period: Period, count: number): string
 
 /** Generous lower bound for the fetch. Exact membership is decided by key. */
 export function fetchCutoff(now: Date, period: Period, count: number): Date {
-  const days = { week: 7, month: 31, quarter: 93, year: 366 }[period];
+  const days = { week: 7, month: 31, quarter: 93, year: 366, taxyear: 366 }[period];
   return new Date(now.getTime() - (count + 2) * days * 86_400_000);
 }
 
@@ -156,6 +180,11 @@ export function periodStart(key: string, period: Period): Date {
     }
     case "year":
       return new Date(Date.UTC(Number(key), 0, 1));
+    case "taxyear": {
+      // `FY2027` opens on 1 April of the year before the one it's named for.
+      const end = Number(key.slice(2));
+      return new Date(Date.UTC(end - 1, 3, 1));
+    }
   }
 }
 
@@ -215,6 +244,12 @@ export function formatPeriodKey(key: string, period: Period): string {
     }
     case "year":
       return key;
+    case "taxyear": {
+      // The span is the non-obvious part of a tax year, so the full label spells
+      // it out: `FY27 (Apr 2026 – Mar 2027)`.
+      const end = Number(key.slice(2));
+      return `FY${key.slice(4)} (Apr ${end - 1} – Mar ${end})`;
+    }
   }
 }
 
@@ -238,5 +273,7 @@ export function formatPeriodShort(key: string, period: Period): string {
     }
     case "year":
       return key;
+    case "taxyear":
+      return `FY${key.slice(4)}`;
   }
 }

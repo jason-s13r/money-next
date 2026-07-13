@@ -55,13 +55,18 @@ export function SimilarTransactions({
 
   return (
     <section className="mb-8">
-      <h2 className="mb-3 flex items-baseline justify-between gap-3 border-b border-current/20 pb-2 text-sm font-medium opacity-60">
-        <span>Similar transactions</span>
-        <span className="tabular-nums">
-          {selectedIds.length} of {items.length} selected
-        </span>
-      </h2>
+      <details className="group">
+        <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b border-current/20 pb-2 text-sm font-medium opacity-60 [&::-webkit-details-marker]:hidden">
+          <span className="flex items-center gap-1.5">
+            <span className="transition-transform group-open:rotate-90">›</span>
+            Similar transactions
+          </span>
+          <span className="tabular-nums">
+            {selectedIds.length} of {items.length} selected
+          </span>
+        </summary>
 
+        <div className="mt-3">
       {category || merchant ? (
         <div className="mb-3 flex flex-wrap gap-2">
           {category ? (
@@ -148,6 +153,8 @@ export function SimilarTransactions({
           ))}
         </tbody>
       </table>
+        </div>
+      </details>
     </section>
   );
 }

@@ -6,12 +6,15 @@ import {
   getMerchants,
   getSimilarTransactions,
   getTransaction,
+  getTransferCandidates,
+  getTransferGroupLegs,
 } from "@/lib/data";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 import { setTransactionCategory, setTransactionMerchant } from "./actions";
 import { ConflictBanner } from "./conflict-banner";
 import { SimilarTransactions } from "./similar-transactions";
+import { TransferLink } from "./transfer-link";
 
 export async function generateMetadata(props: PageProps<"/transactions/[transactionId]">) {
   const { transactionId } = await props.params;
@@ -35,11 +38,14 @@ export default async function TransactionPage(
   // Options for the enrichment pickers. Loaded here so the page stays one server
   // round-trip; both are small enough to hand to the client whole (see
   // SearchableSelect). The bound actions carry this transaction's id.
-  const [categories, merchants, similar] = await Promise.all([
-    getCategories(),
-    getMerchants(),
-    getSimilarTransactions(tx),
-  ]);
+  const [categories, merchants, similar, transferLegs, transferCandidates] =
+    await Promise.all([
+      getCategories(),
+      getMerchants(),
+      getSimilarTransactions(tx),
+      getTransferGroupLegs(tx),
+      getTransferCandidates(tx, account.currency),
+    ]);
 
   const categoryOptions: SelectOption[] = categories.map((c) => ({
     value: c.id,
@@ -56,15 +62,6 @@ export default async function TransactionPage(
 
   return (
     <main className="mx-auto w-full max-w-3xl p-6">
-      <nav className="mb-4 text-sm">
-        <Link
-          href={`/accounts/${account.id}`}
-          className="underline underline-offset-2 opacity-60"
-        >
-          ← {account.name}
-        </Link>
-      </nav>
-
       <header className="mb-8">
         <p className="text-sm opacity-60">{formatDateTime(tx.date)}</p>
         <h1 className="mt-1 text-2xl font-semibold">
@@ -81,19 +78,23 @@ export default async function TransactionPage(
 
       <Section title="Transaction">
         <Field label="Description" value={tx.description} />
-        <Field label="Type" value={tx.type} />
+        <Field
+          label="Type"
+          value={tx.type}
+          href={tx.type ? `/transactions/type/${slugify(tx.type)}` : null}
+        />
         <Field
           label="Balance after"
           value={tx.balance === null ? null : formatMoney(tx.balance, account.currency)}
         />
-        <Field label="Account" value={account.name} />
+        <Field label="Account" value={account.name} href={`/accounts/${account.id}`} />
         <Field label="Bank" value={account.connectionName} />
       </Section>
 
       <Section title="Enrichment">
         <EditableField
           label="Merchant"
-          href={tx.merchantName ? `/merchants/${slugify(tx.merchantName)}` : null}
+          href={tx.merchantId ? `/merchants/${tx.merchantId}` : null}
           value={tx.merchantName}
         >
           <SearchableSelect
@@ -147,6 +148,14 @@ export default async function TransactionPage(
           href={tx.categoryGroup ? `/categories/${slugify(tx.categoryGroup)}` : null}
         />
       </Section>
+
+      <TransferLink
+        sourceId={tx.id}
+        sourceAmount={tx.amount}
+        sourceCurrency={account.currency}
+        legs={transferLegs}
+        candidates={transferCandidates}
+      />
 
       <SimilarTransactions
         sourceId={tx.id}

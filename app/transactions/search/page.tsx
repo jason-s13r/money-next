@@ -26,12 +26,6 @@ export default async function SearchPage(props: PageProps<"/transactions/search"
 
   return (
     <main className="mx-auto w-full max-w-5xl p-6">
-      <nav className="mb-4 text-sm">
-        <Link href="/" className="underline underline-offset-2 opacity-60">
-          ← Dashboard
-        </Link>
-      </nav>
-
       <header className="mb-6">
         <h1 className="text-2xl font-semibold">Search transactions</h1>
 

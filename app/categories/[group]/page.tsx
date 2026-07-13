@@ -29,7 +29,6 @@ export default async function GroupPage(props: PageProps<"/categories/[group]">)
 
   return (
     <Listing
-      back={{ href: "/", label: "Dashboard" }}
       title={group}
       subtitle={isIncomeGroup(group) ? "Money in" : `${isEssential(group) ? "Essential" : "Discretionary"} spending`}
       stats={[
@@ -43,7 +42,8 @@ export default async function GroupPage(props: PageProps<"/categories/[group]">)
       totalPages={totalPages}
       empty={isIncomeGroup(group) ? "No income in this period." : "No spending in this category group."}
     >
-      <TransactionTable items={items} />
+      {/* Every row is in this group already. */}
+      <TransactionTable items={items} showGroup={false} />
     </Listing>
   );
 }

@@ -10,7 +10,6 @@ import { Pagination } from "./pagination";
  * that quietly reported the sum of the fifty rows it happened to show.
  */
 export function Listing({
-  back,
   title,
   subtitle,
   stats,
@@ -20,7 +19,6 @@ export function Listing({
   empty,
   children,
 }: {
-  back: { href: string; label: string };
   title: string;
   subtitle?: string;
   stats: { label: string; value: string }[];
@@ -35,12 +33,6 @@ export function Listing({
 
   return (
     <main className="mx-auto w-full max-w-5xl p-6">
-      <nav className="mb-4 text-sm">
-        <Link href={back.href} className="underline underline-offset-2 opacity-60">
-          ← {back.label}
-        </Link>
-      </nav>
-
       <header className="mb-6">
         <h1 className="text-2xl font-semibold">{title}</h1>
         {subtitle ? <p className="mt-1 text-sm opacity-60">{subtitle}</p> : null}

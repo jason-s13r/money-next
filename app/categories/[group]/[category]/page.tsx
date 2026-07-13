@@ -40,7 +40,6 @@ export default async function CategoryPage(props: PageProps<"/categories/[group]
 
   return (
     <Listing
-      back={{ href: `/categories/${slugify(group)}`, label: group }}
       title={category}
       subtitle={group}
       stats={[
@@ -54,8 +53,8 @@ export default async function CategoryPage(props: PageProps<"/categories/[group]
       totalPages={totalPages}
       empty={isIncomeGroup(group) ? "No income in this category." : "No spending in this category."}
     >
-      {/* The Category column would read the same on every row. */}
-      <TransactionTable items={items} showCategory={false} />
+      {/* The Group and Category columns would read the same on every row. */}
+      <TransactionTable items={items} showGroup={false} showCategory={false} />
     </Listing>
   );
 }

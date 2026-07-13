@@ -34,7 +34,6 @@ export default async function CardPage(props: PageProps<"/card/[suffix]">) {
 
   return (
     <Listing
-      back={{ href: "/", label: "Dashboard" }}
       title={label(suffix)}
       // The same suffix can appear on more than one account, so the Account
       // column is doing real work here rather than repeating the heading.
@@ -48,7 +47,8 @@ export default async function CardPage(props: PageProps<"/card/[suffix]">) {
       totalPages={totalPages}
       empty="No transactions on this card."
     >
-      <TransactionTable items={items} />
+      {/* Every row is this card already. */}
+      <TransactionTable items={items} showCard={false} />
     </Listing>
   );
 }

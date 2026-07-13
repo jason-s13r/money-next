@@ -85,6 +85,16 @@ model Transaction {
   otherAccount String?
   cardSuffix   String?
 
+  /// The transfer this row is one leg of, once it's been grouped with the other
+  /// side(s) of an internal transfer. A group holds two *or more* legs, so it
+  /// spans not just a simple out/in pair but a multi-currency conversion and a
+  /// separate fee row too. Any "is this a transfer" filter is a plain
+  /// `transferGroupId: null` test on either leg. Kept a plain column (not a Prisma
+  /// relation) to match the denormalised style here; group members are resolved by
+  /// querying this column. Always user-made: Akahu tags a row's `type` as TRANSFER
+  /// but never says which rows belong together.
+  transferGroupId Int?
+
   /// Timestamps as reported by Akahu, not by us.
   createdAt DateTime?
   updatedAt DateTime?
@@ -101,6 +111,34 @@ model Transaction {
   @@index([categoryGroup])
   @@index([merchantName])
   @@index([merchantId])
+  @@index([transferGroupId])
+}
+
+/// A user-defined grouping of transactions that together make up one internal
+/// transfer: the outflow and inflow legs, plus any currency-conversion or fee
+/// rows. Its legs are excluded from income/spend/net metrics (see the notes on
+/// `Transaction.transferGroupId`). Akahu never links the legs itself, so every
+/// group here is hand-made on the transaction page. Deliberately relation-less on
+/// the Prisma side: legs point at it by `transferGroupId` and are read back with a
+/// plain query, matching the denormalised style of the rest of the schema.
+model TransferGroup {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+}
+
+/// Historical daily FX reference rates from the ECB, fetched via frankfurter.dev
+/// during `db:sync` and cached so cross-currency transfer matching runs offline
+/// like every other read here. `rate` is units of `currency` per 1 EUR on `date`
+/// (EUR is the ECB base, stored as 1); convert A→B with `amount * rateB / rateA`.
+/// The ECB only publishes on business days, so a weekend/holiday transaction reads
+/// the most recent prior date.
+model FxRate {
+  date     DateTime
+  currency String
+  rate     Float
+
+  @@id([date, currency])
+  @@index([currency, date])
 }
 
 /// A divergence between a user-set enrichment field and what a later Akahu sync

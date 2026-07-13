@@ -50,11 +50,16 @@ export function isKnownGroup(group: string): group is SpendingGroup {
   return group in SPENDING_GROUPS;
 }
 
+/** Recurring receipts — wages, a benefit, regular support. The income the spend
+ *  forecast is allowed to lean on: it keeps arriving, so it offsets the monthly
+ *  burn. "Other Income" (refunds, one-offs) is deliberately not counted there. */
+export const PERIODIC_INCOME_GROUP = "Periodic Income";
+
 // The invented income groups (see lib/nzfcc.ts). Inflows carry no NZFCC group, so
 // a credit category is filed under one of these — "Periodic Income" for recurring
 // receipts, "Other Income" for the rest. Kept as one list so a query can exclude
 // income in a single place and pages can tell an income group from a spending one.
-export const INCOME_GROUP_NAMES = ["Periodic Income", "Other Income"] as const;
+export const INCOME_GROUP_NAMES = [PERIODIC_INCOME_GROUP, "Other Income"] as const;
 
 export function isIncomeGroup(group: string): boolean {
   return (INCOME_GROUP_NAMES as readonly string[]).includes(group);
@@ -63,6 +68,22 @@ export function isIncomeGroup(group: string): boolean {
 export function isEssential(group: string): boolean {
   return isKnownGroup(group) && SPENDING_GROUPS[group] === "essential";
 }
+
+/**
+ * Categories struck from the spending forecast no matter how regularly they
+ * recur. Tax is the case the recurrence filter can't catch on its own: a small
+ * fee or interest charge lands most months, so the category looks recurring,
+ * while the figure is really carried by provisional- and terminal-tax lumps of a
+ * few thousand to tens of thousands. Averaging that in would describe a month
+ * that never happens, so tax is excluded outright — it belongs to the emergency
+ * runway's "what must I pay" reckoning, not the "cost of ordinary living" burn.
+ *
+ * Matched by NZFCC category id, which is stable where names are not. Accountant
+ * fees ("Accountancy… and tax services") are a genuine recurring cost and stay.
+ */
+export const FORECAST_EXCLUDED_CATEGORY_IDS: ReadonlySet<string> = new Set([
+  "nzfcc_ckouvvzbj005z08mle3z667go", // Tax payments
+]);
 
 export const SPENDING_GROUP_NAMES = Object.keys(SPENDING_GROUPS) as SpendingGroup[];
 
@@ -77,5 +98,12 @@ export function groupFromSlug(slug: string): SpendingGroup | null {
 /** Balances that cannot be spent this decade. */
 export const LOCKED_TYPES: ReadonlySet<string> = new Set(["KIWISAVER", "INVESTMENT"]);
 
-/** Balances that are spendable today. */
-export const LIQUID_TYPES: ReadonlySet<string> = new Set(["CHECKING", "SAVINGS", "WALLET"]);
+/** Balances that are spendable today. `FOREIGN` covers Wise-style multi-currency
+ *  balances, which spend like cash (converted to the display currency in the
+ *  liquid total), so they count here rather than sitting apart as untouchable. */
+export const LIQUID_TYPES: ReadonlySet<string> = new Set([
+  "CHECKING",
+  "SAVINGS",
+  "WALLET",
+  "FOREIGN",
+]);

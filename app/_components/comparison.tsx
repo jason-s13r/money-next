@@ -4,7 +4,7 @@ import { netOf, UNCATEGORISED, UNKNOWN_MERCHANT } from "@/lib/metrics";
 import { isKnownGroup } from "@/lib/categories";
 import { slugify } from "@/lib/slug";
 import { formatDate, formatMoneyWhole } from "@/lib/format";
-import { formatPeriodKey, formatPeriodShort, PERIODS, type Period } from "@/lib/periods";
+import { formatPeriodKey, formatPeriodShort, PERIOD_LABELS, PERIODS, type Period } from "@/lib/periods";
 import { CELL, CHEVRON, HEAD, Swatch } from "./table";
 import { SpendRow, type SpendNode } from "./spend-row";
 
@@ -30,6 +30,16 @@ function rowHref(category: string): string | null {
 /** A disclosure row leads to its subcategory's page under its group. */
 function detailHref(category: string, label: string): string | null {
   return isKnownGroup(category) ? `/categories/${slugify(category)}/${slugify(label)}` : null;
+}
+
+/**
+ * A merchant row leads to its id-keyed page. The chart groups by name, so the id
+ * is looked up (see `Comparison.merchantIds`); the unnamed remainder has no page.
+ */
+function merchantHref(comparison: Comparison, merchant: string): string | null {
+  if (merchant === UNKNOWN_MERCHANT) return null;
+  const id = comparison.merchantIds.get(merchant);
+  return id ? `/merchants/${id}` : null;
 }
 
 /**
@@ -64,7 +74,7 @@ function spendNode(comparison: Comparison, category: string): SpendNode {
       values: periods.map((p) => p.spendDetail.get(category)?.get(label)?.total ?? 0),
       children: (merchantsOf?.get(label) ?? []).map((merchant) => ({
         label: merchant,
-        href: merchant === UNKNOWN_MERCHANT ? null : `/merchants/${slugify(merchant)}`,
+        href: merchantHref(comparison, merchant),
         values: periods.map(
           (p) => p.spendDetail.get(category)?.get(label)?.merchants.get(merchant) ?? 0,
         ),
@@ -96,7 +106,7 @@ function incomeNodes(comparison: Comparison): SpendNode[] {
     values: periods.map((p) => p.incomeDetail.get(label)?.total ?? 0),
     children: (incomeMerchants.get(label) ?? []).map((merchant) => ({
       label: merchant,
-      href: merchant === UNKNOWN_MERCHANT ? null : `/merchants/${slugify(merchant)}`,
+      href: merchantHref(comparison, merchant),
       values: periods.map((p) => p.incomeDetail.get(label)?.merchants.get(merchant) ?? 0),
       children: [],
     })),
@@ -273,13 +283,13 @@ function PeriodSelector({ period }: { period: Period }) {
           key={option}
           href={`/?period=${option}`}
           aria-current={option === period ? "page" : undefined}
-          className={`rounded-md px-2.5 py-1 capitalize ${
+          className={`rounded-md px-2.5 py-1 ${
             option === period
               ? "bg-foreground text-background"
               : "text-secondary hover:bg-current/5"
           }`}
         >
-          {option}
+          {PERIOD_LABELS[option]}
         </Link>
       ))}
     </nav>
@@ -431,6 +441,11 @@ export function ComparisonSection({
       }.`
     : "";
 
+  // A period with no money either way is a $0 card that carries nothing — skip it.
+  // The table keeps its column (a row of dashes still places the period in time),
+  // but a whole empty card is just noise, e.g. tax years before the data begins.
+  const cardPeriods = comparison.periods.filter((p) => p.incomeTotal > 0 || p.spendTotal > 0);
+
   return (
     <section>
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
@@ -439,7 +454,7 @@ export function ComparisonSection({
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {comparison.periods.map((breakdown) => (
+        {cardPeriods.map((breakdown) => (
           <PeriodCard key={breakdown.key} breakdown={breakdown} comparison={comparison} />
         ))}
       </div>

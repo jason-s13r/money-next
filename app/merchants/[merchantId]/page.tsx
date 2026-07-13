@@ -2,32 +2,29 @@ import { notFound, redirect } from "next/navigation";
 import { Listing } from "@/app/_components/listing";
 import { parsePage } from "@/app/_components/pagination";
 import { TransactionTable } from "@/app/_components/transaction-table";
-import { TRANSACTIONS_PER_PAGE, getMerchantNames, getMerchantTransactions } from "@/lib/data";
+import { TRANSACTIONS_PER_PAGE, getMerchant, getMerchantTransactions } from "@/lib/data";
 import { formatMoney } from "@/lib/format";
-import { fromSlug, slugify } from "@/lib/slug";
 
-// Keyed by merchant *name*, not by Akahu's `merchantId`: one business can arrive
-// under two ids ("Kamo Vets" does), and splitting a merchant across two pages by
-// an id the reader never sees would be a bug they could not diagnose.
+// Keyed by Akahu's `merchantId`, so the url is stable and unambiguous. One
+// business can arrive under two ids ("Kamo Vets" has two); this page is exactly
+// the id the reader clicked, which is what every merchant link now carries.
 
-async function resolve(params: Promise<{ merchant: string }>) {
-  const { merchant } = await params;
-  return fromSlug(await getMerchantNames(), merchant);
+export async function generateMetadata(props: PageProps<"/merchants/[merchantId]">) {
+  const { merchantId } = await props.params;
+  const merchant = await getMerchant(merchantId);
+  return { title: merchant?.name ?? "Merchant" };
 }
 
-export async function generateMetadata(props: PageProps<"/merchants/[merchant]">) {
-  return { title: (await resolve(props.params)) ?? "Merchant" };
-}
-
-export default async function MerchantPage(props: PageProps<"/merchants/[merchant]">) {
-  const merchant = await resolve(props.params);
+export default async function MerchantPage(props: PageProps<"/merchants/[merchantId]">) {
+  const { merchantId } = await props.params;
+  const merchant = await getMerchant(merchantId);
   if (!merchant) notFound();
 
   const page = parsePage((await props.searchParams).page);
-  const { items, total, net } = await getMerchantTransactions(merchant, page);
+  const { items, total, net } = await getMerchantTransactions(merchantId, page);
   const totalPages = Math.ceil(total / TRANSACTIONS_PER_PAGE);
 
-  const basePath = `/merchants/${slugify(merchant)}`;
+  const basePath = `/merchants/${merchantId}`;
   if (page > totalPages && totalPages > 0) redirect(`${basePath}?page=${totalPages}`);
 
   // Refunds are inflows, so a merchant that paid back more than it took nets
@@ -36,8 +33,7 @@ export default async function MerchantPage(props: PageProps<"/merchants/[merchan
 
   return (
     <Listing
-      back={{ href: "/", label: "Dashboard" }}
-      title={merchant}
+      title={merchant.name}
       stats={[
         { label: spent >= 0 ? "Spent" : "Refunded", value: formatMoney(Math.abs(spent), null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },

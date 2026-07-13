@@ -19,7 +19,6 @@ export default async function UncategorisedPage(props: PageProps<"/categories/un
 
   return (
     <Listing
-      back={{ href: "/", label: "Dashboard" }}
       title="Uncategorised"
       subtitle="Transactions with no specific category, in either direction. Counted in the totals, but not yet assigned one."
       stats={[
@@ -31,8 +30,8 @@ export default async function UncategorisedPage(props: PageProps<"/categories/un
       totalPages={totalPages}
       empty="Every transaction is categorised."
     >
-      {/* Every row's category is, by definition, nothing. */}
-      <TransactionTable items={items} showCategory={false} />
+      {/* Every row's group and category are, by definition, nothing. */}
+      <TransactionTable items={items} showGroup={false} showCategory={false} />
     </Listing>
   );
 }

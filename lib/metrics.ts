@@ -2,12 +2,15 @@ import "server-only";
 import { connection } from "next/server";
 import { db } from "./db";
 import {
+  FORECAST_EXCLUDED_CATEGORY_IDS,
   INCOME_GROUP_NAMES,
   isEssential,
   isKnownGroup,
   LIQUID_TYPES,
   LOCKED_TYPES,
+  PERIODIC_INCOME_GROUP,
 } from "./categories";
+import { FX_BASE_CURRENCY } from "./fx";
 import { fetchCutoff, periodKey, periodWindow, type Period } from "./periods";
 
 // Dashboard metrics. A transaction's nature is derived from two facts Akahu gives
@@ -26,6 +29,13 @@ const NZ_TIMEZONE = "Pacific/Auckland";
 const MONTHS = 12;
 /** Overfetch window: comfortably more than 12 months, filtered precisely below. */
 const FETCH_DAYS = 400;
+/** A category joins the forecast only if it has spend in at least this many of
+ *  the window's months — half of it. Monthly and near-monthly bills clear the
+ *  bar; a one-off or annual lump recurs too rarely to, so it drops out of the
+ *  forecast rather than inflating the estimated monthly burn. (Tax dribbles in
+ *  most months yet is still lumpy, so it is excluded by id on top of this —
+ *  see {@link FORECAST_EXCLUDED_CATEGORY_IDS}.) */
+const RECUR_MIN_MONTHS = Math.ceil(MONTHS / 2);
 
 const monthFormat = new Intl.DateTimeFormat("en-NZ", {
   timeZone: NZ_TIMEZONE,
@@ -67,15 +77,145 @@ function median(values: number[]): number | null {
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
 }
 
+/**
+ * Mean of a monthly series (oldest first) biased toward recent months: month i,
+ * counting from 1 at the oldest, carries weight i, so the newest month counts
+ * MONTHS times as much as the oldest. Divides by the whole window's weight,
+ * including months with no spend, so a category that is trailing off is faded
+ * out rather than forecast at its former level.
+ */
+function recencyWeightedMean(oldestFirst: number[]): number {
+  let weighted = 0;
+  let weight = 0;
+  oldestFirst.forEach((value, i) => {
+    weighted += (i + 1) * value;
+    weight += i + 1;
+  });
+  return weight === 0 ? 0 : weighted / weight;
+}
+
+/**
+ * The forecast figure for a set of per-category monthly series: for every
+ * category that recorded something in at least {@link RECUR_MIN_MONTHS} of the
+ * window's months, its {@link recencyWeightedMean recency-weighted} average
+ * monthly amount, summed. Irregular lumps recur too rarely to clear the bar and
+ * are left out, so the total reads as "a normal month" rather than being jolted
+ * by a one-off. The shape is shared by the spending burn and the periodic-income
+ * forecast — the only difference is which rows fed the series.
+ */
+function forecastTotal(catMonths: Map<string, Map<string, number>>, keys: string[]): number {
+  let total = 0;
+  for (const series of catMonths.values()) {
+    const monthly = keys.map((k) => series.get(k) ?? 0);
+    if (monthly.filter((v) => v > 0).length < RECUR_MIN_MONTHS) continue;
+    total += recencyWeightedMean(monthly);
+  }
+  return total;
+}
+
+/** Display currency of last resort, when there are no active accounts to learn it
+ *  from. Matches `format.ts`'s default and the listings in `data.ts`. */
+const FALLBACK_DISPLAY_CURRENCY = "NZD";
+
+/**
+ * The currency the dashboard totals in: whichever one the most active accounts are
+ * held in, so the figures read in what the user mainly banks in rather than a
+ * hard-coded NZD. Falls back to {@link FALLBACK_DISPLAY_CURRENCY} when no active
+ * account carries a currency.
+ */
+async function getDisplayCurrency(): Promise<string> {
+  const grouped = await db.account.groupBy({
+    by: ["currency"],
+    where: { status: "ACTIVE", currency: { not: null } },
+    _count: { _all: true },
+    orderBy: { _count: { currency: "desc" } },
+  });
+  return grouped[0]?.currency ?? FALLBACK_DISPLAY_CURRENCY;
+}
+
+/**
+ * Expresses a dated foreign-currency amount in the display currency at the ECB
+ * rate in effect on its own day — the rule every mixed-currency computation on the
+ * dashboard is valued by, so a USD or CHF transaction counts for what it was
+ * actually worth that day rather than being summed as if it were the display
+ * currency. Rates are mirrored per business day (see `FxRate`), so a weekend or
+ * holiday date walks back to the most recent prior published day.
+ */
+type DisplayConverter = (amount: number, currency: string | null, date: Date) => number;
+
+/**
+ * Builds a {@link DisplayConverter} to `display` for the currencies actually
+ * present in a set of rows. The rate rows for those currencies (plus `display`,
+ * the conversion target — EUR excepted, as it is the ECB base and always 1) are
+ * loaded once and indexed newest-first per currency, so each call is an in-memory
+ * nearest-on-or-before lookup. An input already all in the display currency needs
+ * no rates and issues no query. When no rate covers a row — a currency the mirror
+ * never held, or a date before the earliest rate — the amount is returned
+ * unchanged rather than dropped, the same best-effort fallback the transaction
+ * listings use.
+ */
+async function loadDisplayConverter(
+  display: string,
+  currencies: (string | null)[],
+): Promise<DisplayConverter> {
+  // A conversion is needed only if some row is held in a currency other than the
+  // display one. EUR counts here even though its rate is 1: it still converts *to*
+  // the display currency.
+  if (!currencies.some((c) => c && c !== display)) return (amount) => amount;
+
+  // Load every distinct present currency plus the display target, EUR excepted —
+  // it is the base, resolved to 1 without a lookup.
+  const wanted = [
+    ...new Set(
+      [...currencies, display].filter((c): c is string => !!c && c !== FX_BASE_CURRENCY),
+    ),
+  ];
+  const rows = await db.fxRate.findMany({
+    where: { currency: { in: wanted } },
+    orderBy: { date: "desc" },
+    select: { date: true, currency: true, rate: true },
+  });
+
+  // Per currency, a newest-first list of [ms, rate]; the first entry on or before
+  // a date is the rate in effect then.
+  const series = new Map<string, { t: number; rate: number }[]>();
+  for (const row of rows) {
+    const entry = { t: row.date.getTime(), rate: row.rate };
+    const list = series.get(row.currency);
+    if (list) list.push(entry);
+    else series.set(row.currency, [entry]);
+  }
+
+  const rateOn = (currency: string, t: number): number | null => {
+    if (currency === FX_BASE_CURRENCY) return 1;
+    const list = series.get(currency);
+    if (!list) return null;
+    for (const entry of list) if (entry.t <= t) return entry.rate;
+    return null;
+  };
+
+  return (amount, currency, date) => {
+    if (!currency || currency === display) return amount;
+    const t = date.getTime();
+    const from = rateOn(currency, t);
+    const to = rateOn(display, t);
+    if (from == null || to == null) return amount;
+    return (amount * to) / from;
+  };
+}
+
 export type BalanceSummary = {
+  /** The currency every figure here is expressed in — the most common one across
+   *  active accounts (see `getDisplayCurrency`). */
+  displayCurrency: string;
   /** Spendable today: checking, savings, wallets. Uses available, not current. */
   liquid: number;
   /** KiwiSaver and investments — real, but not reachable for decades. */
   locked: number;
-  /** Everything in NZD, including locked and any drawn debt. */
-  totalNzd: number;
+  /** Everything, including locked and any drawn debt, in the display currency. */
+  total: number;
   /** Total minus locked. The number that reflects decisions you can make. */
-  accessibleNzd: number;
+  accessible: number;
   facility: {
     name: string;
     limit: number;
@@ -84,60 +224,73 @@ export type BalanceSummary = {
     utilisation: number;
   } | null;
   /**
-   * Non-NZD balances, listed and never summed into the totals above. There is no
-   * exchange-rate table yet, and silently adding 1,001 AUD to 1,001 NZD would be
-   * worse than showing nothing.
+   * Every active balance summed per currency, each in its *own* currency — the
+   * display currency included, so the breakdown accounts for the whole of net
+   * worth rather than just its foreign part. The totals above fold each of these
+   * in at its latest rate (see `getBalanceSummary`); this list explains them.
    */
-  foreign: { currency: string; total: number }[];
+  byCurrency: { currency: string; total: number }[];
 };
 
 export async function getBalanceSummary(): Promise<BalanceSummary> {
   await connection();
   const accounts = await db.account.findMany({ where: { status: "ACTIVE" } });
 
-  const nzd = accounts.filter((a) => a.currency === "NZD");
+  // Every account is valued in the display currency. A balance has no transaction
+  // date, so it converts at the currency's latest rate — the nearest on or before
+  // now, which `loadDisplayConverter` resolves when handed today's date.
+  const display = await getDisplayCurrency();
+  const toDisplay = await loadDisplayConverter(display, accounts.map((a) => a.currency));
+  const asOf = new Date();
+  const inDisplay = (amount: number, currency: string | null) =>
+    toDisplay(amount, currency, asOf);
 
   // Locked accounts report `balanceAvailable` as 0, so they must use `current`.
-  const liquid = nzd
+  const liquid = accounts
     .filter((a) => LIQUID_TYPES.has(a.type))
-    .reduce((sum, a) => sum + (a.balanceAvailable ?? a.balanceCurrent ?? 0), 0);
+    .reduce((sum, a) => sum + inDisplay(a.balanceAvailable ?? a.balanceCurrent ?? 0, a.currency), 0);
 
-  const locked = nzd
+  const locked = accounts
     .filter((a) => LOCKED_TYPES.has(a.type))
-    .reduce((sum, a) => sum + (a.balanceCurrent ?? 0), 0);
+    .reduce((sum, a) => sum + inDisplay(a.balanceCurrent ?? 0, a.currency), 0);
 
-  const totalNzd = nzd.reduce((sum, a) => sum + (a.balanceCurrent ?? 0), 0);
+  const total = accounts.reduce((sum, a) => sum + inDisplay(a.balanceCurrent ?? 0, a.currency), 0);
 
   // The revolving facility reports `balanceCurrent` signed: positive means in
   // credit, negative means drawn against the limit. Summing it into net worth is
-  // therefore already correct, and only the negative case is debt.
-  const revolving = nzd.find((a) => a.balanceLimit !== null && a.balanceLimit > 0);
+  // therefore already correct, and only the negative case is debt. Its limit and
+  // drawn amount are shown in the display currency; utilisation is a ratio within
+  // one currency, so conversion leaves it unchanged.
+  const revolving = accounts.find((a) => a.balanceLimit !== null && a.balanceLimit > 0);
+  const drawnRaw = revolving ? Math.max(0, -(revolving.balanceCurrent ?? 0)) : 0;
   const facility = revolving
     ? {
         name: revolving.name,
-        limit: revolving.balanceLimit!,
-        drawn: Math.max(0, -(revolving.balanceCurrent ?? 0)),
-        utilisation:
-          Math.max(0, -(revolving.balanceCurrent ?? 0)) / revolving.balanceLimit!,
+        limit: inDisplay(revolving.balanceLimit!, revolving.currency),
+        drawn: inDisplay(drawnRaw, revolving.currency),
+        utilisation: drawnRaw / revolving.balanceLimit!,
       }
     : null;
 
-  const byCurrency = new Map<string, number>();
+  // Every currency held, including the display one, so the breakdown sums to net
+  // worth rather than only its foreign remainder.
+  const totalsByCurrency = new Map<string, number>();
   for (const account of accounts) {
-    if (!account.currency || account.currency === "NZD") continue;
-    byCurrency.set(
+    if (!account.currency) continue;
+    totalsByCurrency.set(
       account.currency,
-      (byCurrency.get(account.currency) ?? 0) + (account.balanceCurrent ?? 0),
+      (totalsByCurrency.get(account.currency) ?? 0) + (account.balanceCurrent ?? 0),
     );
   }
 
   return {
+    displayCurrency: display,
     liquid,
     locked,
-    totalNzd,
-    accessibleNzd: totalNzd - locked,
+    total,
+    accessible: total - locked,
     facility,
-    foreign: [...byCurrency]
+    byCurrency: [...totalsByCurrency]
       .map(([currency, total]) => ({ currency, total }))
       .sort((a, b) => b.total - a.total),
   };
@@ -149,6 +302,24 @@ export type SpendSummary = {
   byCategory: { group: string; total: number }[];
   /** Typical month of non-discretionary spend. Null if there is no history. */
   medianEssential: number | null;
+  /**
+   * Estimated monthly spend if life carries on unchanged: the recency-weighted
+   * average of every category that recurs in at least half the window's months,
+   * summed. Irregular lumps — an annual premium — recur too rarely to clear the
+   * bar, and tax is struck out by id besides, so neither inflates it. Unlike
+   * {@link medianEssential} this includes discretionary spend: it is the cost of
+   * a normal month, not the essentials-only floor. Null with no spending history.
+   */
+  forecastBurn: number | null;
+  /**
+   * Estimated monthly income that can be leaned on to cover that burn: the same
+   * recency-weighted, recurs-most-months forecast as {@link forecastBurn}, but
+   * built from the "Periodic Income" group — wages, a benefit, ongoing support.
+   * One-off receipts ("Other Income") are excluded, and an income stream that has
+   * stopped fades out under the recency weighting rather than being counted at its
+   * old level. Zero when no periodic income recurs; it never inflates the runway.
+   */
+  forecastIncome: number;
   /** Total classified spending over the window. */
   categorisedOut: number;
   /**
@@ -163,13 +334,34 @@ export async function getSpendSummary(): Promise<SpendSummary> {
   await connection();
 
   const cutoff = new Date(Date.now() - FETCH_DAYS * 24 * 60 * 60 * 1000);
-  // Categorised spending: money out that Akahu tagged with a `categoryGroup`.
-  // This drives the essential/median runway, so it deliberately ignores both
-  // income and the uncategorised outflow that no group could name.
+  // Categorised spending (money out Akahu tagged with a `categoryGroup`) plus
+  // periodic income (money in filed under "Periodic Income"). The spending drives
+  // the essential/median runway and the burn forecast; the periodic income is the
+  // recurring receipt the forecast runway is allowed to net off against. Both the
+  // uncategorised outflow no group could name and one-off "Other Income" are left
+  // out — neither describes a normal month.
   const rows = await db.transaction.findMany({
-    where: { amount: { lt: 0 }, categoryGroup: { not: null }, date: { gte: cutoff } },
-    select: { date: true, amount: true, categoryGroup: true },
+    where: {
+      date: { gte: cutoff },
+      OR: [
+        { amount: { lt: 0 }, categoryGroup: { not: null } },
+        { amount: { gt: 0 }, categoryGroup: PERIODIC_INCOME_GROUP },
+      ],
+    },
+    select: {
+      date: true,
+      amount: true,
+      categoryGroup: true,
+      categoryId: true,
+      categoryName: true,
+      account: { select: { currency: true } },
+    },
   });
+
+  // Foreign spend counts at the rate on the day it happened, not as if it were
+  // already in the display currency.
+  const display = await getDisplayCurrency();
+  const toDisplay = await loadDisplayConverter(display, rows.map((r) => r.account.currency));
 
   const keys = completeMonths(new Date());
   const window = new Set(keys);
@@ -177,6 +369,15 @@ export async function getSpendSummary(): Promise<SpendSummary> {
   const categorisedByMonth = new Map(keys.map((k) => [k, 0]));
   const essentialByMonth = new Map(keys.map((k) => [k, 0]));
   const byCategory = new Map<string, number>();
+  // Per-category monthly series, keyed by the specific category where Akahu named
+  // one and by the group otherwise. The finer the key, the cleaner the forecast:
+  // a lumpy tax payment is isolated in its own category rather than smeared across
+  // the recurring spend that shares its group.
+  const catMonths = new Map<string, Map<string, number>>();
+  // Periodic income's own per-category monthly series, forecast the same way as
+  // the burn so the runway can net the two: a benefit or wage that keeps arriving
+  // offsets the spend it is meant to cover.
+  const incomeMonths = new Map<string, Map<string, number>>();
   const unknownGroups = new Set<string>();
   let categorisedOut = 0;
 
@@ -184,9 +385,22 @@ export async function getSpendSummary(): Promise<SpendSummary> {
     const key = monthKey(row.date);
     if (!window.has(key)) continue;
 
-    const spend = -row.amount;
     const group = row.categoryGroup;
     if (group === null) continue;
+
+    const amount = toDisplay(row.amount, row.account.currency, row.date);
+
+    // Money in is periodic income (the query lets no other inflow through): feed
+    // its own recurrence-tested series and take no further part in the spend side.
+    if (row.amount > 0) {
+      const catKey = row.categoryName ?? group;
+      let series = incomeMonths.get(catKey);
+      if (!series) incomeMonths.set(catKey, (series = new Map()));
+      series.set(key, (series.get(key) ?? 0) + amount);
+      continue;
+    }
+
+    const spend = -amount;
 
     if (!isKnownGroup(group)) unknownGroups.add(group);
 
@@ -196,7 +410,22 @@ export async function getSpendSummary(): Promise<SpendSummary> {
     if (isEssential(group)) {
       essentialByMonth.set(key, essentialByMonth.get(key)! + spend);
     }
+
+    // Tax and the like never enter the forecast, even though small charges keep
+    // them looking recurring — their lumps would describe a month that never is.
+    if (row.categoryId && FORECAST_EXCLUDED_CATEGORY_IDS.has(row.categoryId)) continue;
+    const catKey = row.categoryName ?? group;
+    let series = catMonths.get(catKey);
+    if (!series) catMonths.set(catKey, (series = new Map()));
+    series.set(key, (series.get(key) ?? 0) + spend);
   }
+
+  // Forecast burn and the periodic income that offsets it, each the summed
+  // recency-weighted average of the categories that recur in at least half the
+  // months (see forecastTotal). Irregular lumps fail the recurrence test on both
+  // sides, so each reads as "a normal month" rather than being jolted by a one-off.
+  const forecastBurn = forecastTotal(catMonths, keys);
+  const forecastIncome = forecastTotal(incomeMonths, keys);
 
   return {
     months: keys.map((key) => ({
@@ -208,6 +437,8 @@ export async function getSpendSummary(): Promise<SpendSummary> {
       .map(([group, total]) => ({ group, total }))
       .sort((a, b) => b.total - a.total),
     medianEssential: median(keys.map((k) => essentialByMonth.get(k)!)),
+    forecastBurn: catMonths.size === 0 ? null : forecastBurn,
+    forecastIncome,
     categorisedOut,
     unknownGroups: [...unknownGroups],
   };
@@ -215,9 +446,10 @@ export async function getSpendSummary(): Promise<SpendSummary> {
 
 export type ReviewQueue = {
   rows: number;
-  outflow: number;
-  /** Rows big enough to be worth an evening. Clearing these moves the numbers. */
+  /** How many rows sit at or above {@link threshold} — the ones to do first. */
   overThreshold: number;
+  /** The dollar cut-off that defines those rows, or `null` when there are none. */
+  threshold: number | null;
 };
 
 /**
@@ -225,18 +457,41 @@ export type ReviewQueue = {
  * group was inferred. It is counted in the totals but belongs to no category, so
  * it is the queue a future classification step works through. Income is excluded:
  * its own uncategorised inflows are surfaced under the Income breakdown instead.
+ *
+ * Transfers are excluded on the same two tests used everywhere else — Akahu's
+ * tagged `type` and the groups a user linked by hand (`transferGroupId`) — so
+ * this count matches the uncategorised page it links to.
+ *
+ * The "do these first" cut-off is the 95th percentile of the queue's own amounts
+ * rather than a fixed dollar figure: a fixed $500 line reads as "0 are over $500"
+ * for anyone whose spending never reaches it, which is noise. A percentile always
+ * points at the largest quarter of what is actually here.
  */
-export async function getReviewQueue(threshold = 500): Promise<ReviewQueue> {
+export async function getReviewQueue(percentile = 0.95): Promise<ReviewQueue> {
   await connection();
   const rows = await db.transaction.findMany({
-    where: { amount: { lt: 0 }, categoryId: null },
+    where: {
+      categoryId: null,
+      type: { notIn: ["TRANSFER"] },
+      transferGroupId: null,
+    },
     select: { amount: true },
   });
 
+  if (rows.length === 0) {
+    return { rows: 0, overThreshold: 0, threshold: null };
+  }
+
+  const amounts = rows.map((r) => Math.abs(r.amount)).sort((a, b) => a - b);
+  // Nearest-rank: the smallest amount with at least `percentile` of the queue at
+  // or below it. Clamped so the last index is never overrun.
+  const rank = Math.min(amounts.length - 1, Math.ceil(percentile * amounts.length) - 1);
+  const threshold = amounts[Math.max(0, rank)];
+
   return {
     rows: rows.length,
-    outflow: rows.reduce((sum, r) => sum - r.amount, 0),
-    overThreshold: rows.filter((r) => Math.abs(r.amount) > threshold).length,
+    overThreshold: amounts.filter((a) => a >= threshold).length,
+    threshold,
   };
 }
 
@@ -310,6 +565,10 @@ export type Comparison = {
   spendSubcategories: Map<string, string[]>;
   /** The same, one level down: category → subcategory → merchants, ranked. */
   spendMerchants: Map<string, Map<string, string[]>>;
+  /** A representative merchant id for each merchant name shown, so the chart's
+   *  merchant rows link to the id-keyed merchant page. Absent for the unnamed
+   *  bucket; where a name spans several ids, any one — the link opens that id. */
+  merchantIds: Map<string, string>;
   /** One axis shared by every bar in every period, so lengths are comparable
    *  both within a period and across them. */
   max: number;
@@ -342,7 +601,10 @@ export async function getComparison(
   const rows = await db.transaction.findMany({
     where: {
       date: { gte: fetchCutoff(now, period, count + offset) },
+      // Exclude transfers from income/spend/net: both Akahu's tagged type and the
+      // groups a user linked by hand (every leg holds `transferGroupId`).
       type: { notIn: ["TRANSFER"] },
+      transferGroupId: null,
     },
     select: {
       date: true,
@@ -350,8 +612,17 @@ export async function getComparison(
       categoryGroup: true,
       categoryName: true,
       merchantName: true,
+      account: { select: { currency: true } },
     },
   });
+
+  // Every income/spend figure below is in the display currency, valuing each
+  // foreign row at the rate on its own day (see loadDisplayConverter). The category
+  // *ranking* just below is deliberately left on raw amounts: it only fixes
+  // colour-slot order across all history, where the handful of foreign rows can't
+  // change a group's rank.
+  const display = await getDisplayCurrency();
+  const toDisplay = await loadDisplayConverter(display, rows.map((r) => r.account.currency));
 
   // Slot order is decided over *all* history, not the selected window. Ranking
   // within the window would repaint every category whenever the period changed —
@@ -414,7 +685,7 @@ export async function getComparison(
     const bucket = periods.get(key);
     if (!bucket) continue;
 
-    const value = Math.abs(row.amount);
+    const value = Math.abs(toDisplay(row.amount, row.account.currency, row.date));
 
     // Money in is income, shown on the shared axis but broken into its NZFCC
     // subcategories beneath, each nested under its income group and split into the
@@ -554,6 +825,12 @@ export async function getComparison(
     ]),
   );
 
+  // A name→id map so the chart's name-grouped merchant rows can link to the
+  // id-keyed merchant page. First id wins for a name held under several (rare).
+  const merchantRows = await db.merchant.findMany({ select: { id: true, name: true } });
+  const merchantIds = new Map<string, string>();
+  for (const m of merchantRows) if (!merchantIds.has(m.name)) merchantIds.set(m.name, m.id);
+
   return {
     period,
     periods: ordered,
@@ -564,6 +841,7 @@ export async function getComparison(
     incomeMerchants,
     spendSubcategories,
     spendMerchants,
+    merchantIds,
     max,
     through,
     hasOlder,
@@ -582,4 +860,27 @@ export { UNCATEGORISED, UNKNOWN_MERCHANT };
 export function runwayMonths(balances: BalanceSummary, spend: SpendSummary): number | null {
   if (!spend.medianEssential) return null;
   return balances.liquid / spend.medianEssential;
+}
+
+/**
+ * Months of liquid cash if life carries on unchanged — a "life goes on" forecast
+ * to sit beside the essentials-only {@link runwayMonths}. The denominator is *net*
+ * burn: the forecast spend less the periodic income (wages, a benefit, ongoing
+ * support) that keeps arriving to cover it, so this answers "how long must liquid
+ * savings top up the shortfall". Optimistic in the same way as its neighbour: the
+ * burn is built from categorised spend only, and irregular lumps are excluded on
+ * both sides.
+ *
+ * Returns `Infinity` when forecast income covers the burn outright — the shortfall
+ * is zero, so no topups are ever needed — and `null` only when there is no
+ * spending history to forecast from at all.
+ */
+export function forecastRunwayMonths(
+  balances: BalanceSummary,
+  spend: SpendSummary,
+): number | null {
+  if (spend.forecastBurn == null) return null;
+  const netBurn = spend.forecastBurn - spend.forecastIncome;
+  if (netBurn <= 0) return Infinity;
+  return balances.liquid / netBurn;
 }
