@@ -309,3 +309,83 @@ model SyncRun {
 
   @@index([startedAt])
 }
+
+/// A GoRules JDM decision graph, executed by the Zen engine to automate
+/// transaction enrichment (see lib/server/rules.ts). Rules are taught from a
+/// transaction ("Create rule from this transaction") and reviewed on `/rules`.
+/// One document is `active` at a time; that is the graph the sync and the manual
+/// "apply rules" backfill evaluate every transaction against. The graph is stored
+/// as its JSON text in `content` (SQLite has no native JSON type here, and the app
+/// never queries into it — it is loaded whole, parsed, and handed to the engine).
+model RuleDocument {
+  id   Int    @id @default(autoincrement())
+  name String
+  /// Stable URL-safe identifier, unique across documents. The UI now edits a
+  /// single active document in place, so this is an identity key rather than a
+  /// route segment.
+  slug String @unique
+
+  /// The JDM decision graph, serialised with `JSON.stringify`. Parsed back into
+  /// `{ nodes, edges }` before evaluation.
+  content String
+
+  /// Exactly one document should be active. The rules runner picks the active
+  /// one; activating a document deactivates the others (see the rules actions).
+  active Boolean @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([active])
+}
+
+/// One execution of the rules engine — a per-sync pass or a manual "apply now"
+/// backfill (see lib/server/rules.ts `runRules`). Recorded only when it actually
+/// changed something (or errored), so the log reads as "what the rules did" rather
+/// than a heartbeat of every no-op sync. Mirrors `SyncRun`.
+model RuleRun {
+  id         Int       @id @default(autoincrement())
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+  /// What triggered the run: `sync` (during ingest) | `manual` (Apply now).
+  trigger    String
+  /// success | failed
+  status     String    @default("success")
+
+  /// Tallies for the whole run, mirroring the in-memory summary.
+  evaluated       Int @default(0)
+  categorised     Int @default(0)
+  merchantsSet    Int @default(0)
+  transfersLinked Int @default(0)
+  errors          Int @default(0)
+
+  error String?
+
+  applications RuleApplication[]
+
+  @@index([startedAt])
+}
+
+/// A single edit a rule run made to a transaction: which field it set and to what,
+/// so the run report can list exactly which transactions changed. `transactionId`
+/// is a plain column (not a relation) to match the denormalised style here; the
+/// report joins the current transaction rows back in for display and tolerates a
+/// since-deleted one.
+model RuleApplication {
+  id    Int     @id @default(autoincrement())
+  runId Int
+  run   RuleRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  transactionId String
+  /// Which field the rule set: `category` | `merchant` | `transfer`.
+  field String
+  /// Human labels for the change, stored so the report needs no extra join for
+  /// the values themselves: what the field was, and what the rule set it to.
+  fromLabel String?
+  toLabel   String?
+
+  createdAt DateTime @default(now())
+
+  @@index([runId])
+  @@index([transactionId])
+}

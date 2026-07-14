@@ -79,12 +79,12 @@ export default async function DashboardPage(props: PageProps<"/">) {
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
-      <header className="mb-8 flex flex-wrap items-baseline justify-between gap-2">
+      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold">Financial health</h1>
         <SyncStatus lastSync={lastSync} />
       </header>
 
-      <section className="mb-8 flex items-start justify-between gap-4">
+      <section className="mb-4 flex items-start justify-between gap-4">
         <Hero
           label="Accessible net worth"
           value={formatMoneyWhole(balances.accessible, balances.displayCurrency)}

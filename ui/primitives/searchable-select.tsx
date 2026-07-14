@@ -29,6 +29,8 @@ export function SearchableSelect({
   value,
   valueLabel,
   onSelect,
+  onCreate,
+  createLabel,
   placeholder = "Set…",
   clearLabel,
   ariaLabel,
@@ -38,6 +40,10 @@ export function SearchableSelect({
   /** The current value's display text — the denormalised name already on the row. */
   valueLabel: string | null;
   onSelect: (value: string | null) => Promise<void>;
+  /** When present, a non-empty search with no matches shows a row that creates a new option. */
+  onCreate?: (query: string) => Promise<void>;
+  /** Label for the create row. Use `%s` as a placeholder for the query. */
+  createLabel?: string;
   placeholder?: string;
   /** When present, an entry that unsets the value (e.g. "Uncategorised"). */
   clearLabel?: string;
@@ -68,12 +74,24 @@ export function SearchableSelect({
   }, [options, query]);
 
   // A synthetic "clear" row sits at the top of the list when offered, so it is
-  // reachable by keyboard like any option. Its value is null.
-  const rows: (SelectOption | { value: null; label: string })[] = useMemo(() => {
-    const base: (SelectOption | { value: null; label: string })[] = [...filtered];
-    if (clearLabel && !query.trim()) base.unshift({ value: null, label: clearLabel });
-    return base;
-  }, [filtered, clearLabel, query]);
+  // reachable by keyboard like any option. Its value is null. A "create" row is
+  // appended when the caller supplies an onCreate handler and the current query
+  // has no matching options.
+  const rows: (SelectOption | { value: null; label: string } | { value: "__create__"; label: string })[] =
+    useMemo(() => {
+      const base: (SelectOption | { value: null; label: string } | { value: "__create__"; label: string })[] = [
+        ...filtered,
+      ];
+      if (clearLabel && !query.trim()) base.unshift({ value: null, label: clearLabel });
+      if (onCreate && query.trim() && filtered.length === 0) {
+        const q = query.trim();
+        base.push({
+          value: "__create__",
+          label: createLabel ? createLabel.replace("%s", q) : `Create “${q}”`,
+        });
+      }
+      return base;
+    }, [filtered, clearLabel, query, onCreate, createLabel]);
 
   // Close on an outside click.
   useEffect(() => {
@@ -102,6 +120,14 @@ export function SearchableSelect({
   }, [active, open]);
 
   function choose(id: string | null, label: string | null) {
+    if (id === "__create__") {
+      const q = query.trim();
+      setOpen(false);
+      startTransition(async () => {
+        await onCreate?.(q);
+      });
+      return;
+    }
     setOptimistic({ id, label });
     setOpen(false);
     startTransition(async () => {
@@ -176,7 +202,9 @@ export function SearchableSelect({
             ) : (
               rows.map((row, i) => {
                 const selected = row.value === currentValue;
-                const hint = row.value !== null ? (row as SelectOption).hint : undefined;
+                const isCreate = row.value === "__create__";
+                const hint =
+                  row.value !== null && !isCreate ? (row as SelectOption).hint : undefined;
                 return (
                   <li
                     key={row.value ?? "__clear__"}
@@ -188,10 +216,13 @@ export function SearchableSelect({
                     }
                     className={`flex cursor-pointer items-baseline justify-between gap-3 px-3 py-1.5 ${
                       i === active ? "bg-current/10" : ""
-                    } ${row.value === null ? "text-muted italic" : ""}`}
+                    } ${row.value === null ? "text-muted italic" : ""} ${
+                      isCreate ? "font-medium text-foreground" : ""
+                    }`}
                   >
                     <span className="truncate">
                       {selected ? "✓ " : ""}
+                      {isCreate ? "+ " : ""}
                       {row.label}
                     </span>
                     {hint ? <span className="shrink-0 text-xs text-muted">{hint}</span> : null}

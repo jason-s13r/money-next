@@ -14,7 +14,7 @@ export function FullSyncButton() {
       <button
         type="submit"
         disabled={isPending}
-        className="inline-flex items-center gap-2 rounded-md bg-foreground px-3 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        className="inline-flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         aria-label="Run a full historical sync"
       >
         <svg

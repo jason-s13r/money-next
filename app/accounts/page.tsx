@@ -45,26 +45,25 @@ export default async function AccountsPage() {
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
-      <header className="mb-6">
+      <header className="flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold">Accounts</h1>
-        <p className="mt-1">
-          <SyncStatus lastSync={lastSync} label="Last synced" />
-        </p>
-
-        <StatList
-          className="mt-4"
-          stats={[
-            {
-              label: "Active accounts",
-              value: activeAccounts.length.toLocaleString("en-NZ"),
-            },
-            {
-              label: `Total balance (${displayCurrency})`,
-              value: formatMoney(totalBalance, displayCurrency),
-            },
-          ]}
-        />
+        <SyncStatus lastSync={lastSync} />
       </header>
+
+
+      <StatList
+        className="mt-4 mb-4"
+        stats={[
+          {
+            label: "Active accounts",
+            value: activeAccounts.length.toLocaleString("en-NZ"),
+          },
+          {
+            label: `Total balance (${displayCurrency})`,
+            value: formatMoney(totalBalance, displayCurrency),
+          },
+        ]}
+      />
 
       <AccountsTable accounts={withConverted} displayCurrency={displayCurrency} />
     </main>

@@ -3,6 +3,13 @@ import { connection } from "next/server";
 import { cache } from "react";
 import { db } from "./db";
 import { convert, FALLBACK_DISPLAY_CURRENCY, loadRates } from "./currency";
+import {
+  readLearnedRules,
+  readTransferAutoLink,
+  matchesTransaction,
+  type Graph,
+  type LearnedRuleView,
+} from "./rule-learning";
 import type { Prisma } from "../generated/prisma/client";
 
 // The dashboard reads only from SQLite. Nothing here calls Akahu — that happens
@@ -304,6 +311,53 @@ export function getUncategorisedTransactions(page: number) {
   return listTransactions(UNCATEGORISED_WHERE, page);
 }
 
+export type MatchingRule = LearnedRuleView & {
+  categoryName: string | null;
+  merchantName: string | null;
+  /** The first matching rule wins (the table's `first` hit policy); the rest are
+   *  shadowed by it and never fire for this transaction. */
+  applied: boolean;
+};
+
+/**
+ * The rules that act on one transaction, for the "Automation" panel on its page.
+ * A pure predicate test against the active graph (see `matchesTransaction`) — no
+ * engine round-trip — with the first match flagged `applied` and the outputs'
+ * ids resolved to names. `transferMatches` is the auto-link rule's verdict.
+ */
+export async function getRulesForTransaction(tx: {
+  type: string;
+  description: string;
+}): Promise<{ matching: MatchingRule[]; transferMatches: boolean }> {
+  await connection();
+  const doc = await db.ruleDocument.findFirst({ where: { active: true } });
+  if (!doc) return { matching: [], transferMatches: false };
+
+  const graph = JSON.parse(doc.content) as Graph;
+  const matches = readLearnedRules(graph).filter((rule) => matchesTransaction(rule.match, tx));
+  if (matches.length === 0) {
+    return { matching: [], transferMatches: readTransferAutoLink(graph) && tx.type === "TRANSFER" };
+  }
+
+  // Resolve just the ids the matching rules reference.
+  const categoryIds = matches.map((r) => r.categoryId).filter((v): v is string => v != null);
+  const merchantIds = matches.map((r) => r.merchantId).filter((v): v is string => v != null);
+  const [categories, merchants] = await Promise.all([
+    db.category.findMany({ where: { id: { in: categoryIds } }, select: { id: true, name: true } }),
+    db.merchant.findMany({ where: { id: { in: merchantIds } }, select: { id: true, name: true } }),
+  ]);
+  const categoryName = new Map(categories.map((c) => [c.id, c.name]));
+  const merchantName = new Map(merchants.map((m) => [m.id, m.name]));
+
+  const matching: MatchingRule[] = matches.map((rule, i) => ({
+    ...rule,
+    categoryName: rule.categoryId ? categoryName.get(rule.categoryId) ?? rule.categoryId : null,
+    merchantName: rule.merchantId ? merchantName.get(rule.merchantId) ?? rule.merchantId : null,
+    applied: i === 0,
+  }));
+  return { matching, transferMatches: readTransferAutoLink(graph) && tx.type === "TRANSFER" };
+}
+
 /**
  * Everything paid to (or refunded by) a merchant, in every direction — a
  * merchant page that hid the refunds would misstate what the merchant cost.
@@ -452,3 +506,86 @@ export async function getSyncRuns(page: number) {
 }
 
 export const SYNC_RUNS_PER_PAGE = 25;
+
+export const RULE_RUNS_PER_PAGE = 25;
+
+/** The rules execution log — runs newest first, each with its edit count. */
+export async function getRuleRuns(page: number) {
+  await connection();
+  const [items, total] = await Promise.all([
+    db.ruleRun.findMany({
+      orderBy: { startedAt: "desc" },
+      skip: (page - 1) * RULE_RUNS_PER_PAGE,
+      take: RULE_RUNS_PER_PAGE,
+      include: { _count: { select: { applications: true } } },
+    }),
+    db.ruleRun.count(),
+  ]);
+  return { items, total };
+}
+
+export type RuleApplicationRow = {
+  id: number;
+  field: string;
+  fromLabel: string | null;
+  toLabel: string | null;
+  /** The transaction as it stands now, or null if it has since been deleted. */
+  transaction: {
+    id: string;
+    date: Date;
+    description: string;
+    amount: number;
+    currency: string | null;
+    merchantName: string | null;
+  } | null;
+};
+
+/**
+ * One rule run with the transactions it edited. The applications carry the
+ * change labels; the current transaction rows are joined back in (in bulk) so the
+ * report can link to each and show its date/amount, tolerating a since-deleted one.
+ */
+export async function getRuleRun(id: number) {
+  await connection();
+  const run = await db.ruleRun.findUnique({
+    where: { id },
+    include: { applications: { orderBy: { id: "asc" } } },
+  });
+  if (!run) return null;
+
+  const txIds = [...new Set(run.applications.map((a) => a.transactionId))];
+  const rows = await db.transaction.findMany({
+    where: { id: { in: txIds } },
+    select: {
+      id: true,
+      date: true,
+      description: true,
+      amount: true,
+      merchantName: true,
+      account: { select: { currency: true } },
+    },
+  });
+  const txById = new Map(rows.map((r) => [r.id, r]));
+
+  const applications: RuleApplicationRow[] = run.applications.map((a) => {
+    const tx = txById.get(a.transactionId);
+    return {
+      id: a.id,
+      field: a.field,
+      fromLabel: a.fromLabel,
+      toLabel: a.toLabel,
+      transaction: tx
+        ? {
+            id: tx.id,
+            date: tx.date,
+            description: tx.description,
+            amount: tx.amount,
+            currency: tx.account.currency,
+            merchantName: tx.merchantName,
+          }
+        : null,
+    };
+  });
+
+  return { run, applications };
+}

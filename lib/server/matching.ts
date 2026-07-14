@@ -16,13 +16,18 @@ import type { Prisma } from "../generated/prisma/client";
 // counterparty's dashed account number (a stable signal) survives intact while a
 // `#`-glued reference like `<ref>#<name>` separates into its volatile and stable
 // halves.
-function descriptionTokens(text: string): Set<string> {
+export function descriptionTokens(text: string): Set<string> {
   return new Set(
     text
       .toLowerCase()
       .split(/[\s#]+/)
       .map((t) => t.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
-      .filter(Boolean),
+      // Drop tokens carrying an unbroken run of 4+ digits: a per-transaction
+      // reference or batch id (`payrollref778213004411`, `d783879600`) that changes
+      // every instance, so it only ever lowers the overlap between two instances of
+      // the same recurring payment. A dashed account number like `012-345-678` — a
+      // *stable* shared signal — has only 3-digit groups and survives.
+      .filter((t) => t !== "" && !/\d{4,}/.test(t)),
   );
 }
 
@@ -34,9 +39,11 @@ function tokenOverlap(a: Set<string>, b: Set<string>): number {
   return shared / (a.size + b.size - shared);
 }
 
-// How much description overlap counts as "similar". Two instances of the same
-// recurring credit that differ only in their reference number score ~0.75;
-// unrelated direct credits sharing just "direct"/"credit" score well under this.
+// How much description overlap counts as "similar". With volatile reference/batch
+// numbers now dropped at tokenisation (see `descriptionTokens`), two instances of
+// the same recurring credit that differ only in that reference score at or near
+// 1.0; unrelated direct credits sharing just "direct"/"credit" score well under
+// this.
 const SIMILAR_THRESHOLD = 0.5;
 
 /**

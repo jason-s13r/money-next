@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { SearchableSelect, type SelectOption } from "@/ui/primitives/searchable-select";
 import { positiveAmountClass } from "@/lib/ui/amount";
-import { getCategories, getMerchants, getTransaction } from "@/lib/server/data";
+import { getCategories, getMerchants, getTransaction, getRulesForTransaction } from "@/lib/server/data";
 import {
   getSimilarTransactions,
   getTransferCandidates,
@@ -9,9 +9,15 @@ import {
 } from "@/lib/server/matching";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
-import { setTransactionCategory, setTransactionMerchant } from "./actions";
+import {
+  createMerchantAndSetForTransaction,
+  setTransactionCategory,
+  setTransactionMerchant,
+} from "./actions";
 import { ConflictBanner } from "@/ui/transactions/detail/conflict-banner";
 import { SimilarTransactions } from "@/ui/transactions/detail/similar-transactions";
+import { LearnRule } from "@/ui/transactions/detail/learn-rule";
+import { MatchingRules } from "@/ui/transactions/detail/matching-rules";
 import { TransferLink } from "@/ui/transactions/detail/transfer-link";
 import { EditableField, Field, Section } from "@/ui/transactions/detail/transaction-fields";
 
@@ -37,13 +43,14 @@ export default async function TransactionPage(
   // Options for the enrichment pickers. Loaded here so the page stays one server
   // round-trip; both are small enough to hand to the client whole (see
   // SearchableSelect). The bound actions carry this transaction's id.
-  const [categories, merchants, similar, transferLegs, transferCandidates] =
+  const [categories, merchants, similar, transferLegs, transferCandidates, rulesForTx] =
     await Promise.all([
       getCategories(),
       getMerchants(),
       getSimilarTransactions(tx),
       getTransferGroupLegs(tx),
       getTransferCandidates(tx, account.currency),
+      getRulesForTransaction({ type: tx.type, description: tx.description }),
     ]);
 
   const categoryOptions: SelectOption[] = categories.map((c) => ({
@@ -112,6 +119,8 @@ export default async function TransactionPage(
             placeholder="Set merchant…"
             clearLabel="No merchant"
             onSelect={setTransactionMerchant.bind(null, tx.id)}
+            onCreate={createMerchantAndSetForTransaction.bind(null, tx.id)}
+            createLabel="Create merchant “%s”"
           />
           {merchantConflict ? (
             <ConflictBanner
@@ -178,6 +187,17 @@ export default async function TransactionPage(
             : null
         }
       />
+
+      <MatchingRules
+        matching={rulesForTx.matching}
+        transferMatches={rulesForTx.transferMatches}
+      >
+        <LearnRule
+          transactionId={tx.id}
+          hasCategory={tx.categoryId != null}
+          hasMerchant={tx.merchantId != null}
+        />
+      </MatchingRules>
 
       <Section title="Bank metadata">
         <Field label="Particulars" value={tx.particulars} />

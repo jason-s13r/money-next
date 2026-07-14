@@ -1,7 +1,9 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { randomUUID } from "node:crypto";
 import { db } from "@/lib/server/db";
+import { linkTransferLegs } from "@/lib/server/transfers";
 import type { Prisma } from "@/lib/generated/prisma/client";
 
 // Manual re-classification of a single transaction, and the reconciliation of the
@@ -64,6 +66,40 @@ export async function setTransactionMerchant(
       data: { merchantId: merchant.id, merchantName: merchant.name, merchantSource: "user" },
     });
   }
+
+  await db.transactionConflict.deleteMany({ where: { transactionId, field: "merchant" } });
+
+  revalidatePath(`/transactions/${transactionId}`);
+}
+
+/**
+ * Create a brand-new merchant from the transaction details page and assign it to
+ * the transaction. User-created merchants get a `user_...` id so they never
+ * collide with Akahu's `merchant_...` ids, and the field is marked `user`-owned
+ * so a later sync won't overwrite it.
+ */
+export async function createMerchantAndSetForTransaction(
+  transactionId: string,
+  name: string,
+) {
+  const trimmed = name.trim();
+  if (!trimmed) throw new Error("Merchant name is required");
+
+  const merchant = await db.merchant.create({
+    data: {
+      id: `user_${randomUUID().replace(/-/g, "")}`,
+      name: trimmed,
+    },
+  });
+
+  await db.transaction.update({
+    where: { id: transactionId },
+    data: {
+      merchantId: merchant.id,
+      merchantName: merchant.name,
+      merchantSource: "user",
+    },
+  });
 
   await db.transactionConflict.deleteMany({ where: { transactionId, field: "merchant" } });
 
@@ -139,51 +175,7 @@ export async function applyMerchantToTransactions(
  * so linking never leaves a transaction in two transfers at once.
  */
 export async function linkTransfer(sourceId: string, targetId: string) {
-  if (sourceId === targetId) throw new Error("A transaction cannot be a transfer of itself.");
-
-  const [source, target] = await Promise.all([
-    db.transaction.findUnique({ where: { id: sourceId } }),
-    db.transaction.findUnique({ where: { id: targetId } }),
-  ]);
-  if (!source) throw new Error(`Unknown transaction: ${sourceId}`);
-  if (!target) throw new Error(`Unknown transaction: ${targetId}`);
-
-  if (
-    source.transferGroupId != null &&
-    source.transferGroupId === target.transferGroupId
-  ) {
-    return; // already in the same transfer
-  }
-
-  const groupId =
-    source.transferGroupId ??
-    target.transferGroupId ??
-    (await db.transferGroup.create({ data: {} })).id;
-
-  const writes: Prisma.PrismaPromise<unknown>[] = [];
-  // Move the source (and, on a merge, every member of the target's group) onto the
-  // chosen group. `updateMany` on the group id sweeps up all of the target's legs
-  // in one statement; a lone ungrouped target is caught by the id fallback.
-  if (source.transferGroupId !== groupId) {
-    writes.push(
-      db.transaction.updateMany({ where: { id: sourceId }, data: { transferGroupId: groupId } }),
-    );
-  }
-  if (target.transferGroupId !== groupId) {
-    writes.push(
-      db.transaction.updateMany({
-        where:
-          target.transferGroupId == null
-            ? { id: targetId }
-            : { transferGroupId: target.transferGroupId },
-        data: { transferGroupId: groupId },
-      }),
-    );
-    if (target.transferGroupId != null) {
-      writes.push(db.transferGroup.delete({ where: { id: target.transferGroupId } }));
-    }
-  }
-  await db.$transaction(writes);
+  await linkTransferLegs(sourceId, targetId);
 
   revalidatePath(`/transactions/${sourceId}`);
   revalidatePath(`/transactions/${targetId}`);

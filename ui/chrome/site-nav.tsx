@@ -10,6 +10,7 @@ const navItems = [
   { href: "/breakdown", label: "Breakdown" },
   { href: "/transactions/recent", label: "Transactions" },
   { href: "/accounts", label: "Accounts" },
+  { href: "/rules", label: "Rules" },
   { href: "/sync", label: "Sync" },
 ];
 

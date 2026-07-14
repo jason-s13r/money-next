@@ -1,6 +1,7 @@
 import type { Account as AkahuAccount, ConnectionInfo as AkahuConnection, Transaction as AkahuTransaction } from "akahu";
 import { db } from "./db";
 import { reconcileConflict } from "./conflicts";
+import { runRules } from "./rules";
 import { fetchFxRates } from "./fx";
 import type { Prisma } from "../generated/prisma/client";
 import { fetchNzfccCatalog, OTHER_INCOME_GROUP } from "./nzfcc";
@@ -235,7 +236,7 @@ async function syncAccounts(accounts: AkahuAccount[], capturedAt: Date): Promise
   console.log(`accounts:     ${accounts.length} synced`);
 }
 
-async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[]): Promise<number> {
+async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[]): Promise<string[]> {
   const knownAccountIds = new Set(accounts.map((a) => a._id));
   const { akahuClient, akahuUserToken } = await import("./akahu");
   const akahu = akahuClient();
@@ -255,6 +256,7 @@ async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[]): Promi
   console.log(`transactions: fetching since ${start.toISOString()}`);
 
   let cursor: string | undefined;
+  const syncedIds: string[] = [];
   let synced = 0;
   let skipped = 0;
   let newest: Date | undefined = state?.lastTransactionDate ?? undefined;
@@ -400,6 +402,7 @@ async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[]): Promi
       }
 
       synced++;
+      syncedIds.push(tx._id);
       txOps.push(
         db.transaction.upsert({
           where: { id: tx._id },
@@ -444,7 +447,7 @@ async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[]): Promi
     });
   }
 
-  return synced;
+  return syncedIds;
 }
 
 /**
@@ -459,6 +462,25 @@ export async function runSync(args: SyncArgs): Promise<void> {
   const accounts = await fetchAccounts();
   await syncConnections(accounts);
   await syncAccounts(accounts, capturedAt);
-  await syncTransactions(args, accounts);
+  const syncedIds = await syncTransactions(args, accounts);
   await syncFxRates();
+
+  // Run the automations over just the rows this sync touched. Best-effort like
+  // the category/FX steps: a broken rule graph shouldn't fail the financial sync,
+  // which has already been committed above.
+  try {
+    const summary = await runRules({ transactionIds: syncedIds, trigger: "sync" });
+    if (summary.ran) {
+      console.log(
+        `rules:        ${summary.evaluated} evaluated — ` +
+          `${summary.categorised} categorised, ${summary.merchantsSet} merchants, ` +
+          `${summary.transfersLinked} transfers linked` +
+          (summary.errors ? `, ${summary.errors} errored` : ""),
+      );
+    } else {
+      console.log("rules:        skipped — no active rule document");
+    }
+  } catch (error) {
+    console.warn(`rules:        skipped — ${error instanceof Error ? error.message : String(error)}`);
+  }
 }

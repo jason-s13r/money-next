@@ -6,7 +6,7 @@
 // Auckland, so hundreds of rows land in a different bucket under UTC — enough to
 // visibly move a monthly total.
 
-export const PERIODS = ["week", "month", "quarter", "year", "taxyear"] as const;
+export const PERIODS = ["day", "week", "month", "quarter", "year", "taxyear"] as const;
 export type Period = (typeof PERIODS)[number];
 
 export function isPeriod(value: string): value is Period {
@@ -16,6 +16,7 @@ export function isPeriod(value: string): value is Period {
 /** Button text for the period selector. "taxyear" is the only key whose plain
  *  form ("Taxyear") reads wrong; the rest are just their capitalised selves. */
 export const PERIOD_LABELS: Record<Period, string> = {
+  day: "Day",
   week: "Week",
   month: "Month",
   quarter: "Quarter",
@@ -69,10 +70,12 @@ function taxYearEnd({ year, month }: YMD): number {
   return month >= 4 ? year + 1 : year;
 }
 
-/** A sortable bucket key: `2026-W28`, `2026-07`, `2026-Q3`, `2026`, `FY2027`. */
+/** A sortable bucket key: `2026-07-14`, `2026-W28`, `2026-07`, `2026-Q3`, `2026`, `FY2027`. */
 export function periodKey(date: Date, period: Period): string {
   const ymd = nzDate(date);
   switch (period) {
+    case "day":
+      return `${ymd.year}-${pad(ymd.month)}-${pad(ymd.day)}`;
     case "week": {
       const { isoYear, week } = isoWeek(ymd);
       return `${isoYear}-W${pad(week)}`;
@@ -95,6 +98,12 @@ export function periodKey(date: Date, period: Period): string {
  */
 function periodBack(now: Date, period: Period, i: number): string {
   const ymd = nzDate(now);
+
+  if (period === "day") {
+    const cursor = new Date(Date.UTC(ymd.year, ymd.month - 1, ymd.day));
+    cursor.setUTCDate(cursor.getUTCDate() - i);
+    return periodKey(cursor, period);
+  }
 
   if (period === "week") {
     // Step back in whole weeks from today's date, in UTC arithmetic — the NZ
@@ -138,7 +147,7 @@ export function periodWindow(now: Date, period: Period, count: number, offset = 
 
 /** Generous lower bound for the fetch. Exact membership is decided by key. */
 export function fetchCutoff(now: Date, period: Period, count: number): Date {
-  const days = { week: 7, month: 31, quarter: 93, year: 366, taxyear: 366 }[period];
+  const days = { day: 1, week: 7, month: 31, quarter: 93, year: 366, taxyear: 366 }[period];
   return new Date(now.getTime() - (count + 2) * days * 86_400_000);
 }
 
@@ -146,6 +155,10 @@ export function fetchCutoff(now: Date, period: Period, count: number): Date {
  *  the date a window is anchored *from*, and what `?from=` in the url carries. */
 export function periodStart(key: string, period: Period): Date {
   switch (period) {
+    case "day": {
+      const [year, month, day] = key.split("-").map(Number);
+      return new Date(Date.UTC(year, month - 1, day));
+    }
     case "week":
       return weekMonday(key);
     case "month": {
@@ -197,6 +210,19 @@ const WEEK_MONDAY_SHORT = new Intl.DateTimeFormat("en-NZ", {
   timeZone: "UTC",
 });
 
+const DAY_FULL = new Intl.DateTimeFormat("en-NZ", {
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  year: "numeric",
+  timeZone: "UTC",
+});
+const DAY_SHORT = new Intl.DateTimeFormat("en-NZ", {
+  weekday: "short",
+  day: "numeric",
+  timeZone: "UTC",
+});
+
 /** The Monday that opens ISO week `2026-W28`, as a UTC date. */
 function weekMonday(key: string): Date {
   const [isoYear, week] = key.split("-W").map(Number);
@@ -207,9 +233,11 @@ function weekMonday(key: string): Date {
   return monday;
 }
 
-/** `2026-07` → `Jul 2026`; `2026-Q3` → `Q3 2026`; `2026-W28` → `Week of 6 Jul 2026`. */
+/** `2026-07-14` → `Mon 14 Jul 2026`; `2026-07` → `Jul 2026`; `2026-Q3` → `Q3 2026`; `2026-W28` → `Week of 6 Jul 2026`. */
 export function formatPeriodKey(key: string, period: Period): string {
   switch (period) {
+    case "day":
+      return DAY_FULL.format(periodStart(key, period));
     case "week":
       return `Week of ${WEEK_MONDAY.format(weekMonday(key))}`;
     case "month": {
@@ -239,6 +267,8 @@ export function formatPeriodKey(key: string, period: Period): string {
  */
 export function formatPeriodShort(key: string, period: Period): string {
   switch (period) {
+    case "day":
+      return DAY_SHORT.format(periodStart(key, period));
     case "week":
       return WEEK_MONDAY_SHORT.format(weekMonday(key));
     case "month": {
