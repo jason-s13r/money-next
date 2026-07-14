@@ -136,28 +136,6 @@ export function periodWindow(now: Date, period: Period, count: number, offset = 
   return keys;
 }
 
-/**
- * The last `count` *complete* periods, oldest first. The current period is
- * excluded: a month three days old always looks like a spending collapse, and
- * next to eleven full months it reads as a trend rather than an artefact.
- */
-export function completePeriods(now: Date, period: Period, count: number): string[] {
-  return periodWindow(now, period, count, 1);
-}
-
-/**
- * The last `count` periods *ending with the one in progress*, oldest first.
- *
- * The current period is partial by definition, and a month three days old looks
- * like a spending collapse beside five full ones — so anything that averages or
- * takes a median over periods must use `completePeriods` instead. This is for
- * views that show each period on its own and can label the last one.
- */
-export function periodsThrough(now: Date, period: Period, count: number): string[] {
-  if (count < 1) return [];
-  return periodWindow(now, period, count, 0);
-}
-
 /** Generous lower bound for the fetch. Exact membership is decided by key. */
 export function fetchCutoff(now: Date, period: Period, count: number): Date {
   const days = { week: 7, month: 31, quarter: 93, year: 366, taxyear: 366 }[period];

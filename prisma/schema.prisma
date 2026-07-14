@@ -23,9 +23,17 @@ model Account {
   type             String
   formattedAccount String?
 
-  /// The institution the account is held at, flattened from `connection`.
-  connectionId   String
-  connectionName String
+  /// The institution the account is held at.
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+
+  /// Account holder name as exposed by the provider, when available.
+  holder String?
+
+  /// What this account can do, according to Akahu: TRANSACTIONS, PAYMENT_TO, PAYMENT_FROM.
+  hasTransactions Boolean @default(false)
+  canReceivePayments Boolean @default(false)
+  canInitiatePayments Boolean @default(false)
 
   /// Latest balance, flattened from `balance`. Absent for some account types.
   currency         String?
@@ -33,6 +41,12 @@ model Account {
   balanceAvailable Float?
   balanceLimit     Float?
   overdrawn        Boolean?
+
+  /// When Akahu last refreshed each part of the account data.
+  refreshedBalance     DateTime?
+  refreshedMeta        DateTime?
+  refreshedTransactions DateTime?
+  refreshedParty       DateTime?
 
   /// When Akahu last refreshed the account, distinct from when we last synced it.
   refreshedAt DateTime?
@@ -42,6 +56,27 @@ model Account {
   balances     BalanceSnapshot[]
 
   @@index([status])
+  @@index([connectionId])
+}
+
+/// A financial institution connected through Akahu. For personal apps this is
+/// built from the `connection` object embedded in each account; for full apps
+/// it can be enriched from `/connections`.
+model Connection {
+  /// Akahu connection id, e.g. `conn_...`
+  id   String @id
+  name String
+  /// URL of the institution's logo.
+  logo String?
+  /// classic | official
+  connectionType String
+
+  accounts     Account[]
+  transactions Transaction[]
+
+  syncedAt DateTime @updatedAt
+
+  @@index([connectionType])
 }
 
 /// A settled transaction, mirrored from Akahu's `/transactions`.
@@ -54,6 +89,8 @@ model Transaction {
   account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+
   date         DateTime
   description  String
   /// Negative for money out, positive for money in.
@@ -72,6 +109,8 @@ model Transaction {
   /// Akahu returns several category grouping schemes; we keep the
   /// `personal_finance` group name, which is the one useful for budgeting.
   categoryGroup String?
+  /// The id of the category group Akahu returned (e.g. `personal_finance`).
+  categoryGroupId String?
 
   /// Who owns the enrichment, per editable field: `akahu` (mirrored, and the
   /// sync may overwrite it) or `user` (hand-set, and the sync must not clobber
@@ -84,6 +123,15 @@ model Transaction {
   reference    String?
   otherAccount String?
   cardSuffix   String?
+
+  /// Foreign currency conversion details, when the transaction was made in
+  /// another currency.
+  conversionAmount Float?
+  conversionCurrency String?
+  conversionRate Float?
+
+  /// URL of a merchant logo image for this transaction, when Akahu provides one.
+  logo String?
 
   /// The transfer this row is one leg of, once it's been grouped with the other
   /// side(s) of an internal transfer. A group holds two *or more* legs, so it
@@ -112,6 +160,7 @@ model Transaction {
   @@index([merchantName])
   @@index([merchantId])
   @@index([transferGroupId])
+  @@index([connectionId])
 }
 
 /// A user-defined grouping of transactions that together make up one internal
@@ -185,6 +234,8 @@ model Merchant {
   /// The merchant's website, when Akahu resolved one. Previously discarded at
   /// ingest; kept now so no enrichment field is lost.
   website String?
+  /// URL of a logo image for this merchant, when Akahu provides one.
+  logo String?
 
   transactions Transaction[]
 

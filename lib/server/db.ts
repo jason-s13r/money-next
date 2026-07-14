@@ -1,5 +1,5 @@
 import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
-import { PrismaClient } from "./generated/prisma/client";
+import { PrismaClient } from "../generated/prisma/client";
 
 // Deliberately no `import "server-only"` here: this module is also imported by
 // scripts/ingest.ts, which runs in plain Node where `server-only` throws.

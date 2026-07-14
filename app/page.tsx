@@ -1,37 +1,27 @@
-import Link from "next/link";
-import { getLastSync } from "@/lib/data";
-import { formatDateTime, formatMonthKey, formatMoneyWhole } from "@/lib/format";
-import {
-  forecastRunwayMonths,
-  getBalanceSummary,
-  getComparison,
-  getReviewQueue,
-  getSpendSummary,
-  runwayMonths,
-} from "@/lib/metrics";
+import { getLastSync } from "@/lib/server/data";
+import { formatMoneyWhole } from "@/lib/format";
+import { SyncStatus } from "@/ui/chrome/sync-status";
+import { getBalanceSummary } from "@/lib/server/metrics/balance";
+import { getReviewQueue, getSpendSummary } from "@/lib/server/metrics/spend";
+import { forecastRunwayMonths, runwayMonths } from "@/lib/server/metrics/runway";
+import { getComparison } from "@/lib/server/metrics/comparison";
 import { isPeriod, offsetForStartDate, periodStart, periodWindow, type Period } from "@/lib/periods";
-import { Meter } from "./_components/charts";
-import { ComparisonSection } from "./_components/comparison";
-import { Hero, StatTile, type Status } from "./_components/stat-tile";
+import { firstParam } from "@/lib/search-params";
+import { Meter } from "@/ui/primitives/meter";
+import { ComparisonCards, PeriodSelector } from "@/ui/dashboard/comparison";
+import { CurrencyBreakdown } from "@/ui/dashboard/currency-breakdown";
+import { ReviewBanner } from "@/ui/dashboard/review-banner";
+import { Hero, StatTile, type Status } from "@/ui/primitives/stat-tile";
 
 export const metadata = { title: "Financial health" };
 
 const DEFAULT_PERIOD: Period = "month";
-/** Periods shown at once. Fixed: six reads as a trend without crowding the row. */
 const WINDOW = 6;
-/** Periods a page shifts by. Half the window, so consecutive pages overlap. */
 const STEP = 3;
 
-/**
- * `?period=` and `?from=` are user input; anything unexpected falls back.
- *
- * `from` is the start date of the oldest visible period — a time is a more
- * honest url than an opaque page number, and it snaps to the nearest window.
- * Absent, the window ends with the period in progress (offset 0).
- */
 function parseWindow(searchParams: Record<string, string | string[] | undefined>, now: Date) {
-  const rawPeriod = Array.isArray(searchParams.period) ? searchParams.period[0] : searchParams.period;
-  const rawFrom = Array.isArray(searchParams.from) ? searchParams.from[0] : searchParams.from;
+  const rawPeriod = firstParam(searchParams.period);
+  const rawFrom = firstParam(searchParams.from);
 
   const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
 
@@ -42,7 +32,6 @@ function parseWindow(searchParams: Record<string, string | string[] | undefined>
   return { period, offset };
 }
 
-/** `Date` → `YYYY-MM-DD`. Period starts are UTC midnight, so this is exact. */
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 
 /** Six months of essential spend in the bank is the conventional line. */
@@ -64,22 +53,6 @@ export default async function DashboardPage(props: PageProps<"/">) {
     getLastSync(),
   ]);
 
-  const runway = runwayMonths(balances, spend);
-  const forecastRunway = forecastRunwayMonths(balances, spend);
-  // Net monthly burn behind the forecast runway: what spending carries on costing,
-  // less the periodic income (wages, a benefit) forecast to keep covering part of
-  // it. The tile's note explains the runway from these two figures.
-  const forecastIncome = spend.forecastIncome;
-  const forecastNetBurn = spend.forecastBurn !== null ? spend.forecastBurn - forecastIncome : null;
-  const money = (amount: number) => formatMoneyWhole(amount, balances.displayCurrency);
-  // Whether any balance is held outside the display currency — the totals are only
-  // "converted" when there is something to convert.
-  const hasForeign = balances.byCurrency.some((b) => b.currency !== balances.displayCurrency);
-
-  // The window pages by STEP periods, overlapping the last by half. Time runs
-  // left-to-right, so "Earlier" steps the anchor back and "More recent" forward;
-  // each link carries the start date of the window it lands on. A window ending
-  // at the current period needs no `?from=`, keeping the dashboard's url clean.
   const base = `/?period=${period}`;
   const windowStart = (o: number) => periodStart(periodWindow(now, period, WINDOW, o)[0], period);
   const earlierHref = comparison.hasOlder
@@ -92,13 +65,23 @@ export default async function DashboardPage(props: PageProps<"/">) {
         : `${base}&from=${isoDate(windowStart(offset - STEP))}`
       : null;
 
+  const runway = runwayMonths(balances, spend);
+  const forecastRunway = forecastRunwayMonths(balances, spend);
+  // Net monthly burn behind the forecast runway: what spending carries on costing,
+  // less the periodic income (wages, a benefit) forecast to keep covering part of
+  // it. The tile's note explains the runway from these two figures.
+  const forecastIncome = spend.forecastIncome;
+  const forecastNetBurn = spend.forecastBurn !== null ? spend.forecastBurn - forecastIncome : null;
+  const money = (amount: number) => formatMoneyWhole(amount, balances.displayCurrency);
+  // Whether any balance is held outside the display currency — the totals are only
+  // "converted" when there is something to convert.
+  const hasForeign = balances.byCurrency.some((b) => b.currency !== balances.displayCurrency);
+
   return (
-    <main className="mx-auto w-full max-w-5xl p-6">
+    <main className="mx-auto w-full max-w-5xl p-2">
       <header className="mb-8 flex flex-wrap items-baseline justify-between gap-2">
         <h1 className="text-2xl font-semibold">Financial health</h1>
-        <p className="text-sm text-muted">
-          {lastSync ? `Synced ${formatDateTime(lastSync.finishedAt)}` : "Never synced"}
-        </p>
+        <SyncStatus lastSync={lastSync} />
       </header>
 
       <section className="mb-8 flex items-start justify-between gap-4">
@@ -110,21 +93,10 @@ export default async function DashboardPage(props: PageProps<"/">) {
             balances.displayCurrency,
           )} locked in KiwiSaver and investments.`}
         />
-        {/* Multi-currency holdings, kept to a terse right-aligned indicator beside
-            the headline rather than a full tile — the totals above already fold
-            these into one number, so this is only a reminder of the spread. */}
-        {hasForeign ? (
-          <ul className="shrink-0 space-y-0.5 text-right text-xs font-mono tabular-nums">
-            <li>Current Balances</li>
-            {balances.byCurrency.map((b) => (
-              <li key={b.currency}>
-                <span className="text-secondary">{formatMoneyWhole(b.total, b.currency)}</span>
-                {" "}
-                <span className="text-muted">{b.currency}</span>
-              </li>
-            ))}
-          </ul>
-        ) : null}
+        <CurrencyBreakdown
+          byCurrency={balances.byCurrency}
+          displayCurrency={balances.displayCurrency}
+        />
       </section>
 
       <section className="mb-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -204,7 +176,7 @@ export default async function DashboardPage(props: PageProps<"/">) {
         )}
         {balances.facility ? (
           <Meter
-            label="Credit facility drawn"
+            label="Credit Facility"
             fraction={balances.facility.utilisation}
             caption={`${formatMoneyWhole(
               balances.facility.drawn,
@@ -220,41 +192,34 @@ export default async function DashboardPage(props: PageProps<"/">) {
       {/* Spending Akahu left without a category. Surfacing the count is the point:
           a total that admits how much of itself is still unaccounted for is more
           honest than one that quietly folds the remainder in. */}
-      {review.rows > 0 ? (
-        <section className="mb-8 rounded-lg border border-status-warning/40 bg-status-warning/5 p-4">
-          <p className="flex items-center gap-2 text-sm font-medium">
-            <span className="inline-block size-2 shrink-0 rounded-full bg-status-warning" />
-            <Link href="/categories/uncategorised" className="underline underline-offset-2">
-              {review.rows.toLocaleString("en-NZ")} uncategorised transactions
-            </Link>
-          </p>
-          {review.threshold !== null && review.overThreshold > 0 && review.overThreshold < review.rows ? (
-            <p className="mt-1 text-sm text-secondary">
-              {review.overThreshold === 1
-                ? "One is"
-                : `The largest ${review.overThreshold.toLocaleString("en-NZ")} are`}{" "}
-              {formatMoneyWhole(review.threshold, balances.displayCurrency)} or more — worth
-              categorising first.
-            </p>
-          ) : null}
-          {spend.unknownGroups.length > 0 ? (
-            <p className="mt-2 text-sm text-secondary">
-              NZFCC returned {spend.unknownGroups.length} category group(s) this app doesn&apos;t
-              know: {spend.unknownGroups.join(", ")}. They count as discretionary, which inflates
-              the runway above. Add them to{" "}
-              <code className="font-mono text-xs">lib/categories.ts</code>.
-            </p>
-          ) : null}
-        </section>
-      ) : null}
+      <ReviewBanner
+        rows={review.rows}
+        threshold={review.threshold}
+        overThreshold={review.overThreshold}
+        displayCurrency={balances.displayCurrency}
+        unknownGroups={spend.unknownGroups}
+      />
 
-      <div className="mb-10">
-        <ComparisonSection
+      <section className="mb-10">
+        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
+          <h2 className="text-sm font-medium">Income and spending</h2>
+        </div>
+        <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
+
+          <PeriodSelector period={period} href="/" />
+          <a
+            href={`/breakdown?period=${period}`}
+            className="text-sm text-secondary hover:text-foreground"
+          >
+            Full breakdown →
+          </a>
+        </div>
+        <ComparisonCards
           comparison={comparison}
           earlierHref={earlierHref}
           moreRecentHref={moreRecentHref}
         />
-      </div>
+      </section>
     </main>
   );
 }

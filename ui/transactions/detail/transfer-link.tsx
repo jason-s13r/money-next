@@ -2,17 +2,81 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import type { TransferCandidate, TransferLeg } from "@/lib/data";
+import type { TransferCandidate, TransferLeg } from "@/lib/server/matching";
 import { formatDate, formatMoney } from "@/lib/format";
+import { positiveAmountClass } from "@/lib/ui/amount";
 import {
   linkTransfer,
   searchTransferCandidates,
   type TransferSearchResult,
   unlinkTransfer,
-} from "./actions";
+} from "@/app/transactions/[transactionId]/actions";
 
 const btn =
   "rounded border border-current/25 px-2.5 py-1 text-xs hover:border-current/50 disabled:opacity-50";
+
+/**
+ * One row in a transfer table — a candidate, a search hit, whichever. A date that
+ * links to the row's page, the merchant/description with the account (and an
+ * optional note) beneath, the amount (with an optional converted value), and a
+ * Link button. The two tables below differ only in which extras they pass.
+ */
+function CandidateRow({
+  tx,
+  note,
+  converted,
+  convertedCurrency,
+  disabled,
+  onLink,
+  linkLabel,
+}: {
+  tx: {
+    id: string;
+    date: Date;
+    amount: number;
+    description: string;
+    merchantName: string | null;
+    account: { name: string; currency: string | null };
+  };
+  /** A qualifier under the account line — "conversion", "$0.76 fee". */
+  note?: string;
+  /** The amount expressed in the source currency, shown beneath the raw amount. */
+  converted?: number | null;
+  convertedCurrency?: string | null;
+  disabled: boolean;
+  onLink: (targetId: string) => void;
+  linkLabel?: string;
+}) {
+  return (
+    <tr className="border-b border-current/10">
+      <td className="py-2 pr-4 whitespace-nowrap opacity-60">
+        <Link href={`/transactions/${tx.id}`} className="underline underline-offset-2">
+          {formatDate(tx.date)}
+        </Link>
+      </td>
+      <td className="py-2 pr-4">
+        {tx.merchantName ?? tx.description}
+        <span className="block text-xs opacity-60">
+          {tx.account.name}
+          {note ? ` · ${note}` : ""}
+        </span>
+      </td>
+      <td className={`py-2 pr-4 text-right font-mono tabular-nums ${positiveAmountClass(tx.amount)}`}>
+        {formatMoney(tx.amount, tx.account.currency)}
+        {converted != null ? (
+          <span className="block text-xs font-normal opacity-60">
+            ≈ {formatMoney(converted, convertedCurrency ?? null)}
+          </span>
+        ) : null}
+      </td>
+      <td className="py-2 pl-4 text-right">
+        <button type="button" disabled={disabled} onClick={() => onLink(tx.id)} className={btn}>
+          {linkLabel ?? "Link"}
+        </button>
+      </td>
+    </tr>
+  );
+}
 
 // Below this the legs of a currency are treated as cancelling exactly; above it
 // the leftover is a fee one side skimmed (see `getTransferCandidates`).
@@ -83,11 +147,7 @@ export function TransferLink({
                   </span>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span
-                    className={`font-mono tabular-nums ${
-                      leg.amount > 0 ? "text-green-600 dark:text-green-400" : ""
-                    }`}
-                  >
+                  <span className={`font-mono tabular-nums ${positiveAmountClass(leg.amount)}`}>
                     {formatMoney(leg.amount, leg.account.currency)}
                   </span>
                   <button
@@ -132,51 +192,26 @@ export function TransferLink({
             </thead>
             <tbody>
               {candidates.map((c) => (
-                <tr key={c.id} className="border-b border-current/10">
-                  <td className="py-2 pr-4 whitespace-nowrap opacity-60">
-                    <Link
-                      href={`/transactions/${c.id}`}
-                      className="underline underline-offset-2"
-                    >
-                      {formatDate(c.date)}
-                    </Link>
-                  </td>
-                  <td className="py-2 pr-4">
-                    {c.merchantName ?? c.description}
-                    <span className="block text-xs opacity-60">
-                      {c.account.name}
-                      {c.kind === "conversion" && c.converted === null
-                        ? " · conversion"
-                        : c.kind === "amount" &&
-                            c.delta !== null &&
-                            Math.abs(c.delta) >= FEE_EPSILON
-                          ? ` · ${formatMoney(Math.abs(c.delta), c.account.currency)} fee`
-                          : ""}
-                    </span>
-                  </td>
-                  <td
-                    className={`py-2 pr-4 text-right font-mono tabular-nums ${
-                      c.amount > 0 ? "text-green-600 dark:text-green-400" : ""
-                    }`}
-                  >
-                    {formatMoney(c.amount, c.account.currency)}
-                    {c.converted !== null ? (
-                      <span className="block text-xs font-normal opacity-60">
-                        ≈ {formatMoney(c.converted, sourceCurrency)}
-                      </span>
-                    ) : null}
-                  </td>
-                  <td className="py-2 pl-4 text-right">
-                    <button
-                      type="button"
-                      disabled={pending}
-                      onClick={() => linkAction(c.id)}
-                      className={btn}
-                    >
-                      Link as transfer
-                    </button>
-                  </td>
-                </tr>
+                <CandidateRow
+                  key={c.id}
+                  tx={c}
+                  // A cross-currency leg is flagged as such; a same-currency one
+                  // notes any residual the two sides didn't cancel — a skimmed fee.
+                  note={
+                    c.kind === "conversion" && c.converted === null
+                      ? "conversion"
+                      : c.kind === "amount" &&
+                          c.delta !== null &&
+                          Math.abs(c.delta) >= FEE_EPSILON
+                        ? `${formatMoney(Math.abs(c.delta), c.account.currency)} fee`
+                        : undefined
+                  }
+                  converted={c.converted}
+                  convertedCurrency={sourceCurrency}
+                  disabled={pending}
+                  onLink={linkAction}
+                  linkLabel="Link as transfer"
+                />
               ))}
             </tbody>
           </table>
@@ -238,37 +273,7 @@ function ManualLink({
         <table className="mt-3 w-full border-collapse text-sm">
           <tbody>
             {results.map((r) => (
-              <tr key={r.id} className="border-b border-current/10">
-                <td className="py-2 pr-4 whitespace-nowrap opacity-60">
-                  <Link
-                    href={`/transactions/${r.id}`}
-                    className="underline underline-offset-2"
-                  >
-                    {formatDate(r.date)}
-                  </Link>
-                </td>
-                <td className="py-2 pr-4">
-                  {r.merchantName ?? r.description}
-                  <span className="block text-xs opacity-60">{r.account.name}</span>
-                </td>
-                <td
-                  className={`py-2 pr-4 text-right font-mono tabular-nums ${
-                    r.amount > 0 ? "text-green-600 dark:text-green-400" : ""
-                  }`}
-                >
-                  {formatMoney(r.amount, r.account.currency)}
-                </td>
-                <td className="py-2 pl-4 text-right">
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => onLink(r.id)}
-                    className={btn}
-                  >
-                    Link
-                  </button>
-                </td>
-              </tr>
+              <CandidateRow key={r.id} tx={r} disabled={disabled} onLink={onLink} />
             ))}
           </tbody>
         </table>

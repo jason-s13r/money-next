@@ -1,9 +1,9 @@
-import { notFound, redirect } from "next/navigation";
-import { Listing } from "@/app/_components/listing";
-import { parsePage } from "@/app/_components/pagination";
-import { TransactionTable } from "@/app/_components/transaction-table";
+import { notFound } from "next/navigation";
+import { Listing } from "@/ui/transactions/listing";
+import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
+import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { groupFromSlug, isIncomeGroup } from "@/lib/categories";
-import { TRANSACTIONS_PER_PAGE, getCategoryNames, getCategoryTransactions } from "@/lib/data";
+import { getCategoryNames, getCategoryTransactions } from "@/lib/server/data";
 import { formatMoney } from "@/lib/format";
 import { fromSlug, slugify } from "@/lib/slug";
 
@@ -33,10 +33,9 @@ export default async function CategoryPage(props: PageProps<"/categories/[group]
 
   const page = parsePage((await props.searchParams).page);
   const { items, total, net } = await getCategoryTransactions(group, category, page);
-  const totalPages = Math.ceil(total / TRANSACTIONS_PER_PAGE);
 
   const basePath = `/categories/${slugify(group)}/${slugify(category)}`;
-  if (page > totalPages && totalPages > 0) redirect(`${basePath}?page=${totalPages}`);
+  const totalPages = paginate(total, page, pageHref(basePath));
 
   return (
     <Listing

@@ -1,5 +1,5 @@
-import Link from "next/link";
-import { Pagination } from "./pagination";
+import { Pagination } from "@/ui/primitives/pagination";
+import { StatList } from "@/ui/primitives/stat-list";
 
 /**
  * The frame shared by every transaction listing: where you came from, what this
@@ -19,7 +19,7 @@ export function Listing({
   empty,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
   subtitle?: string;
   stats: { label: string; value: string }[];
   basePath: string;
@@ -32,19 +32,12 @@ export function Listing({
   const isEmpty = totalPages === 0;
 
   return (
-    <main className="mx-auto w-full max-w-5xl p-6">
+    <main className="mx-auto w-full max-w-5xl p-2">
       <header className="mb-6">
         <h1 className="text-2xl font-semibold">{title}</h1>
         {subtitle ? <p className="mt-1 text-sm opacity-60">{subtitle}</p> : null}
 
-        <dl className="mt-4 flex flex-wrap gap-x-10 gap-y-3 text-sm">
-          {stats.map((stat) => (
-            <div key={stat.label}>
-              <dt className="opacity-60">{stat.label}</dt>
-              <dd className="font-mono tabular-nums">{stat.value}</dd>
-            </div>
-          ))}
-        </dl>
+        <StatList stats={stats} className="mt-4" />
       </header>
 
       {isEmpty ? (

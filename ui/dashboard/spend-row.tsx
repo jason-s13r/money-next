@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import { formatMoneyWhole } from "@/lib/format";
-import { CELL, CHEVRON, Swatch } from "./table";
+import { CELL, CHEVRON, Swatch } from "./comparison-table";
 
 /** A row and everything it is made of. Three levels: group → category → merchant. */
 export type SpendNode = {
@@ -13,6 +13,8 @@ export type SpendNode = {
   values: number[];
   /** Only the top level carries a colour; the levels below inherit its meaning. */
   color?: string;
+  /** Merchant logo URL, shown beside the label when present. */
+  logo?: string | null;
   /** Empty when the breakdown would only restate the row: nothing to open. */
   children: SpendNode[];
 };
@@ -78,6 +80,15 @@ export function SpendRow({ row, depth = 0 }: { row: SpendNode; depth?: number })
             )}
 
             {row.color ? <Swatch color={row.color} /> : null}
+
+            {row.logo ? (
+              <img
+                src={row.logo}
+                alt=""
+                className="size-4 shrink-0 rounded object-contain"
+                loading="lazy"
+              />
+            ) : null}
 
             {row.href ? (
               <Link href={row.href} className={link}>

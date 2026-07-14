@@ -1,9 +1,9 @@
-import { notFound, redirect } from "next/navigation";
-import { Listing } from "@/app/_components/listing";
-import { parsePage } from "@/app/_components/pagination";
-import { TransactionTable } from "@/app/_components/transaction-table";
+import { notFound } from "next/navigation";
+import { Listing } from "@/ui/transactions/listing";
+import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
+import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { isEssential, isIncomeGroup, groupFromSlug } from "@/lib/categories";
-import { TRANSACTIONS_PER_PAGE, getGroupTransactions } from "@/lib/data";
+import { getGroupTransactions } from "@/lib/server/data";
 import { formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 
@@ -20,12 +20,9 @@ export default async function GroupPage(props: PageProps<"/categories/[group]">)
 
   const page = parsePage((await props.searchParams).page);
   const { items, total, net } = await getGroupTransactions(group, page);
-  const totalPages = Math.ceil(total / TRANSACTIONS_PER_PAGE);
 
-  // A `?page=` past the end would render an empty table under a "Page 9 of 3".
-  if (page > totalPages && totalPages > 0) {
-    redirect(`/categories/${slugify(group)}?page=${totalPages}`);
-  }
+  const basePath = `/categories/${slugify(group)}`;
+  const totalPages = paginate(total, page, pageHref(basePath));
 
   return (
     <Listing
@@ -37,7 +34,7 @@ export default async function GroupPage(props: PageProps<"/categories/[group]">)
           : { label: "Spent", value: formatMoney(-net, null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },
       ]}
-      basePath={`/categories/${slugify(group)}`}
+      basePath={basePath}
       page={page}
       totalPages={totalPages}
       empty={isIncomeGroup(group) ? "No income in this period." : "No spending in this category group."}

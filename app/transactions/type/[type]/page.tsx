@@ -1,8 +1,8 @@
-import { notFound, redirect } from "next/navigation";
-import { Listing } from "@/app/_components/listing";
-import { parsePage } from "@/app/_components/pagination";
-import { TransactionTable } from "@/app/_components/transaction-table";
-import { TRANSACTIONS_PER_PAGE, getTransactionTypes, getTypeTransactions } from "@/lib/data";
+import { notFound } from "next/navigation";
+import { Listing } from "@/ui/transactions/listing";
+import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
+import { TransactionTable } from "@/ui/transactions/transaction-table";
+import { getTransactionTypes, getTypeTransactions } from "@/lib/server/data";
 import { formatMoney } from "@/lib/format";
 import { fromSlug, slugify } from "@/lib/slug";
 
@@ -26,10 +26,9 @@ export default async function TypePage(props: PageProps<"/transactions/type/[typ
 
   const page = parsePage((await props.searchParams).page);
   const { items, total, net } = await getTypeTransactions(type, page);
-  const totalPages = Math.ceil(total / TRANSACTIONS_PER_PAGE);
 
   const basePath = `/transactions/type/${slugify(type)}`;
-  if (page > totalPages && totalPages > 0) redirect(`${basePath}?page=${totalPages}`);
+  const totalPages = paginate(total, page, pageHref(basePath));
 
   return (
     <Listing

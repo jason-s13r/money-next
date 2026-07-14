@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SiteNav } from "@/ui/chrome/site-nav";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -18,12 +18,6 @@ export const metadata: Metadata = {
   description: "Personal finance dashboard",
 };
 
-const navItems = [
-  { href: "/", label: "Dashboard" },
-  { href: "/transactions/search", label: "Transactions" },
-  { href: "/accounts", label: "Accounts" },
-];
-
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -35,28 +29,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
-        <header className="border-b border-current/10">
-          <nav
-            className="mx-auto flex max-w-5xl items-center gap-6 p-4 text-sm"
-            aria-label="Global"
-          >
-            <Link href="/" className="font-semibold">
-              Money
-            </Link>
-            <ul className="flex items-center gap-4">
-              {navItems.map((item) => (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className="opacity-60 transition-opacity hover:opacity-100"
-                  >
-                    {item.label}
-                  </Link>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        </header>
+        <SiteNav />
         {children}
       </body>
     </html>

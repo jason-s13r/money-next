@@ -1,8 +1,8 @@
-import { notFound, redirect } from "next/navigation";
-import { Listing } from "@/app/_components/listing";
-import { parsePage } from "@/app/_components/pagination";
-import { TransactionTable } from "@/app/_components/transaction-table";
-import { TRANSACTIONS_PER_PAGE, getMerchant, getMerchantTransactions } from "@/lib/data";
+import { notFound } from "next/navigation";
+import { Listing } from "@/ui/transactions/listing";
+import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
+import { TransactionTable } from "@/ui/transactions/transaction-table";
+import { getMerchant, getMerchantTransactions } from "@/lib/server/data";
 import { formatMoney } from "@/lib/format";
 
 // Keyed by Akahu's `merchantId`, so the url is stable and unambiguous. One
@@ -22,10 +22,9 @@ export default async function MerchantPage(props: PageProps<"/merchants/[merchan
 
   const page = parsePage((await props.searchParams).page);
   const { items, total, net } = await getMerchantTransactions(merchantId, page);
-  const totalPages = Math.ceil(total / TRANSACTIONS_PER_PAGE);
 
   const basePath = `/merchants/${merchantId}`;
-  if (page > totalPages && totalPages > 0) redirect(`${basePath}?page=${totalPages}`);
+  const totalPages = paginate(total, page, pageHref(basePath));
 
   // Refunds are inflows, so a merchant that paid back more than it took nets
   // positive. Say "Net" rather than "Spent", which would be a lie with a sign.
@@ -33,7 +32,18 @@ export default async function MerchantPage(props: PageProps<"/merchants/[merchan
 
   return (
     <Listing
-      title={merchant.name}
+      title={
+        <span className="flex items-center gap-3">
+          {merchant.logo ? (
+            <img
+              src={merchant.logo}
+              alt=""
+              className="h-8 w-8 rounded object-contain"
+            />
+          ) : null}
+          {merchant.name}
+        </span>
+      }
       stats={[
         { label: spent >= 0 ? "Spent" : "Refunded", value: formatMoney(Math.abs(spent), null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },

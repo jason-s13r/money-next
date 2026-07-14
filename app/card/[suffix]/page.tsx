@@ -1,8 +1,8 @@
-import { notFound, redirect } from "next/navigation";
-import { Listing } from "@/app/_components/listing";
-import { parsePage } from "@/app/_components/pagination";
-import { TransactionTable } from "@/app/_components/transaction-table";
-import { TRANSACTIONS_PER_PAGE, getCardSuffixes, getCardTransactions } from "@/lib/data";
+import { notFound } from "next/navigation";
+import { Listing } from "@/ui/transactions/listing";
+import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
+import { TransactionTable } from "@/ui/transactions/transaction-table";
+import { getCardSuffixes, getCardTransactions } from "@/lib/server/data";
 import { formatMoney } from "@/lib/format";
 
 /** Matched exactly, not slugged: a suffix is already url-safe digits. */
@@ -25,10 +25,9 @@ export default async function CardPage(props: PageProps<"/card/[suffix]">) {
 
   const page = parsePage((await props.searchParams).page);
   const { items, total, net } = await getCardTransactions(suffix, page);
-  const totalPages = Math.ceil(total / TRANSACTIONS_PER_PAGE);
 
   const basePath = `/card/${suffix}`;
-  if (page > totalPages && totalPages > 0) redirect(`${basePath}?page=${totalPages}`);
+  const totalPages = paginate(total, page, pageHref(basePath));
 
   const spent = -net;
 

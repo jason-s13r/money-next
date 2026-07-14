@@ -55,3 +55,4 @@ classify.rules.json
 # generated prisma client, recreated by `pnpm db:generate`
 /lib/generated/
 .claude/
+.pnpm-store/

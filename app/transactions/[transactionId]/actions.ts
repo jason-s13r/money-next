@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/db";
+import { db } from "@/lib/server/db";
 import type { Prisma } from "@/lib/generated/prisma/client";
 
 // Manual re-classification of a single transaction, and the reconciliation of the

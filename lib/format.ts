@@ -1,7 +1,13 @@
 // Formatting is done on the server, so it uses the server's timezone. That's
 // correct for a single-user dashboard running on the same machine as its owner.
 
-const DEFAULT_CURRENCY = "NZD";
+// The app's one default/display currency, the single literal every other module
+// derives its NZD from: `format.ts` is safe for client and server alike (unlike
+// the server-only `currency.ts`), so the constant lives here where anything can
+// reach it. The dashboard may still *total* in a different currency when most
+// accounts are held in one (see `getDisplayCurrency`); this is the fallback and
+// the unit the transaction listings fix on.
+export const DEFAULT_CURRENCY = "NZD";
 
 export function formatMoney(amount: number | null, currency: string | null) {
   if (amount === null) return "—";

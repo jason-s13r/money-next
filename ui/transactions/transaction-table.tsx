@@ -1,7 +1,8 @@
 import Link from "next/link";
-import type { TransactionListItem } from "@/lib/data";
-import { formatDate, formatMoney } from "@/lib/format";
+import type { TransactionListItem } from "@/lib/server/data";
+import { DEFAULT_CURRENCY as DISPLAY_CURRENCY, formatDate, formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
+import { positiveAmountClass } from "@/lib/ui/amount";
 
 // The one table every "what is in this bucket?" page renders, so their columns
 // stay identical. A page turns off whichever column merely repeats its own
@@ -10,9 +11,8 @@ import { slugify } from "@/lib/slug";
 // own Account name, and a running Balance that is meaningless once rows from
 // different accounts interleave).
 
-// The currency every row's amount is compared in; a foreign-currency row shows
-// its converted value beneath the raw one. Matches `DISPLAY_CURRENCY` in data.ts.
-const DISPLAY_CURRENCY = "NZD";
+// The currency every row's amount is compared in (`amountBase`, computed in
+// data.ts); a foreign-currency row shows its converted value beneath the raw one.
 
 export function TransactionTable({
   items,
@@ -69,42 +69,58 @@ export function TransactionTable({
             </td>
 
             <td className={td}>
-              {/* An open enrichment conflict is flagged where the row is read, not
-                  only on its own page. */}
-              {tx.needsReview ? (
-                <span
-                  title="Needs review"
-                  className="mr-1.5 text-amber-600 dark:text-amber-400"
-                >
-                  ●
-                </span>
-              ) : null}
-              {tx.transfer ? (
-                // A linked transfer reads as its summary, linked to the tx page
-                // where the whole group and its legs live.
-                <Link href={`/transactions/${tx.id}`} className={link}>
-                  {tx.transfer.label}
-                </Link>
-              ) : tx.merchantName && tx.merchantId && linkMerchant ? (
-                <Link href={`/merchants/${tx.merchantId}`} className={link}>
-                  {tx.merchantName}
-                </Link>
-              ) : (
-                (tx.merchantName ?? tx.description)
-              )}
-              {/* The raw bank description, always, so an enriched merchant name or
-                  transfer summary never hides what the statement actually said.
-                  Skipped when the line above already is the description. */}
-              {tx.transfer || tx.merchantName ? (
-                <div className="text-xs opacity-60">{tx.description}</div>
-              ) : null}
+              <div className="flex items-center gap-2">
+                {tx.merchant?.logo ? (
+                  <img src={tx.merchant.logo} alt="" className="h-5 w-5 rounded object-contain" />
+                ) : null}
+                <div>
+                  {/* An open enrichment conflict is flagged where the row is read, not
+                      only on its own page. */}
+                  {tx.needsReview ? (
+                    <span
+                      title="Needs review"
+                      className="mr-1.5 text-amber-600 dark:text-amber-400"
+                    >
+                      ●
+                    </span>
+                  ) : null}
+                  {tx.transfer ? (
+                    // A linked transfer reads as its summary, linked to the tx page
+                    // where the whole group and its legs live.
+                    <Link href={`/transactions/${tx.id}`} className={link}>
+                      {tx.transfer.label}
+                    </Link>
+                  ) : tx.merchantName && tx.merchantId && linkMerchant ? (
+                    <Link href={`/merchants/${tx.merchantId}`} className={link}>
+                      {tx.merchantName}
+                    </Link>
+                  ) : (
+                    (tx.merchantName ?? tx.description)
+                  )}
+                  {/* The raw bank description, always, so an enriched merchant name or
+                      transfer summary never hides what the statement actually said.
+                      Skipped when the line above already is the description. */}
+                  {tx.transfer || tx.merchantName ? (
+                    <div className="text-xs opacity-60">{tx.description}</div>
+                  ) : null}
+                </div>
+              </div>
             </td>
 
             {showAccount ? (
               <td className={`${td} opacity-60`}>
-                <Link href={`/accounts/${tx.account.id}`} className={link}>
-                  {tx.account.name}
-                </Link>
+                <div className="flex items-center gap-2">
+                  {tx.account.connection?.logo ? (
+                    <img
+                      src={tx.account.connection.logo}
+                      alt=""
+                      className="h-5 w-5 rounded object-contain"
+                    />
+                  ) : null}
+                  <Link href={`/accounts/${tx.account.id}`} className={link}>
+                    {tx.account.name}
+                  </Link>
+                </div>
               </td>
             ) : null}
 
@@ -152,9 +168,7 @@ export function TransactionTable({
               </td>
             ) : null}
 
-            <td
-              className={`${tdNum} ${tx.amount > 0 ? "text-green-600 dark:text-green-400" : ""}`}
-            >
+            <td className={`${tdNum} ${positiveAmountClass(tx.amount)}`}>
               {formatMoney(tx.amount, tx.account.currency)}
               {/* A foreign-currency row also carries its value in the display
                   currency, so the column is comparable top to bottom. */}

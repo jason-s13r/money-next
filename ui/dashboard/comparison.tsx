@@ -1,12 +1,12 @@
 import Link from "next/link";
-import type { Comparison, PeriodBreakdown } from "@/lib/metrics";
-import { netOf, UNCATEGORISED, UNKNOWN_MERCHANT } from "@/lib/metrics";
-import { isKnownGroup } from "@/lib/categories";
-import { slugify } from "@/lib/slug";
+import type { Comparison, PeriodBreakdown } from "@/lib/server/metrics/comparison";
+import { netOf } from "@/lib/server/metrics/comparison";
 import { formatDate, formatMoneyWhole } from "@/lib/format";
 import { formatPeriodKey, formatPeriodShort, PERIOD_LABELS, PERIODS, type Period } from "@/lib/periods";
-import { CELL, CHEVRON, HEAD, Swatch } from "./table";
-import { SpendRow, type SpendNode } from "./spend-row";
+import { CELL, CHEVRON, HEAD, Swatch } from "./comparison-table";
+import { NavPair } from "@/ui/primitives/nav-pair";
+import { SpendRow } from "./spend-row";
+import { incomeNodes, slotColor, spendNode } from "@/lib/server/comparison-nodes";
 
 // Income and spending, per period, on one shared value axis.
 //
@@ -18,131 +18,10 @@ import { SpendRow, type SpendNode } from "./spend-row";
 // The two bars carry different measures, so each has its own legend and its own
 // slot ordering. Identity is read within a row, never across the two.
 
-/**
- * Where a spending row leads. Every group has a page; "Uncategorised" is the
- * absence of a category, which gets its own list.
- */
-function rowHref(category: string): string | null {
-  if (category === UNCATEGORISED) return "/categories/uncategorised";
-  return isKnownGroup(category) ? `/categories/${slugify(category)}` : null;
-}
-
-/** A disclosure row leads to its subcategory's page under its group. */
-function detailHref(category: string, label: string): string | null {
-  return isKnownGroup(category) ? `/categories/${slugify(category)}/${slugify(label)}` : null;
-}
-
-/**
- * A merchant row leads to its id-keyed page. The chart groups by name, so the id
- * is looked up (see `Comparison.merchantIds`); the unnamed remainder has no page.
- */
-function merchantHref(comparison: Comparison, merchant: string): string | null {
-  if (merchant === UNKNOWN_MERCHANT) return null;
-  const id = comparison.merchantIds.get(merchant);
-  return id ? `/merchants/${id}` : null;
-}
-
-/**
- * An income subcategory leads to its page under its income group. The unnamed
- * remainder isn't a category with a page — it is exactly what the uncategorised
- * list holds, so it leads there instead.
- */
-function incomeDetailHref(group: string | null, label: string): string | null {
-  if (label === UNCATEGORISED) return "/categories/uncategorised";
-  return group ? detailHref(group, label) : null;
-}
-
-/**
- * The tree under one spending category: its subcategories, and their merchants.
- *
- * A merchant's page holds *all* its transactions, not only the ones under the
- * category the reader opened — that is what a merchant page is. Only a merchant
- * enrichment failed to name has nowhere to go.
- */
-function spendNode(comparison: Comparison, category: string): SpendNode {
-  const { periods, spendCategories, spendSubcategories, spendMerchants } = comparison;
-  const merchantsOf = spendMerchants.get(category);
-
-  return {
-    label: category,
-    color: slotColor(spendCategories, category),
-    href: rowHref(category),
-    values: periods.map((p) => p.spend.get(category) ?? 0),
-    children: (spendSubcategories.get(category) ?? []).map((label) => ({
-      label,
-      href: detailHref(category, label),
-      values: periods.map((p) => p.spendDetail.get(category)?.get(label)?.total ?? 0),
-      children: (merchantsOf?.get(label) ?? []).map((merchant) => ({
-        label: merchant,
-        href: merchantHref(comparison, merchant),
-        values: periods.map(
-          (p) => p.spendDetail.get(category)?.get(label)?.merchants.get(merchant) ?? 0,
-        ),
-        children: [],
-      })),
-    })),
-  };
-}
-
-/**
- * The income rows: its groups ("Periodic Income", "Other Income") as collapsible
- * parents, each disclosing its NZFCC subcategories (Wages, Refunds…), and each of
- * those the merchants beneath — the income source — the way a spending category
- * does. The parent group wears no swatch: the colour lives on each subcategory, so
- * its bar segment and its row match, and the group is just the fold that keeps a
- * long list readable. A subcategory whose rows carry no group (there normally are
- * none — ingest defaults inflows to "Other Income") falls back to a flat row after
- * the groups. The merchant level stays hidden until a source is actually named
- * (see getComparison), so a refund or a wage can later carry the merchant it came
- * from.
- */
-function incomeNodes(comparison: Comparison): SpendNode[] {
-  const { periods, incomeGroups, incomeGroupOf, incomeSubcategories, incomeMerchants } = comparison;
-
-  const subNode = (label: string, group: string | null): SpendNode => ({
-    label,
-    color: slotColor(incomeSubcategories, label),
-    href: incomeDetailHref(group, label),
-    values: periods.map((p) => p.incomeDetail.get(label)?.total ?? 0),
-    children: (incomeMerchants.get(label) ?? []).map((merchant) => ({
-      label: merchant,
-      href: merchantHref(comparison, merchant),
-      values: periods.map((p) => p.incomeDetail.get(label)?.merchants.get(merchant) ?? 0),
-      children: [],
-    })),
-  });
-
-  // Subcategories keep their flat ranked order; here they're partitioned by group.
-  const subsInGroup = (group: string) =>
-    incomeSubcategories.filter((label) => incomeGroupOf.get(label) === group);
-
-  const groupNodes: SpendNode[] = incomeGroups.map((group) => ({
-    label: group,
-    href: `/categories/${slugify(group)}`,
-    values: periods.map((p) =>
-      subsInGroup(group).reduce((sum, label) => sum + (p.incomeDetail.get(label)?.total ?? 0), 0),
-    ),
-    children: subsInGroup(group).map((label) => subNode(label, group)),
-  }));
-
-  // Any subcategory with no group at all sits flat after the groups rather than
-  // vanishing — defensive, since ingest gives every inflow a group.
-  const looseNodes = incomeSubcategories
-    .filter((label) => !incomeGroupOf.get(label))
-    .map((label) => subNode(label, null));
-
-  return [...groupNodes, ...looseNodes];
-}
-
-/** Colour follows the entity: a category keeps its slot in every period. */
-function slotColor(categories: string[], category: string): string {
-  // Not a categorical entity — the absence of one. Grey, never a slot.
-  if (category === UNCATEGORISED) return "var(--viz-unknown)";
-  const index = categories.indexOf(category);
-  // The palette holds eight. A ninth hue is indistinguishable from an existing
-  // one, so the overflow wears the grey rather than twinning with a real slot.
-  return index < 8 ? `var(--viz-${index + 1})` : "var(--viz-unknown)";
-}
+/** Net colour: green for a surplus period, red for a deficit. */
+const netClass = (net: number) => (net >= 0 ? "text-status-good" : "text-status-critical");
+/** A net figure with an explicit + or − sign and no cents. */
+const signedWhole = (net: number) => `${net >= 0 ? "+" : "−"}${formatMoneyWhole(Math.abs(net))}`;
 
 function Legend({ title, categories }: { title: string; categories: string[] }) {
   return (
@@ -237,14 +116,7 @@ function PeriodCard({
         </p>
         <p className="text-sm">
           <span className="text-muted">net </span>
-          <span
-            className={`font-mono tabular-nums ${
-              net >= 0 ? "text-status-good" : "text-status-critical"
-            }`}
-          >
-            {net >= 0 ? "+" : "−"}
-            {formatMoneyWhole(Math.abs(net))}
-          </span>
+          <span className={`font-mono tabular-nums ${netClass(net)}`}>{signedWhole(net)}</span>
         </p>
       </div>
 
@@ -272,7 +144,7 @@ function PeriodCard({
   );
 }
 
-function PeriodSelector({ period }: { period: Period }) {
+export function PeriodSelector({ period, href }: { period: Period; href: string }) {
   return (
     // One filter row above everything it scopes, never inside a chart card.
     // Changing the period resets to the most recent window, so no page carries.
@@ -281,7 +153,7 @@ function PeriodSelector({ period }: { period: Period }) {
       {PERIODS.map((option) => (
         <Link
           key={option}
-          href={`/?period=${option}`}
+          href={`${href}?period=${option}`}
           aria-current={option === period ? "page" : undefined}
           className={`rounded-md px-2.5 py-1 ${
             option === period
@@ -309,27 +181,12 @@ function WindowPager({
   earlierHref: string | null;
   moreRecentHref: string | null;
 }) {
-  const linkClass = "underline underline-offset-2";
-  const disabledClass = "opacity-30";
-
   return (
-    <nav className="mt-4 flex items-center justify-between text-sm">
-      {earlierHref ? (
-        <Link href={earlierHref} className={linkClass}>
-          ← Earlier
-        </Link>
-      ) : (
-        <span className={disabledClass}>← Earlier</span>
-      )}
-
-      {moreRecentHref ? (
-        <Link href={moreRecentHref} className={linkClass}>
-          More recent →
-        </Link>
-      ) : (
-        <span className={disabledClass}>More recent →</span>
-      )}
-    </nav>
+    <NavPair
+      className="mt-4"
+      left={{ href: earlierHref, label: "← Earlier" }}
+      right={{ href: moreRecentHref, label: "More recent →" }}
+    />
   );
 }
 
@@ -405,12 +262,8 @@ function ComparisonTable({ comparison }: { comparison: Comparison }) {
             {periods.map((p) => {
               const net = netOf(p);
               return (
-                <td
-                  key={p.key}
-                  className={`${CELL} ${net >= 0 ? "text-status-good" : "text-status-critical"}`}
-                >
-                  {net >= 0 ? "+" : "−"}
-                  {formatMoneyWhole(Math.abs(net))}
+                <td key={p.key} className={`${CELL} ${netClass(net)}`}>
+                  {signedWhole(net)}
                 </td>
               );
             })}
@@ -418,6 +271,31 @@ function ComparisonTable({ comparison }: { comparison: Comparison }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+export function ComparisonCards({
+  comparison,
+  earlierHref,
+  moreRecentHref,
+}: {
+  comparison: Comparison;
+  earlierHref: string | null;
+  moreRecentHref: string | null;
+}) {
+  // A period with no money either way is a $0 card that carries nothing — skip it.
+  const cardPeriods = comparison.periods.filter((p) => p.incomeTotal > 0 || p.spendTotal > 0);
+
+  return (
+    <>
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {cardPeriods.map((breakdown) => (
+          <PeriodCard key={breakdown.key} breakdown={breakdown} comparison={comparison} />
+        ))}
+      </div>
+
+      <WindowPager earlierHref={earlierHref} moreRecentHref={moreRecentHref} />
+    </>
   );
 }
 
@@ -430,41 +308,18 @@ export function ComparisonSection({
   earlierHref: string | null;
   moreRecentHref: string | null;
 }) {
-  const partial = comparison.periods.find((p) => p.partial);
-  // "Through" is the newest transaction, not today: a stale sync and a fresh one
-  // produce the same calendar month, and only this distinguishes them.
-  const partialNote = partial
-    ? `${formatPeriodKey(partial.key, comparison.period)} is still in progress — ${
-        comparison.through
-          ? `data runs through ${formatDate(comparison.through)}`
-          : "no transactions in it yet"
-      }.`
-    : "";
-
-  // A period with no money either way is a $0 card that carries nothing — skip it.
-  // The table keeps its column (a row of dashes still places the period in time),
-  // but a whole empty card is just noise, e.g. tax years before the data begins.
-  const cardPeriods = comparison.periods.filter((p) => p.incomeTotal > 0 || p.spendTotal > 0);
-
   return (
     <section>
-      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
-        <h2 className="text-sm font-medium">Income and spending</h2>
-        <PeriodSelector period={comparison.period} />
+      <div className="mt-4">
+        <ComparisonCards
+          comparison={comparison}
+          earlierHref={earlierHref}
+          moreRecentHref={moreRecentHref}
+          />
       </div>
-
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {cardPeriods.map((breakdown) => (
-          <PeriodCard key={breakdown.key} breakdown={breakdown} comparison={comparison} />
-        ))}
-      </div>
-
-      <WindowPager earlierHref={earlierHref} moreRecentHref={moreRecentHref} />
 
       <div className="mt-8">
-        <h2 className="mb-3 text-sm font-medium">By category</h2>
         <ComparisonTable comparison={comparison} />
-        {partial ? <p className="mt-2 text-xs text-muted">* {partialNote}</p> : null}
       </div>
     </section>
   );
