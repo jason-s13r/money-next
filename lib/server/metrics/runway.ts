@@ -1,9 +1,95 @@
 import type { BalanceSummary } from "./balance";
 import type { SpendSummary } from "./spend";
 
-// The two runways the dashboard reads as a pair, both derived from a
+// The three runways the dashboard reads as a set, all derived from a
 // {@link BalanceSummary} and a {@link SpendSummary} rather than the database — pure
 // functions the page composes from the summaries it already loaded.
+
+export type Runway = {
+  /** Scenario name — matches the chart legend. */
+  label: string;
+  /** CSS colour token, kept in sync with the chart line for this scenario. */
+  color: string;
+  /** Months until liquid balance hits zero at this burn, or null / Infinity. */
+  months: number | null;
+  /** Monthly burn that produced the runway, in display currency. */
+  monthlyBurn: number | null;
+  /** Pre-built status line — callers don't build strings in JSX. */
+  note: string;
+  /** Status derived from the conventional 6/3-month runway thresholds. */
+  status: "good" | "warning" | "critical" | null;
+};
+
+/** Six months of essential spend in the bank is the conventional line. */
+function runwayStatus(months: number): "good" | "warning" | "critical" {
+  if (months >= 6) return "good";
+  if (months >= 3) return "warning";
+  return "critical";
+}
+
+function formatMonths(months: number | null): { text: string; status: ReturnType<typeof runwayStatus> | null } {
+  if (months === null) return { text: "No data", status: null };
+  if (months === Infinity) return { text: "Sustained", status: "good" };
+  return { text: `${months.toFixed(1)} months`, status: runwayStatus(months) };
+}
+
+/**
+ * All three runway scenarios the dashboard surfaces: the essentials-only
+ * emergency floor, the "life goes on" forecast net of periodic income, and the
+ * pessimistic gross forecast with no income offset. Each carries its chart colour
+ * and a pre-formatted label so callers don't build strings in JSX.
+ */
+export function getRunways(
+  balances: BalanceSummary,
+  spend: SpendSummary,
+  formatMoney: (amount: number) => string,
+): Runway[] {
+  const forecastMonthly =
+    spend.forecastBurn === null ? null : spend.forecastBurn - spend.forecastIncome;
+  const pessimisticMonthly = spend.forecastBurn;
+  const emergencyMonthly = spend.medianEssential;
+
+  const forecastMonths =
+    forecastMonthly === null || forecastMonthly <= 0
+      ? forecastMonthly === null
+        ? null
+        : Infinity
+      : balances.liquid / forecastMonthly;
+  const pessimisticMonths =
+    pessimisticMonthly === null || pessimisticMonthly <= 0
+      ? pessimisticMonthly === null
+        ? null
+        : Infinity
+      : balances.liquid / pessimisticMonthly;
+  const emergencyMonths =
+    emergencyMonthly === null || emergencyMonthly <= 0
+      ? emergencyMonthly === null
+        ? null
+        : Infinity
+      : balances.liquid / emergencyMonthly;
+
+  const make = (
+    label: string,
+    color: string,
+    months: number | null,
+    monthlyBurn: number | null,
+  ): Runway => {
+    const formatted = formatMonths(months);
+    const burnText = monthlyBurn !== null ? formatMoney(monthlyBurn) : "—";
+    return {
+      label,
+      color,
+      months,
+      monthlyBurn,
+      status: formatted.status,
+      note: `${formatted.text} runway, burn rate ${burnText}/mo`,
+    };
+  };
+
+  return [
+    make("Forecast", "var(--viz-1)", forecastMonths, forecastMonthly),
+  ];
+}
 
 /**
  * Months of liquid cash at a typical month's essential spend.

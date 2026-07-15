@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { Listing } from "@/ui/transactions/listing";
 import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
-import { getTransactionTypes, getTypeTransactions } from "@/lib/server/data";
+import { getTransactionTypes, getTypeTransactions } from "@/lib/server/queries/transactions";
 import { formatMoney } from "@/lib/format";
 import { fromSlug, slugify } from "@/lib/slug";
 

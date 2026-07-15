@@ -1,19 +1,19 @@
 import { notFound } from "next/navigation";
 import { SearchableSelect, type SelectOption } from "@/ui/primitives/searchable-select";
 import { positiveAmountClass } from "@/lib/ui/amount";
-import { getCategories, getMerchants, getTransaction, getRulesForTransaction } from "@/lib/server/data";
+import { getCategories, getMerchants, getTransaction, getRulesForTransaction } from "@/lib/server/queries/lookups";
 import {
   getSimilarTransactions,
   getTransferCandidates,
   getTransferGroupLegs,
-} from "@/lib/server/matching";
+} from "@/lib/server/matching/matching";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
+import { setTransactionCategory } from "./actions/category";
 import {
   createMerchantAndSetForTransaction,
-  setTransactionCategory,
   setTransactionMerchant,
-} from "./actions";
+} from "./actions/merchant";
 import { ConflictBanner } from "@/ui/transactions/detail/conflict-banner";
 import { SimilarTransactions } from "@/ui/transactions/detail/similar-transactions";
 import { LearnRule } from "@/ui/transactions/detail/learn-rule";
@@ -24,7 +24,7 @@ import { EditableField, Field, Section } from "@/ui/transactions/detail/transact
 export async function generateMetadata(props: PageProps<"/transactions/[transactionId]">) {
   const { transactionId } = await props.params;
   const tx = await getTransaction(transactionId);
-  return { title: tx ? (tx.merchantName ?? tx.description) : "Transaction" };
+  return { title: tx ? (tx.merchant?.name ?? tx.description) : "Transaction" };
 }
 
 // Transaction ids are globally unique, so this route sits at the top level
@@ -71,7 +71,7 @@ export default async function TransactionPage(
       <header className="mb-8">
         <p className="text-sm opacity-60">{formatDateTime(tx.date)}</p>
         <h1 className="mt-1 text-2xl font-semibold">
-          {tx.merchantName ?? tx.description}
+          {tx.merchant?.name ?? tx.description}
         </h1>
         <p className={`mt-2 font-mono text-3xl tabular-nums ${positiveAmountClass(tx.amount)}`}>
           {formatMoney(tx.amount, account.currency)}
@@ -109,13 +109,13 @@ export default async function TransactionPage(
         <EditableField
           label="Merchant"
           href={tx.merchantId ? `/merchants/${tx.merchantId}` : null}
-          value={tx.merchantName}
+          value={tx.merchant?.name ?? null}
         >
           <SearchableSelect
             ariaLabel="Merchant"
             options={merchantOptions}
             value={tx.merchantId}
-            valueLabel={tx.merchantName}
+            valueLabel={tx.merchant?.name ?? null}
             placeholder="Set merchant…"
             clearLabel="No merchant"
             onSelect={setTransactionMerchant.bind(null, tx.id)}
@@ -134,17 +134,17 @@ export default async function TransactionPage(
         <EditableField
           label="Category"
           href={
-            tx.categoryGroup && tx.categoryName
-              ? `/categories/${slugify(tx.categoryGroup)}/${slugify(tx.categoryName)}`
+            tx.categoryGroup && tx.category?.name
+              ? `/categories/${slugify(tx.categoryGroup.name)}/${slugify(tx.category.name)}`
               : null
           }
-          value={tx.categoryName}
+          value={tx.category?.name ?? null}
         >
           <SearchableSelect
             ariaLabel="Category"
             options={categoryOptions}
             value={tx.categoryId}
-            valueLabel={tx.categoryName}
+            valueLabel={tx.category?.name ?? null}
             placeholder="Set category…"
             clearLabel="Uncategorised"
             onSelect={setTransactionCategory.bind(null, tx.id)}
@@ -160,8 +160,8 @@ export default async function TransactionPage(
         </EditableField>
         <Field
           label="Category group"
-          value={tx.categoryGroup}
-          href={tx.categoryGroup ? `/categories/${slugify(tx.categoryGroup)}` : null}
+          value={tx.categoryGroup?.name ?? null}
+          href={tx.categoryGroup ? `/categories/${slugify(tx.categoryGroup.name)}` : null}
         />
       </Section>
 
@@ -177,13 +177,13 @@ export default async function TransactionPage(
         sourceId={tx.id}
         items={similar}
         category={
-          tx.categoryId && tx.categoryName
-            ? { id: tx.categoryId, name: tx.categoryName }
+          tx.categoryId && tx.category?.name
+            ? { id: tx.categoryId, name: tx.category.name }
             : null
         }
         merchant={
-          tx.merchantId && tx.merchantName
-            ? { id: tx.merchantId, name: tx.merchantName }
+          tx.merchantId && tx.merchant?.name
+            ? { id: tx.merchantId, name: tx.merchant.name }
             : null
         }
       />

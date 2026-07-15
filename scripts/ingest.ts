@@ -9,7 +9,7 @@
  * halfway can simply be run again. Intended to be driven by cron.
  */
 import { db } from "../lib/server/db";
-import { runSync, type SyncArgs } from "../lib/server/sync";
+import { runSync, type SyncArgs } from "../lib/server/ingest/sync";
 
 function parseArgs(argv: string[]): SyncArgs {
   const full = argv.includes("--full");

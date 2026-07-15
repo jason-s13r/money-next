@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { MatchingRule } from "@/lib/server/data";
+import type { MatchingRule } from "@/lib/server/queries/lookups";
 import { RuleOutputs } from "@/ui/rules/rule-output";
 
 // The "Automation" panel on a transaction page: which rules act on *this* row

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { TRANSACTIONS_PER_PAGE } from "@/lib/server/data";
+import { TRANSACTIONS_PER_PAGE } from "@/lib/server/queries/transactions";
 import { firstParam } from "@/lib/search-params";
 import { NavPair } from "./nav-pair";
 

@@ -1,0 +1,97 @@
+import type { Prisma } from "../../../generated/prisma/client";
+
+// The `source` value stamped on any field a rule sets, alongside the existing
+// `akahu` (mirrored) and `user` (hand-set) owners. A rule outranks `akahu` but
+// never `user`: a hand-set field is left untouched (see `applyOutput`).
+export const RULE_SOURCE = "rule";
+
+/**
+ * The flat context a decision graph is evaluated against — one transaction, with
+ * its account joined in and a couple of derived conveniences (`direction`,
+ * `isTransfer`). Field names are the identifiers rules reference in their
+ * expressions and tables, so treat this as the public input contract.
+ */
+export type RuleInput = {
+  id: string;
+  date: string;
+  description: string;
+  amount: number;
+  direction: "in" | "out";
+  type: string;
+  currency: string | null;
+  accountId: string;
+  accountName: string;
+  accountType: string;
+  connectionId: string;
+  merchantId: string | null;
+  merchantName: string | null;
+  categoryId: string | null;
+  categoryName: string | null;
+  categoryGroup: string | null;
+  particulars: string | null;
+  code: string | null;
+  reference: string | null;
+  otherAccount: string | null;
+  cardSuffix: string | null;
+  isTransfer: boolean;
+};
+
+/**
+ * What a decision graph may return, all optional. `categoryId`/`merchantId` must
+ * name a row that exists (an unknown id is ignored, not written, so a typo can't
+ * corrupt a transaction); `autoLinkTransfer` asks the runner to find and link the
+ * opposite leg when it can do so unambiguously.
+ */
+export type RuleOutput = {
+  categoryId?: string | null;
+  merchantId?: string | null;
+  autoLinkTransfer?: boolean;
+};
+
+// The transaction fields the runner needs: enough to build the input, plus the
+// provenance/grouping columns that gate what may be written.
+export const txSelect = {
+  id: true,
+  date: true,
+  description: true,
+  amount: true,
+  type: true,
+  accountId: true,
+  connectionId: true,
+  merchantId: true,
+  merchant: { select: { name: true } },
+  merchantSource: true,
+  categoryId: true,
+  category: { select: { name: true } },
+  categoryGroupId: true,
+  categoryGroup: { select: { name: true } },
+  categorySource: true,
+  particulars: true,
+  code: true,
+  reference: true,
+  otherAccount: true,
+  cardSuffix: true,
+  transferGroupId: true,
+  account: { select: { name: true, type: true, currency: true } },
+} satisfies Prisma.TransactionSelect;
+
+export type RuleTx = Prisma.TransactionGetPayload<{ select: typeof txSelect }>;
+
+/** One edit a rule made to a transaction, for the run report. */
+export type RuleChange = {
+  field: "category" | "merchant" | "transfer";
+  fromLabel: string | null;
+  toLabel: string | null;
+};
+
+export type RulesRunSummary = {
+  /** Whether an active rule document existed to run at all. */
+  ran: boolean;
+  evaluated: number;
+  categorised: number;
+  merchantsSet: number;
+  transfersLinked: number;
+  /** Transactions whose evaluation threw (a broken expression, say); the run
+   *  continues past them so one bad row can't abandon a whole sync. */
+  errors: number;
+};

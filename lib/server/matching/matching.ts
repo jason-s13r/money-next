@@ -1,8 +1,8 @@
 import "server-only";
 import { connection } from "next/server";
-import { db } from "./db";
-import { convert, loadRates } from "./currency";
-import type { Prisma } from "../generated/prisma/client";
+import { db } from "../db";
+import { convert, loadRates } from "../currency";
+import type { Prisma } from "../../generated/prisma/client";
 
 // Fuzzy matching of transactions against one another, for two features that share
 // the same description-overlap scoring: finding other transactions *like* a given
@@ -71,7 +71,11 @@ export async function getSimilarTransactions(
   const candidates = await db.transaction.findMany({
     where: { type: tx.type, id: { not: tx.id } },
     orderBy: [{ date: "desc" }, { id: "desc" }],
-    include: { account: { select: { name: true, currency: true } } },
+    include: {
+      account: { select: { name: true, currency: true } },
+      merchant: { select: { name: true } },
+      category: { select: { name: true } },
+    },
   });
 
   const sourceTokens = descriptionTokens(tx.description);
@@ -128,7 +132,10 @@ export async function getTransferGroupLegs(tx: { id: string; transferGroupId: nu
   return db.transaction.findMany({
     where: { transferGroupId: tx.transferGroupId, id: { not: tx.id } },
     orderBy: [{ date: "desc" }, { id: "desc" }],
-    include: { account: { select: { name: true, currency: true } } },
+    include: {
+      account: { select: { name: true, currency: true } },
+      merchant: { select: { name: true } },
+    },
   });
 }
 
@@ -185,7 +192,10 @@ export async function getTransferCandidates(
         account: { is: { currency } },
         date: window,
       },
-      include: { account: { select: { name: true, currency: true } } },
+      include: {
+        account: { select: { name: true, currency: true } },
+        merchant: { select: { name: true } },
+      },
     }),
     // Cross-currency counterparts: opposite-sign, different-account, different-
     // currency rows in the window. Scored below by same-instant conversion or by
@@ -199,7 +209,10 @@ export async function getTransferCandidates(
         date: window,
         account: { is: { currency: { not: currency } } },
       },
-      include: { account: { select: { name: true, currency: true } } },
+      include: {
+        account: { select: { name: true, currency: true } },
+        merchant: { select: { name: true } },
+      },
     }),
   ]);
 

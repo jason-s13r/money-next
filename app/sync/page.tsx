@@ -1,4 +1,4 @@
-import { getSyncRuns, SYNC_RUNS_PER_PAGE } from "@/lib/server/data";
+import { getSyncRuns, SYNC_RUNS_PER_PAGE } from "@/lib/server/queries/runs";
 import { formatDateTime } from "@/lib/format";
 import { StatList } from "@/ui/primitives/stat-list";
 import { Pagination, paginate, parsePage } from "@/ui/primitives/pagination";

@@ -64,7 +64,7 @@ export function SearchForm() {
         name="q"
         value={value}
         onChange={(event) => setValue(event.target.value)}
-        placeholder="Description, merchant, reference, particulars…"
+        placeholder="Search transactions…"
         aria-label="Search transactions"
         className={`w-full rounded-lg border border-current/20 bg-transparent px-3 py-2 text-sm outline-none transition-opacity focus:border-current/50 ${
           isPending ? "opacity-60" : ""

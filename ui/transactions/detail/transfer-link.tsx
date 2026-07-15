@@ -2,15 +2,15 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import type { TransferCandidate, TransferLeg } from "@/lib/server/matching";
+import type { TransferCandidate, TransferLeg } from "@/lib/server/matching/matching";
 import { formatDate, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
 import {
   linkTransfer,
   searchTransferCandidates,
-  type TransferSearchResult,
   unlinkTransfer,
-} from "@/app/transactions/[transactionId]/actions";
+} from "@/app/transactions/[transactionId]/actions/transfer";
+import type { TransferSearchResult } from "@/app/transactions/[transactionId]/actions/transfer";
 
 const btn =
   "rounded border border-current/25 px-2.5 py-1 text-xs hover:border-current/50 disabled:opacity-50";
@@ -35,7 +35,7 @@ function CandidateRow({
     date: Date;
     amount: number;
     description: string;
-    merchantName: string | null;
+    merchant: { name: string } | null;
     account: { name: string; currency: string | null };
   };
   /** A qualifier under the account line — "conversion", "$0.76 fee". */
@@ -55,7 +55,7 @@ function CandidateRow({
         </Link>
       </td>
       <td className="py-2 pr-4">
-        {tx.merchantName ?? tx.description}
+        {tx.merchant?.name ?? tx.description}
         <span className="block text-xs opacity-60">
           {tx.account.name}
           {note ? ` · ${note}` : ""}
@@ -140,7 +140,7 @@ export function TransferLink({
                     href={`/transactions/${leg.id}`}
                     className="underline underline-offset-2"
                   >
-                    {leg.merchantName ?? leg.description}
+                    {leg.merchant?.name ?? leg.description}
                   </Link>
                   <span className="text-xs opacity-60">
                     {formatDate(leg.date)} · {leg.account.name}

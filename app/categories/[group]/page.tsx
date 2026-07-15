@@ -3,7 +3,7 @@ import { Listing } from "@/ui/transactions/listing";
 import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { isEssential, isIncomeGroup, groupFromSlug } from "@/lib/categories";
-import { getGroupTransactions } from "@/lib/server/data";
+import { getGroupTransactions } from "@/lib/server/queries/transactions";
 import { formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 

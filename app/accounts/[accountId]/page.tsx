@@ -2,7 +2,10 @@ import { notFound } from "next/navigation";
 import { pageHref, paginate, Pagination, parsePage } from "@/ui/primitives/pagination";
 import { StatList } from "@/ui/primitives/stat-list";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
-import { getAccount, getAccountTransactions } from "@/lib/server/data";
+import { PendingTable } from "@/ui/transactions/pending-table";
+import { getAccount } from "@/lib/server/queries/accounts";
+import { getAccountPendingTransactions } from "@/lib/server/queries/pending";
+import { getAccountTransactions } from "@/lib/server/queries/transactions";
 import { formatMoney } from "@/lib/format";
 
 export async function generateMetadata(props: PageProps<"/accounts/[accountId]">) {
@@ -19,6 +22,9 @@ export default async function AccountPage(props: PageProps<"/accounts/[accountId
   if (!account) notFound();
 
   const { items, total } = await getAccountTransactions(accountId, page);
+  // Pending holds sit atop the first page only, so they aren't repeated on every
+  // paginated page of this account's settled ledger below.
+  const pending = page === 1 ? await getAccountPendingTransactions(accountId) : [];
   const basePath = `/accounts/${accountId}`;
   const totalPages = paginate(total, page, pageHref(basePath));
 
@@ -49,14 +55,22 @@ export default async function AccountPage(props: PageProps<"/accounts/[accountId
               ? [{ label: "Limit", value: formatMoney(account.balanceLimit, account.currency) }]
               : []),
             { label: "Transactions", value: total.toLocaleString("en-NZ") },
+            ...(pending.length > 0
+              ? [{ label: "Pending", value: pending.length.toLocaleString("en-NZ") }]
+              : []),
           ]}
         />
       </header>
 
+      {/* Every row is this account, so the Account column is dropped. */}
+      {pending.length > 0 ? <PendingTable items={pending} showAccount={false} /> : null}
+
       {total === 0 ? (
-        <p className="py-8 text-center text-sm opacity-60">
-          No transactions for this account.
-        </p>
+        pending.length === 0 ? (
+          <p className="py-8 text-center text-sm opacity-60">
+            No transactions for this account.
+          </p>
+        ) : null
       ) : (
         <>
           {/* Every row is this one account, so the Account column is dropped and

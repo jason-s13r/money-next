@@ -5,8 +5,8 @@
 // server — can import it. The interactive counterparts live in the transaction
 // page's server action (which wraps `linkTransferLegs` with `revalidatePath`).
 
-import { db } from "./db";
-import type { Prisma } from "../generated/prisma/client";
+import { db } from "../db";
+import type { Prisma } from "../../generated/prisma/client";
 
 /**
  * Put `targetId` in the same transfer group as `sourceId`, creating the group if

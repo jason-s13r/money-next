@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { applyRulesNow } from "./actions";
-import type { RulesRunSummary } from "@/lib/server/rules";
+import type { RulesRunSummary } from "@/lib/server/rules/engine";
 
 // Runs the active rules over the whole transaction history and reports what it
 // changed. Styled to match the "Full sync" button on the sync page, since both are

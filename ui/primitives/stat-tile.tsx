@@ -40,21 +40,46 @@ export function StatTile({
   );
 }
 
+export type HeroRunway = {
+  /** Scenario name shown before the note. */
+  label: string;
+  /** Pre-built status text, e.g. "12.5 months · $3,400/mo". */
+  note: string;
+  /** CSS colour token for the pulsing dot — must match the chart line. */
+  color: string;
+};
+
 /** The single number the dashboard leads with. Exactly one per view. */
 export function Hero({
   label,
   value,
   note,
+  runways,
 }: {
   label: string;
   value: string;
   note: string;
+  runways?: HeroRunway[];
 }) {
   return (
     <div>
       <p className="text-sm text-secondary">{label}</p>
       <p className="mt-1 text-5xl font-semibold tracking-tight">{value}</p>
       <p className="mt-2 text-sm text-muted">{note}</p>
+      {runways && runways.length > 0 ? (
+        <div className="mt-2 flex flex-col gap-1">
+          {runways.map((r) => (
+            <p key={r.label} className="flex items-center gap-1.5 text-sm text-secondary">
+              <span
+                className="inline-block size-2 rounded-full animate-pulse"
+                style={{ backgroundColor: r.color }}
+              />
+              <span className="font-medium">{r.label}</span>
+              <span className="text-muted">{r.note}</span>
+            </p>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }

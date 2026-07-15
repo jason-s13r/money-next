@@ -1,7 +1,9 @@
 import { Listing } from "@/ui/transactions/listing";
 import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
-import { getRecentTransactions } from "@/lib/server/data";
+import { PendingTable } from "@/ui/transactions/pending-table";
+import { getPendingTransactions } from "@/lib/server/queries/pending";
+import { getRecentTransactions } from "@/lib/server/queries/transactions";
 import { formatMoney } from "@/lib/format";
 
 // The unfiltered listing: every transaction across every account, newest first,
@@ -12,6 +14,9 @@ export const metadata = { title: "Recent transactions" };
 export default async function RecentPage(props: PageProps<"/transactions/recent">) {
   const page = parsePage((await props.searchParams).page);
   const { items, total, net } = await getRecentTransactions(page);
+  // Pending holds sit atop the first page only, so they aren't repeated on every
+  // paginated page of the settled ledger below.
+  const pending = page === 1 ? await getPendingTransactions() : [];
 
   const basePath = "/transactions/recent";
   const totalPages = paginate(total, page, pageHref(basePath));
@@ -31,6 +36,7 @@ export default async function RecentPage(props: PageProps<"/transactions/recent"
       totalPages={totalPages}
       empty="No transactions yet."
     >
+      {pending.length > 0 ? <PendingTable items={pending} /> : null}
       <TransactionTable items={items} />
     </Listing>
   );

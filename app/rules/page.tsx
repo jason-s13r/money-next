@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { db } from "@/lib/server/db";
-import { getCategories, getMerchants, getRuleRuns } from "@/lib/server/data";
-import { readLearnedRules, readTransferAutoLink, type Graph } from "@/lib/server/rule-learning";
+import { getCategories, getMerchants } from "@/lib/server/queries/lookups";
+import { getRuleRuns } from "@/lib/server/queries/runs";
+import { readLearnedRules, readTransferAutoLink, type Graph } from "@/lib/server/rules/learning";
 import { formatDateTime } from "@/lib/format";
 import { removeRule } from "./actions";
 import { ApplyRulesButton } from "./apply-rules-button";

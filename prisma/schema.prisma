@@ -53,6 +53,7 @@ model Account {
   syncedAt    DateTime  @updatedAt
 
   transactions Transaction[]
+  pending      PendingTransaction[]
   balances     BalanceSnapshot[]
 
   @@index([status])
@@ -73,6 +74,7 @@ model Connection {
 
   accounts     Account[]
   transactions Transaction[]
+  pending      PendingTransaction[]
 
   syncedAt DateTime @updatedAt
 
@@ -102,15 +104,17 @@ model Transaction {
   hash         String?
 
   merchantId    String?
-  merchantName  String?
-  merchant      Merchant? @relation(fields: [merchantId], references: [id])
+  merchant      Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
   categoryId    String?
-  categoryName  String?
-  /// Akahu returns several category grouping schemes; we keep the
-  /// `personal_finance` group name, which is the one useful for budgeting.
-  categoryGroup String?
-  /// The id of the category group Akahu returned (e.g. `personal_finance`).
+  category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  /// The `personal_finance` spending group this row sits under, as a real group id
+  /// (NZFCC `group_...`, or an invented `group_custom_...` income group). Kept as a
+  /// plain FK column — not derived through the category relation — because an
+  /// uncategorised inflow still carries an income group with no category, and
+  /// because metrics `groupBy` it (Prisma/SQLite can't group across a relation). The
+  /// group *name* lives only on `CategoryGroup`; read it through `categoryGroup.name`.
   categoryGroupId String?
+  categoryGroup   CategoryGroup? @relation(fields: [categoryGroupId], references: [id], onDelete: SetNull)
 
   /// Who owns the enrichment, per editable field: `akahu` (mirrored, and the
   /// sync may overwrite it) or `user` (hand-set, and the sync must not clobber
@@ -142,6 +146,7 @@ model Transaction {
   /// querying this column. Always user-made: Akahu tags a row's `type` as TRANSFER
   /// but never says which rows belong together.
   transferGroupId Int?
+  transferGroup   TransferGroup? @relation(fields: [transferGroupId], references: [id], onDelete: SetNull)
 
   /// Timestamps as reported by Akahu, not by us.
   createdAt DateTime?
@@ -156,11 +161,54 @@ model Transaction {
 
   @@index([accountId, date])
   @@index([date])
-  @@index([categoryGroup])
-  @@index([merchantName])
+  @@index([categoryGroupId])
+  @@index([categoryId])
   @@index([merchantId])
   @@index([transferGroupId])
   @@index([connectionId])
+}
+
+/// A pending (authorised but not-yet-settled) transaction, mirrored from Akahu's
+/// `/transactions/pending`. Unlike `Transaction` these are transient and have no
+/// stable id: a pending row vanishes once it settles (reappearing under a real
+/// `trans_...` id with no back-reference) or is cancelled. So each sync *replaces*
+/// this whole table with Akahu's current pending set rather than upserting by id
+/// (see `syncPendingTransactions`). Display-only: deliberately kept out of every
+/// balance, spend, runway and rules path — pending money is not settled money.
+/// Pending rows are also less enriched than settled ones — Akahu attaches `meta`
+/// but no merchant or category — so those columns are absent here.
+model PendingTransaction {
+  id        Int     @id @default(autoincrement())
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+
+  date        DateTime
+  description String
+  /// Negative for money out, positive for money in.
+  amount      Float
+  /// DEBIT | CREDIT | TRANSFER | EFTPOS | FEE | ...
+  type        String
+
+  /// Akahu's `updated_at`. Pending rows carry no `created_at`.
+  akahuUpdatedAt DateTime
+
+  particulars  String?
+  code         String?
+  reference    String?
+  otherAccount String?
+  cardSuffix   String?
+
+  conversionAmount   Float?
+  conversionCurrency String?
+  conversionRate     Float?
+
+  syncedAt DateTime @default(now())
+
+  @@index([accountId, date])
+  @@index([date])
 }
 
 /// A user-defined grouping of transactions that together make up one internal
@@ -173,21 +221,25 @@ model Transaction {
 model TransferGroup {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
+
+  transactions Transaction[]
 }
 
 /// Historical daily FX reference rates from the ECB, fetched via frankfurter.dev
 /// during `db:sync` and cached so cross-currency transfer matching runs offline
-/// like every other read here. `rate` is units of `currency` per 1 EUR on `date`
-/// (EUR is the ECB base, stored as 1); convert A→B with `amount * rateB / rateA`.
-/// The ECB only publishes on business days, so a weekend/holiday transaction reads
-/// the most recent prior date.
+/// like every other read here. `rate` is units of `currency` per 1 unit of `base`
+/// on `date` (the base is stored as 1); convert A→B with `amount * rateB / rateA`,
+/// which is base-agnostic. We quote against NZD (see lib/server/fx.ts) so the
+/// common NZD↔X pair is a single lookup. The ECB only publishes on business days,
+/// so a weekend/holiday transaction reads the most recent prior date.
 model FxRate {
   date     DateTime
+  base     String
   currency String
   rate     Float
 
-  @@id([date, currency])
-  @@index([currency, date])
+  @@id([date, base, currency])
+  @@index([base, currency, date])
 }
 
 /// A divergence between a user-set enrichment field and what a later Akahu sync
@@ -244,6 +296,20 @@ model Merchant {
   @@index([name])
 }
 
+/// A `personal_finance` spending group (or an invented income group), stored once
+/// and referenced by both `Category` and `Transaction` rather than having its
+/// name copied onto every row. Populated at ingest from the NZFCC mirror and, as a
+/// safety net, from each transaction's enrichment (see lib/server/sync.ts) — the
+/// same once-and-referenced pattern as `Merchant`.
+model CategoryGroup {
+  /// Real NZFCC `group_...` id, or an invented `group_custom_...` income group id.
+  id   String @id
+  name String
+
+  categories   Category[]
+  transactions Transaction[]
+}
+
 /// The NZFCC category catalog, mirrored from nzfcc.org so an `nzfcc_...` id can
 /// be resolved to its name and spending group locally. Refreshed on every
 /// `db:sync`, so a category the standard adds appears the next run.
@@ -256,13 +322,16 @@ model Category {
 
   /// The `personal_finance` group. NZFCC leaves this absent on credit categories,
   /// so the catalog fills those with a custom income group — "Periodic Income" or
-  /// "Other Income" (see lib/nzfcc.ts) — to match the `categoryGroup` on inflows.
-  groupId   String?
-  groupName String?
+  /// "Other Income" (see lib/nzfcc.ts) — to match the group on inflows. The group
+  /// name lives on `CategoryGroup`; read it through `group.name`.
+  groupId String?
+  group   CategoryGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
+
+  transactions Transaction[]
 
   syncedAt DateTime @updatedAt
 
-  @@index([groupName])
+  @@index([groupId])
 }
 
 /// Point-in-time balance, appended on each sync so the dashboard can chart

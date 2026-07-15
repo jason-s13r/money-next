@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { akahuClient, akahuUserToken } from "@/lib/server/akahu";
-import { runSync } from "@/lib/server/sync";
+import { runSync } from "@/lib/server/ingest/sync";
 import { db } from "@/lib/server/db";
 
 /**

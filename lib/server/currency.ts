@@ -8,8 +8,9 @@ import { FX_BASE_CURRENCY } from "./fx";
 // column of amounts — or a raw SQL sum of them — would be nonsense; everything the
 // dashboard totals passes through the converter this module builds.
 //
-// Rates come from the mirrored ECB table (`FxRate`), quoted as units per 1 EUR
-// (see lib/fx.ts). EUR is therefore always exactly 1 and never needs a lookup.
+// Rates come from the mirrored ECB table (`FxRate`), quoted as units per 1 unit of
+// the base currency (NZD; see lib/server/fx.ts). The base is therefore always
+// exactly 1 and never needs a lookup.
 
 /** Display currency of last resort, when no active account reveals one — the app's
  *  one default (see {@link DEFAULT_CURRENCY}), also the fixed unit the listings total in. */
@@ -34,9 +35,10 @@ export async function getDisplayCurrency(): Promise<string> {
 /**
  * The nearest rate on or before `date` for each of `currencies`, keyed by
  * currency. ECB skips weekends and holidays, so a Saturday transaction reads
- * Friday's rate; passing today's date yields each currency's latest rate. EUR is
- * the base and always 1, added without a lookup; nulls and duplicates in the
- * input are ignored. Pass `date = null` for the latest rate regardless of date.
+ * Friday's rate; passing today's date yields each currency's latest rate. The base
+ * ({@link FX_BASE_CURRENCY}) is always 1, added without a lookup; nulls and
+ * duplicates in the input are ignored. Pass `date = null` for the latest rate
+ * regardless of date.
  */
 export async function loadRates(
   currencies: (string | null)[],
@@ -48,7 +50,7 @@ export async function loadRates(
 
   // Newest-first, so the first row seen for a currency is its nearest prior rate.
   const rows = await db.fxRate.findMany({
-    where: { currency: { in: wanted }, ...(date ? { date: { lte: date } } : {}) },
+    where: { base: FX_BASE_CURRENCY, currency: { in: wanted }, ...(date ? { date: { lte: date } } : {}) },
     orderBy: { date: "desc" },
   });
   for (const row of rows) if (!map.has(row.currency)) map.set(row.currency, row.rate);
@@ -56,9 +58,10 @@ export async function loadRates(
 }
 
 /**
- * Convert `amount` from one currency to another through the EUR-based rates in
+ * Convert `amount` from one currency to another through the base-quoted rates in
  * `rates`, or null when either side's rate is missing. The rates are units per 1
- * EUR, so crossing two of them cancels the base out: `amount * rateTo / rateFrom`.
+ * unit of the base, so crossing two of them cancels the base out:
+ * `amount * rateTo / rateFrom`.
  */
 export function convert(
   amount: number,
@@ -88,7 +91,7 @@ export type DisplayConverter = (amount: number, currency: string | null, date: D
 /**
  * Builds a {@link DisplayConverter} to `display` for the currencies actually
  * present in a set of rows. The rate rows for those currencies (plus `display`,
- * the conversion target — EUR excepted, as it is the base and always 1) are loaded
+ * the conversion target — the base excepted, as it is always 1) are loaded
  * once and indexed newest-first per currency, so each call is an in-memory
  * nearest-on-or-before lookup. An input already all in the display currency needs
  * no rates and issues no query.
@@ -98,15 +101,15 @@ export async function displayConverter(
   currencies: (string | null)[],
 ): Promise<DisplayConverter> {
   // A conversion is needed only if some row is held in a currency other than the
-  // display one. EUR counts here even though its rate is 1: it still converts *to*
-  // the display currency.
+  // display one. The base counts here even though its rate is 1: it still converts
+  // *to* the display currency.
   if (!currencies.some((c) => c && c !== display)) return (amount) => amount;
 
   const wanted = [
     ...new Set([...currencies, display].filter((c): c is string => !!c && c !== FX_BASE_CURRENCY)),
   ];
   const rows = await db.fxRate.findMany({
-    where: { currency: { in: wanted } },
+    where: { base: FX_BASE_CURRENCY, currency: { in: wanted } },
     orderBy: { date: "desc" },
     select: { date: true, currency: true, rate: true },
   });

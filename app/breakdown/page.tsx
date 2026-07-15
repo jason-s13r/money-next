@@ -1,7 +1,8 @@
 import { getComparison } from "@/lib/server/metrics/comparison";
 import { isPeriod, offsetForStartDate, periodStart, periodWindow, type Period } from "@/lib/periods";
 import { firstParam } from "@/lib/search-params";
-import { ComparisonSection, PeriodSelector } from "@/ui/dashboard/comparison";
+import { ComparisonSection } from "@/ui/dashboard/comparison";
+import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
 
 export const metadata = { title: "Income and spending breakdown" };
 

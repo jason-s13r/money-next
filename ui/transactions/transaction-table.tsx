@@ -1,8 +1,9 @@
 import Link from "next/link";
-import type { TransactionListItem } from "@/lib/server/data";
+import type { TransactionListItem } from "@/lib/server/queries/transactions";
 import { DEFAULT_CURRENCY as DISPLAY_CURRENCY, formatDate, formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 import { positiveAmountClass } from "@/lib/ui/amount";
+import { sortHref, type Sort, type SortField } from "@/lib/transactions/sort";
 
 // The one table every "what is in this bucket?" page renders, so their columns
 // stay identical. A page turns off whichever column merely repeats its own
@@ -23,6 +24,8 @@ export function TransactionTable({
   showType = true,
   showBalance = false,
   linkMerchant = true,
+  sort,
+  sortBase,
 }: {
   items: TransactionListItem[];
   /** Off on an account's own page, where every row is that same account. */
@@ -38,6 +41,10 @@ export function TransactionTable({
   showBalance?: boolean;
   /** Off on a merchant's own page, where every row would link back to itself. */
   linkMerchant?: boolean;
+  /** The active column sort; with `sortBase`, turns the headers into sort links. */
+  sort?: Sort;
+  /** The listing's base path (no `?sort=`/`?page=`), for building header links. */
+  sortBase?: string;
 }) {
   const th = "py-2 pr-4 font-medium";
   const thRight = "py-2 pl-4 text-right font-medium";
@@ -45,18 +52,22 @@ export function TransactionTable({
   const tdNum = "py-2 pl-4 text-right font-mono tabular-nums";
   const link = "underline underline-offset-2";
 
+  // Passed to every header so a column can turn itself into a sort link; see
+  // {@link ColumnHeader}.
+  const sorting = { sort, sortBase };
+
   return (
     <table className="w-full border-collapse text-sm">
       <thead>
         <tr className="border-b border-current/20 text-left">
-          <th className={th}>Date</th>
-          <th className={th}>Description</th>
-          {showAccount ? <th className={th}>Account</th> : null}
-          {showCategory ? <th className={th}>Category</th> : null}
-          {showCard ? <th className={th}>Card</th> : null}
-          {showType ? <th className={th}>Type</th> : null}
-          <th className={thRight}>Amount</th>
-          {showBalance ? <th className={thRight}>Balance</th> : null}
+          <ColumnHeader field="date" label="Date" className={th} {...sorting} />
+          <ColumnHeader field="description" label="Description" className={th} {...sorting} />
+          {showAccount ? <ColumnHeader field="account" label="Account" className={th} {...sorting} /> : null}
+          {showCategory ? <ColumnHeader field="category" label="Category" className={th} {...sorting} /> : null}
+          {showCard ? <ColumnHeader field="card" label="Card" className={th} {...sorting} /> : null}
+          {showType ? <ColumnHeader field="type" label="Type" className={th} {...sorting} /> : null}
+          <ColumnHeader field="amount" label="Amount" className={thRight} {...sorting} />
+          {showBalance ? <ColumnHeader field="balance" label="Balance" className={thRight} {...sorting} /> : null}
         </tr>
       </thead>
       <tbody>
@@ -90,17 +101,17 @@ export function TransactionTable({
                     <Link href={`/transactions/${tx.id}`} className={link}>
                       {tx.transfer.label}
                     </Link>
-                  ) : tx.merchantName && tx.merchantId && linkMerchant ? (
+                  ) : tx.merchant?.name && tx.merchantId && linkMerchant ? (
                     <Link href={`/merchants/${tx.merchantId}`} className={link}>
-                      {tx.merchantName}
+                      {tx.merchant.name}
                     </Link>
                   ) : (
-                    (tx.merchantName ?? tx.description)
+                    (tx.merchant?.name ?? tx.description)
                   )}
                   {/* The raw bank description, always, so an enriched merchant name or
                       transfer summary never hides what the statement actually said.
                       Skipped when the line above already is the description. */}
-                  {tx.transfer || tx.merchantName ? (
+                  {tx.transfer || tx.merchant?.name ? (
                     <div className="text-xs opacity-60">{tx.description}</div>
                   ) : null}
                 </div>
@@ -126,12 +137,12 @@ export function TransactionTable({
 
             {showCategory ? (
               <td className={`${td} opacity-60`}>
-                {tx.categoryGroup && tx.categoryName ? (
+                {tx.categoryGroup && tx.category?.name ? (
                   <Link
-                    href={`/categories/${slugify(tx.categoryGroup)}/${slugify(tx.categoryName)}`}
+                    href={`/categories/${slugify(tx.categoryGroup.name)}/${slugify(tx.category.name)}`}
                     className={link}
                   >
-                    {tx.categoryName}
+                    {tx.category.name}
                   </Link>
                 ) : (
                   "—"
@@ -140,8 +151,8 @@ export function TransactionTable({
                     group (then every row would repeat it). */}
                 {showGroup && tx.categoryGroup ? (
                   <div className="text-xs opacity-60">
-                    <Link href={`/categories/${slugify(tx.categoryGroup)}`} className={link}>
-                      {tx.categoryGroup}
+                    <Link href={`/categories/${slugify(tx.categoryGroup.name)}`} className={link}>
+                      {tx.categoryGroup.name}
                     </Link>
                   </div>
                 ) : null}
@@ -190,5 +201,47 @@ export function TransactionTable({
         ))}
       </tbody>
     </table>
+  );
+}
+
+/**
+ * One column header. A plain cell until the listing opts into sorting by passing
+ * both `sort` and `sortBase` (see {@link TransactionTable}), at which point it
+ * becomes a link that re-sorts by this column — the active column marked with
+ * `aria-sort` and an arrow. Listings that don't wire sorting render as before.
+ */
+function ColumnHeader({
+  field,
+  label,
+  className,
+  sort,
+  sortBase,
+}: {
+  field: SortField;
+  label: string;
+  className: string;
+  sort?: Sort;
+  sortBase?: string;
+}) {
+  if (!sort || !sortBase) return <th className={className}>{label}</th>;
+
+  const active = sort.field === field;
+  return (
+    <th
+      className={className}
+      aria-sort={active ? (sort.dir === "asc" ? "ascending" : "descending") : undefined}
+    >
+      <Link
+        href={sortHref(sortBase, field, sort)}
+        className="inline-flex items-center gap-1 hover:underline"
+      >
+        {label}
+        {active ? (
+          <span aria-hidden className="opacity-60">
+            {sort.dir === "asc" ? "↑" : "↓"}
+          </span>
+        ) : null}
+      </Link>
+    </th>
   );
 }

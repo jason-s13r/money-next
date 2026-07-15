@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import { Listing } from "@/ui/transactions/listing";
 import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
-import { getMerchant, getMerchantTransactions } from "@/lib/server/data";
+import { getMerchant } from "@/lib/server/queries/lookups";
+import { getMerchantTransactions } from "@/lib/server/queries/transactions";
 import { formatMoney } from "@/lib/format";
 
 // Keyed by Akahu's `merchantId`, so the url is stable and unambiguous. One

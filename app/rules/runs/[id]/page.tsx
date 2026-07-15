@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getRuleRun } from "@/lib/server/data";
+import { getRuleRun } from "@/lib/server/queries/runs";
 import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
 import { StatList } from "@/ui/primitives/stat-list";

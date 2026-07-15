@@ -1,4 +1,5 @@
-import { getAccounts, getLastSync } from "@/lib/server/data";
+import { getAccounts } from "@/lib/server/queries/accounts";
+import { getLastSync } from "@/lib/server/queries/runs";
 import { convert, getDisplayCurrency, loadRates } from "@/lib/server/currency";
 import { formatMoney } from "@/lib/format";
 import { AccountsTable } from "@/ui/accounts/accounts-table";
@@ -24,6 +25,7 @@ export default async function AccountsPage() {
     connectionId: a.connectionId,
     connection: a.connection,
     transactionCount: a._count.transactions,
+    pendingCount: a._count.pending,
     balanceCurrentBase: convert(
       a.balanceCurrent ?? 0,
       a.currency,

@@ -2,10 +2,11 @@
 
 import Link from "next/link";
 import { useState, useTransition } from "react";
-import type { SimilarTransaction } from "@/lib/server/matching";
+import type { SimilarTransaction } from "@/lib/server/matching/matching";
 import { formatDate, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
-import { applyCategoryToTransactions, applyMerchantToTransactions } from "@/app/transactions/[transactionId]/actions";
+import { applyCategoryToTransactions } from "@/app/transactions/[transactionId]/actions/category";
+import { applyMerchantToTransactions } from "@/app/transactions/[transactionId]/actions/merchant";
 
 /**
  * The list of transactions that look like the one on screen (see
@@ -141,8 +142,8 @@ export function SimilarTransactions({
                   {formatDate(tx.date)}
                 </Link>
               </td>
-              <td className="py-2 pr-4">{tx.merchantName ?? tx.description}</td>
-              <td className="py-2 pr-4 opacity-60">{tx.categoryName ?? "—"}</td>
+              <td className="py-2 pr-4">{tx.merchant?.name ?? tx.description}</td>
+              <td className="py-2 pr-4 opacity-60">{tx.category?.name ?? "—"}</td>
               <td className={`py-2 pl-4 text-right font-mono tabular-nums ${positiveAmountClass(tx.amount)}`}>
                 {formatMoney(tx.amount, tx.account.currency)}
               </td>

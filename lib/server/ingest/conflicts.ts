@@ -5,8 +5,8 @@
 //
 // No `import "server-only"`: scripts/ingest.ts imports this from plain Node.
 
-import { db } from "./db";
-import type { Prisma, TransactionConflict } from "../generated/prisma/client";
+import { db } from "../db";
+import type { Prisma, TransactionConflict } from "../../generated/prisma/client";
 
 /** The enrichment fields a user can own and a sync can therefore conflict with. */
 export type EnrichmentField = "category" | "merchant";

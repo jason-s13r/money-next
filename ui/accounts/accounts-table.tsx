@@ -21,6 +21,7 @@ type AccountRow = {
   currency: string | null;
   refreshedAt: Date | null;
   transactionCount: number;
+  pendingCount: number;
 };
 
 function amountClass(amount: number | null) {
@@ -100,6 +101,12 @@ export function AccountsTable({
             </td>
             <td className={`${tdNum} opacity-70`}>
               {account.transactionCount.toLocaleString("en-NZ")}
+              {/* Pending holds not yet in the settled count above. */}
+              {account.pendingCount > 0 ? (
+                <div className="text-xs font-normal text-amber-700 dark:text-amber-400">
+                  {account.pendingCount.toLocaleString("en-NZ")} pending
+                </div>
+              ) : null}
             </td>
             <td className={`${tdNum} opacity-70`}>
               {account.overdrawn ? (

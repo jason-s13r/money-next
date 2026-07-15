@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getRuleRuns, RULE_RUNS_PER_PAGE } from "@/lib/server/data";
+import { getRuleRuns, RULE_RUNS_PER_PAGE } from "@/lib/server/queries/runs";
 import { formatDateTime } from "@/lib/format";
 import { Pagination, paginate, parsePage } from "@/ui/primitives/pagination";
 

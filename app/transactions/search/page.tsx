@@ -1,7 +1,7 @@
 import { pageHref, paginate, Pagination, parsePage } from "@/ui/primitives/pagination";
 import { StatList } from "@/ui/primitives/stat-list";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
-import { searchTransactions } from "@/lib/server/data";
+import { searchTransactions } from "@/lib/server/queries/transactions";
 import { formatMoney } from "@/lib/format";
 import { firstParam } from "@/lib/search-params";
 

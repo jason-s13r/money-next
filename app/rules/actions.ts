@@ -2,14 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { db } from "@/lib/server/db";
-import { runRules, defaultDecisionGraph } from "@/lib/server/rules";
+import { runRules, defaultDecisionGraph } from "@/lib/server/rules/engine";
 import {
   deriveMatch,
   upsertLearnedRule,
   deleteLearnedRule,
   setTransferAutoLink,
   type Graph,
-} from "@/lib/server/rule-learning";
+} from "@/lib/server/rules/learning";
 import { slugify } from "@/lib/slug";
 import type { GenerateRuleResult } from "./types";
 
@@ -100,9 +100,9 @@ export async function generateRuleFromTransaction(
       type: true,
       description: true,
       categoryId: true,
-      categoryName: true,
+      category: { select: { name: true } },
       merchantId: true,
-      merchantName: true,
+      merchant: { select: { name: true } },
     },
   });
   if (!tx) return { ok: false, reason: "Transaction not found." };
@@ -124,7 +124,7 @@ export async function generateRuleFromTransaction(
   const { merged } = upsertLearnedRule(graph, match, {
     categoryId: tx.categoryId,
     merchantId: tx.merchantId,
-    label: tx.merchantName ?? tx.categoryName ?? undefined,
+    label: tx.merchant?.name ?? tx.category?.name ?? undefined,
   });
   await db.ruleDocument.update({ where: { id: doc.id }, data: { content: JSON.stringify(graph) } });
 
@@ -142,8 +142,8 @@ export async function generateRuleFromTransaction(
     merged,
     expression: match.expression,
     tokens: match.tokens,
-    categoryName: tx.categoryId ? tx.categoryName : null,
-    merchantName: tx.merchantId ? tx.merchantName : null,
+    categoryName: tx.categoryId ? tx.category?.name ?? null : null,
+    merchantName: tx.merchantId ? tx.merchant?.name ?? null : null,
     matchCount,
   };
 }

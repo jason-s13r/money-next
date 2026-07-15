@@ -1,7 +1,7 @@
 "use client";
 
 import { useTransition } from "react";
-import { acceptAkahuValue, keepUserValue } from "@/app/transactions/[transactionId]/actions";
+import { acceptAkahuValue, keepUserValue } from "@/app/transactions/[transactionId]/actions/conflict";
 
 /**
  * Shown under an enrichment field when a sync found Akahu asserting a different
