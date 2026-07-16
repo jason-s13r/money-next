@@ -1,5 +1,5 @@
 /**
- * Pulls accounts and transactions from Akahu into the local SQLite database.
+ * Pulls accounts and transactions from Akahu into the database.
  *
  *   pnpm db:sync              # incremental: since the newest stored transaction
  *   pnpm db:sync --full       # re-fetch the whole history window

@@ -1,7 +1,12 @@
-// Personal finance dashboard, backed by SQLite.
+// Personal finance dashboard, backed by Postgres.
 // Data is ingested from the Akahu API by `pnpm db:sync` (scripts/ingest.ts).
 //
 // Akahu ids are used as primary keys so that re-running a sync is idempotent.
+//
+// Money is `Decimal @db.Decimal(19, 4)`, never `Float`: sums have to be exact.
+// Prisma hands these back as decimal.js objects, so the read layer converts them
+// to numbers at the query boundary — see lib/server/queries. Rates are not money
+// and stay `Float` (see `FxRate.rate`).
 
 generator client {
   provider = "prisma-client"
@@ -9,7 +14,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
 }
 
 /// A connected financial account, mirrored from Akahu's `/accounts`.
@@ -37,20 +42,20 @@ model Account {
 
   /// Latest balance, flattened from `balance`. Absent for some account types.
   currency         String?
-  balanceCurrent   Float?
-  balanceAvailable Float?
-  balanceLimit     Float?
+  balanceCurrent   Decimal? @db.Decimal(19, 4)
+  balanceAvailable Decimal? @db.Decimal(19, 4)
+  balanceLimit     Decimal? @db.Decimal(19, 4)
   overdrawn        Boolean?
 
   /// When Akahu last refreshed each part of the account data.
-  refreshedBalance     DateTime?
-  refreshedMeta        DateTime?
-  refreshedTransactions DateTime?
-  refreshedParty       DateTime?
+  refreshedBalance     DateTime? @db.Timestamptz(3)
+  refreshedMeta        DateTime? @db.Timestamptz(3)
+  refreshedTransactions DateTime? @db.Timestamptz(3)
+  refreshedParty       DateTime? @db.Timestamptz(3)
 
   /// When Akahu last refreshed the account, distinct from when we last synced it.
-  refreshedAt DateTime?
-  syncedAt    DateTime  @updatedAt
+  refreshedAt DateTime? @db.Timestamptz(3)
+  syncedAt    DateTime  @updatedAt @db.Timestamptz(3)
 
   transactions Transaction[]
   pending      PendingTransaction[]
@@ -76,7 +81,7 @@ model Connection {
   transactions Transaction[]
   pending      PendingTransaction[]
 
-  syncedAt DateTime @updatedAt
+  syncedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@index([connectionType])
 }
@@ -93,12 +98,12 @@ model Transaction {
   connectionId String
   connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
 
-  date         DateTime
+  date         DateTime @db.Timestamptz(3)
   description  String
   /// Negative for money out, positive for money in.
-  amount       Float
+  amount       Decimal @db.Decimal(19, 4)
   /// Account balance after this transaction, when the institution reports it.
-  balance      Float?
+  balance      Decimal? @db.Decimal(19, 4)
   /// DEBIT | CREDIT | TRANSFER | EFTPOS | FEE | ...
   type         String
   hash         String?
@@ -111,7 +116,7 @@ model Transaction {
   /// (NZFCC `group_...`, or an invented `group_custom_...` income group). Kept as a
   /// plain FK column — not derived through the category relation — because an
   /// uncategorised inflow still carries an income group with no category, and
-  /// because metrics `groupBy` it (Prisma/SQLite can't group across a relation). The
+  /// because metrics `groupBy` it (Prisma can't group across a relation). The
   /// group *name* lives only on `CategoryGroup`; read it through `categoryGroup.name`.
   categoryGroupId String?
   categoryGroup   CategoryGroup? @relation(fields: [categoryGroupId], references: [id], onDelete: SetNull)
@@ -129,8 +134,8 @@ model Transaction {
   cardSuffix   String?
 
   /// Foreign currency conversion details, when the transaction was made in
-  /// another currency.
-  conversionAmount Float?
+  /// another currency. The rate is a ratio, not money — it stays `Float`.
+  conversionAmount Decimal? @db.Decimal(19, 4)
   conversionCurrency String?
   conversionRate Float?
 
@@ -149,9 +154,9 @@ model Transaction {
   transferGroup   TransferGroup? @relation(fields: [transferGroupId], references: [id], onDelete: SetNull)
 
   /// Timestamps as reported by Akahu, not by us.
-  createdAt DateTime?
-  updatedAt DateTime?
-  syncedAt  DateTime  @default(now())
+  createdAt DateTime? @db.Timestamptz(3)
+  updatedAt DateTime? @db.Timestamptz(3)
+  syncedAt  DateTime  @default(now()) @db.Timestamptz(3)
 
   // A transaction's nature is derived, not stored: money in (`amount > 0`) is
   // income; money out (`amount < 0`) is spending, categorised when Akahu supplied
@@ -166,6 +171,16 @@ model Transaction {
   @@index([merchantId])
   @@index([transferGroupId])
   @@index([connectionId])
+  // Trigram indexes for the free-text search, which runs as ILIKE '%term%' and
+  // so can use no btree index. Declared here rather than left as raw SQL in the
+  // migration, or `migrate dev` reads them as drift and offers to drop them.
+  // Every column the search ORs over is indexed: Postgres only combines OR
+  // branches into a BitmapOr when each one has an index.
+  @@index([description(ops: raw("gin_trgm_ops"))], type: Gin, map: "Transaction_description_trgm_idx")
+  @@index([particulars(ops: raw("gin_trgm_ops"))], type: Gin, map: "Transaction_particulars_trgm_idx")
+  @@index([code(ops: raw("gin_trgm_ops"))], type: Gin, map: "Transaction_code_trgm_idx")
+  @@index([reference(ops: raw("gin_trgm_ops"))], type: Gin, map: "Transaction_reference_trgm_idx")
+  @@index([otherAccount(ops: raw("gin_trgm_ops"))], type: Gin, map: "Transaction_otherAccount_trgm_idx")
 }
 
 /// A pending (authorised but not-yet-settled) transaction, mirrored from Akahu's
@@ -185,15 +200,15 @@ model PendingTransaction {
   connectionId String
   connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
 
-  date        DateTime
+  date        DateTime @db.Timestamptz(3)
   description String
   /// Negative for money out, positive for money in.
-  amount      Float
+  amount      Decimal @db.Decimal(19, 4)
   /// DEBIT | CREDIT | TRANSFER | EFTPOS | FEE | ...
   type        String
 
   /// Akahu's `updated_at`. Pending rows carry no `created_at`.
-  akahuUpdatedAt DateTime
+  akahuUpdatedAt DateTime @db.Timestamptz(3)
 
   particulars  String?
   code         String?
@@ -201,11 +216,11 @@ model PendingTransaction {
   otherAccount String?
   cardSuffix   String?
 
-  conversionAmount   Float?
+  conversionAmount   Decimal? @db.Decimal(19, 4)
   conversionCurrency String?
   conversionRate     Float?
 
-  syncedAt DateTime @default(now())
+  syncedAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([accountId, date])
   @@index([date])
@@ -220,7 +235,7 @@ model PendingTransaction {
 /// plain query, matching the denormalised style of the rest of the schema.
 model TransferGroup {
   id        Int      @id @default(autoincrement())
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   transactions Transaction[]
 }
@@ -233,7 +248,7 @@ model TransferGroup {
 /// common NZD↔X pair is a single lookup. The ECB only publishes on business days,
 /// so a weekend/holiday transaction reads the most recent prior date.
 model FxRate {
-  date     DateTime
+  date     DateTime @db.Timestamptz(3)
   base     String
   currency String
   rate     Float
@@ -266,8 +281,8 @@ model TransactionConflict {
   /// unless Akahu's value changes again).
   status String @default("open")
 
-  detectedAt DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  detectedAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt  DateTime @updatedAt @db.Timestamptz(3)
 
   // One live conflict per field per transaction: a new sync updates it in place
   // rather than stacking duplicates.
@@ -294,6 +309,9 @@ model Merchant {
   // A business can arrive under more than one id (Akahu has two for "Kamo Vets"),
   // so name is not unique — it is indexed for lookup, not constrained.
   @@index([name])
+  // The search matches merchant names through a relation filter; same trigram
+  // reasoning as `Transaction`.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Merchant_name_trgm_idx")
 }
 
 /// A `personal_finance` spending group (or an invented income group), stored once
@@ -329,9 +347,12 @@ model Category {
 
   transactions Transaction[]
 
-  syncedAt DateTime @updatedAt
+  syncedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@index([groupId])
+  // The search matches category names through a relation filter; same trigram
+  // reasoning as `Transaction`.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Category_name_trgm_idx")
 }
 
 /// Point-in-time balance, appended on each sync so the dashboard can chart
@@ -343,11 +364,11 @@ model BalanceSnapshot {
   account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   currency  String?
-  current   Float
-  available Float?
-  limit     Float?
+  current   Decimal  @db.Decimal(19, 4)
+  available Decimal? @db.Decimal(19, 4)
+  limit     Decimal? @db.Decimal(19, 4)
 
-  capturedAt DateTime @default(now())
+  capturedAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@unique([accountId, capturedAt])
   @@index([accountId, capturedAt])
@@ -359,15 +380,15 @@ model SyncState {
 
   /// High-water mark: the `date` of the newest transaction we have stored.
   /// The next sync starts slightly before this to catch late-settling rows.
-  lastTransactionDate DateTime?
-  updatedAt           DateTime  @updatedAt
+  lastTransactionDate DateTime? @db.Timestamptz(3)
+  updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
 }
 
 /// Audit log of ingest runs, so a silently failing cron is visible.
 model SyncRun {
   id         Int       @id @default(autoincrement())
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
+  startedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
   /// running | success | failed
   status     String    @default("running")
 
@@ -384,8 +405,9 @@ model SyncRun {
 /// transaction ("Create rule from this transaction") and reviewed on `/rules`.
 /// One document is `active` at a time; that is the graph the sync and the manual
 /// "apply rules" backfill evaluate every transaction against. The graph is stored
-/// as its JSON text in `content` (SQLite has no native JSON type here, and the app
-/// never queries into it — it is loaded whole, parsed, and handed to the engine).
+/// as its JSON text in `content` — deliberately text rather than Postgres `jsonb`,
+/// because the app never queries into the graph: it is loaded whole, parsed, and
+/// handed to the engine, and `jsonb` would reorder keys for no gain here.
 model RuleDocument {
   id   Int    @id @default(autoincrement())
   name String
@@ -402,8 +424,8 @@ model RuleDocument {
   /// one; activating a document deactivates the others (see the rules actions).
   active Boolean @default(false)
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   @@index([active])
 }
@@ -414,8 +436,8 @@ model RuleDocument {
 /// than a heartbeat of every no-op sync. Mirrors `SyncRun`.
 model RuleRun {
   id         Int       @id @default(autoincrement())
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
+  startedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
   /// What triggered the run: `sync` (during ingest) | `manual` (Apply now).
   trigger    String
   /// success | failed
@@ -453,7 +475,7 @@ model RuleApplication {
   fromLabel String?
   toLabel   String?
 
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   @@index([runId])
   @@index([transactionId])

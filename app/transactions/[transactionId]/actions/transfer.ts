@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/lib/generated/prisma/client";
 import { db } from "@/lib/server/db";
+import { money } from "@/lib/server/money";
 import { linkTransferLegs } from "@/lib/server/matching/transfers";
 
 // Grouping transactions as the legs of one internal transfer, and ungrouping
@@ -39,19 +40,22 @@ const TRANSFER_SEARCH_FIELDS = [
 
 /**
  * Free-text search over *ungrouped* transactions, to hand-pick a transfer leg the
- * heuristics miss. Excludes the source row and anything already in a transfer;
- * `contains` compiles to a case-insensitive `LIKE` on SQLite, as elsewhere.
+ * heuristics miss. Excludes the source row and anything already in a transfer.
+ * `mode: "insensitive"` is required: Postgres' LIKE is case-sensitive, and a
+ * reader searching for a counterparty does not type it in the bank's caps.
  */
 export async function searchTransferCandidates(sourceId: string, query: string) {
   const q = query.trim();
   if (q.length < 2) return [];
-  return db.transaction.findMany({
+  const rows = await db.transaction.findMany({
     where: {
       id: { not: sourceId },
       transferGroupId: null,
       OR: [
-        ...TRANSFER_SEARCH_FIELDS.map((field) => ({ [field]: { contains: q } })),
-        { merchant: { is: { name: { contains: q } } } },
+        ...TRANSFER_SEARCH_FIELDS.map((field) => ({
+          [field]: { contains: q, mode: "insensitive" },
+        })),
+        { merchant: { is: { name: { contains: q, mode: "insensitive" } } } },
       ],
     },
     orderBy: [{ date: "desc" }, { id: "desc" }],
@@ -65,6 +69,9 @@ export async function searchTransferCandidates(sourceId: string, query: string) 
       account: { select: { name: true, currency: true } },
     },
   });
+  // This is a server action returning to a client component, so `amount` must be
+  // a plain number: a decimal.js instance cannot cross that boundary.
+  return rows.map((r) => ({ ...r, amount: money(r.amount) }));
 }
 
 export type TransferSearchResult = Awaited<

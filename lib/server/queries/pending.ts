@@ -2,6 +2,7 @@ import "server-only";
 import { connection } from "next/server";
 import { db } from "../db";
 import { convert, loadRates } from "../currency";
+import { pendingMoney } from "../money";
 import type { Prisma } from "../../generated/prisma/client";
 import { DISPLAY_CURRENCY } from "./transactions";
 
@@ -50,7 +51,7 @@ export async function getPendingTransactions() {
     orderBy: [{ date: "desc" }, { id: "desc" }],
     include: pendingListInclude,
   });
-  return enrichPending(rows);
+  return enrichPending(rows.map(pendingMoney));
 }
 
 /** The pending transactions for one account, newest first. */
@@ -61,5 +62,5 @@ export async function getAccountPendingTransactions(accountId: string) {
     orderBy: [{ date: "desc" }, { id: "desc" }],
     include: pendingListInclude,
   });
-  return enrichPending(rows);
+  return enrichPending(rows.map(pendingMoney));
 }

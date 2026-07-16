@@ -2,6 +2,7 @@ import "server-only";
 import { connection } from "next/server";
 import { db } from "../db";
 import { displayConverter, getDisplayCurrency } from "../currency";
+import { money } from "../money";
 import { periodKey, periodStart, periodWindow } from "../../periods";
 import type { BalanceSummary } from "./balance";
 import type { SpendSummary } from "./spend";
@@ -118,7 +119,10 @@ export async function getBalanceSeries(
   for (const row of rows) {
     const key = periodKey(row.date, "day");
     if (!window.has(key)) continue;
-    netByKey.set(key, netByKey.get(key)! + toDisplay(row.amount, row.account.currency, row.date));
+    netByKey.set(
+      key,
+      netByKey.get(key)! + toDisplay(money(row.amount), row.account.currency, row.date),
+    );
   }
 
   const nets = days.map((k) => netByKey.get(k)!);

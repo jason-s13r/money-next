@@ -2,6 +2,7 @@ import "server-only";
 import { connection } from "next/server";
 import { db } from "../db";
 import { convert, loadRates } from "../currency";
+import { transactionMoney } from "../money";
 import type { Prisma } from "../../generated/prisma/client";
 
 // Fuzzy matching of transactions against one another, for two features that share
@@ -65,10 +66,10 @@ export async function getSimilarTransactions(
 ) {
   await connection();
 
-  // Same-type rows are the candidate pool; at this app's scale (a personal ledger
-  // on local SQLite) scoring them in memory is cheap, and it is the only way to
-  // catch the reference-number drift above.
-  const candidates = await db.transaction.findMany({
+  // Same-type rows are the candidate pool; at this app's scale (a personal
+  // ledger) scoring them in memory is cheap, and it is the only way to catch the
+  // reference-number drift above.
+  const rows = await db.transaction.findMany({
     where: { type: tx.type, id: { not: tx.id } },
     orderBy: [{ date: "desc" }, { id: "desc" }],
     include: {
@@ -77,6 +78,8 @@ export async function getSimilarTransactions(
       category: { select: { name: true } },
     },
   });
+  // These rows are rendered by a client component, so they cannot carry `Decimal`.
+  const candidates = rows.map(transactionMoney);
 
   const sourceTokens = descriptionTokens(tx.description);
 
@@ -129,7 +132,7 @@ const FX_TOLERANCE = 0.03;
 export async function getTransferGroupLegs(tx: { id: string; transferGroupId: number | null }) {
   await connection();
   if (tx.transferGroupId == null) return [];
-  return db.transaction.findMany({
+  const legs = await db.transaction.findMany({
     where: { transferGroupId: tx.transferGroupId, id: { not: tx.id } },
     orderBy: [{ date: "desc" }, { id: "desc" }],
     include: {
@@ -137,6 +140,7 @@ export async function getTransferGroupLegs(tx: { id: string; transferGroupId: nu
       merchant: { select: { name: true } },
     },
   });
+  return legs.map(transactionMoney);
 }
 
 export type TransferLeg = Awaited<ReturnType<typeof getTransferGroupLegs>>[number];
@@ -180,9 +184,9 @@ export async function getTransferCandidates(
     lte: new Date(tx.date.getTime() + windowMs),
   };
   // A transfer's other leg always moves money the other way.
-  const oppositeSign: Prisma.FloatFilter = tx.amount > 0 ? { lt: 0 } : { gt: 0 };
+  const oppositeSign: Prisma.DecimalFilter = tx.amount > 0 ? { lt: 0 } : { gt: 0 };
 
-  const [amountMatches, crossCurrency] = await Promise.all([
+  const [amountRows, crossCurrencyRows] = await Promise.all([
     db.transaction.findMany({
       where: {
         id: { not: tx.id },
@@ -215,6 +219,11 @@ export async function getTransferCandidates(
       },
     }),
   ]);
+
+  // Out of `Decimal` before any scoring: the comparisons below are all tolerance
+  // bands and FX conversions, which are float arithmetic by nature.
+  const amountMatches = amountRows.map(transactionMoney);
+  const crossCurrency = crossCurrencyRows.map(transactionMoney);
 
   const sourceTokens = descriptionTokens(tx.description);
   const rates = await loadRates(

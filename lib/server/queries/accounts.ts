@@ -2,24 +2,27 @@ import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
 import { db } from "../db";
+import { accountMoney, moneySum } from "../money";
 
 // Account reads, and the net-worth roll-up across them. Like the rest of the read
-// layer these touch only SQLite (never Akahu) and await `connection()` first, so a
-// query can't resolve during prerendering and bake a stale balance into static HTML.
+// layer these touch only the database (never Akahu) and await `connection()` first,
+// so a query can't resolve during prerendering and bake a stale balance into
+// static HTML. Balances are converted out of `Decimal` here (see lib/server/money.ts).
 
 export async function getAccounts() {
   await connection();
-  const accounts = await db.account.findMany({
+  const rows = await db.account.findMany({
     orderBy: [{ status: "asc" }, { connection: { name: "asc" } }, { name: "asc" }],
     include: {
       connection: { select: { id: true, name: true, logo: true } },
       _count: { select: { transactions: true, pending: true } },
     },
   });
+  const accounts = rows.map(accountMoney);
 
-  // Prisma can't order by a relation count on SQLite, so sort in memory:
-  // active status first, then accounts with any transactions ahead of empty
-  // ones, then connection and name.
+  // Prisma can't order by a relation count, so sort in memory: active status
+  // first, then accounts with any transactions ahead of empty ones, then
+  // connection and name.
   return accounts.toSorted((a, b) => {
     if (a.status !== b.status) return a.status.localeCompare(b.status);
     const aHasTx = a._count.transactions > 0 ? 1 : 0;
@@ -36,10 +39,11 @@ export async function getAccounts() {
 // the second caller reuses the first query.
 export const getAccount = cache(async (id: string) => {
   await connection();
-  return db.account.findUnique({
+  const account = await db.account.findUnique({
     where: { id },
     include: { connection: { select: { id: true, name: true, logo: true } } },
   });
+  return account && accountMoney(account);
 });
 
 /** Sum of current balances across active accounts, grouped by currency. */
@@ -51,8 +55,10 @@ export async function getNetWorth() {
     _sum: { balanceCurrent: true },
   });
 
+  // Grouped by currency, so each subtotal adds up like-for-like — and Postgres
+  // sums the Decimal column exactly before it becomes a number here.
   return grouped.map((row) => ({
     currency: row.currency!,
-    total: row._sum.balanceCurrent ?? 0,
+    total: moneySum(row._sum.balanceCurrent),
   }));
 }

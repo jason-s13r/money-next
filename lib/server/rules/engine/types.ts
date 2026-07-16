@@ -75,7 +75,17 @@ export const txSelect = {
   account: { select: { name: true, type: true, currency: true } },
 } satisfies Prisma.TransactionSelect;
 
-export type RuleTx = Prisma.TransactionGetPayload<{ select: typeof txSelect }>;
+/**
+ * A transaction as the runner sees it: the selected columns, but with `amount`
+ * already out of Prisma's `Decimal` and into a plain number.
+ *
+ * The graph compares `amount` numerically and the engine is handed this object
+ * as its input, so a decimal.js instance must never reach it — the runner
+ * converts as it fetches (see `runRules`).
+ */
+export type RuleTx = Omit<Prisma.TransactionGetPayload<{ select: typeof txSelect }>, "amount"> & {
+  amount: number;
+};
 
 /** One edit a rule made to a transaction, for the run report. */
 export type RuleChange = {

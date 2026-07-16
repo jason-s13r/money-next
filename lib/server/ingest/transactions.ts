@@ -214,7 +214,7 @@ export async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[])
       );
     }
 
-    // One SQLite write transaction per page keeps this fast and means a crash
+    // One write transaction per page keeps this fast and means a crash
     // mid-page can't leave a partially-applied page behind. Groups lead, then the
     // categories that point at them, then merchants — so every transaction that
     // follows finds the rows it points at; conflict ops trail the transaction

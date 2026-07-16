@@ -1,0 +1,35 @@
+# Development Postgres.
+#
+# This is the dev database only — the app itself is not containerised yet (that
+# lands with the self-host story, and adds `app` and `cron` services here).
+#
+# The port is bound to 127.0.0.1 deliberately, NOT the compose default of
+# 0.0.0.0: `next dev` runs on the host and has to reach the database, but a
+# personal finance database must not be reachable from the rest of the network.
+# The production compose should publish no host port at all and keep Postgres on
+# the internal network.
+services:
+  postgres:
+    image: postgres:17-bookworm
+    container_name: money-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: money
+      POSTGRES_PASSWORD: money
+      POSTGRES_DB: money
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `pg_isready` alone returns true before the init scripts finish on first
+      # boot, so `migrate deploy` can race it. Checking as the real user against
+      # the real database is the honest readiness signal.
+      test: ["CMD-SHELL", "pg_isready -U money -d money"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+volumes:
+  pgdata:

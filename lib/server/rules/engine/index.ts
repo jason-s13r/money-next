@@ -13,6 +13,7 @@
 
 import { ZenEngine, type ZenDecision } from "@gorules/zen-engine";
 import { db } from "../../db";
+import { money } from "../../money";
 import {
   RULE_SOURCE,
   type RuleChange,
@@ -27,8 +28,10 @@ import { applyOutput } from "./apply";
 export { defaultDecisionGraph } from "./graph";
 export type { RuleInput, RuleOutput, RulesRunSummary } from "./types";
 
-// Keep each `id: { in: [...] }` batch well under SQLite's default bound-parameter
-// ceiling (999) so a large sync's id list can't overflow it.
+// Chunk size for each `id: { in: [...] }` batch. Originally sized to stay under
+// SQLite's 999 bound-parameter ceiling; Postgres' limit is far higher, but a
+// large sync can hand this thousands of ids and batching them is good hygiene on
+// any database, so the number stays.
 const ID_QUERY_CHUNK = 500;
 
 function chunk<T>(items: T[], size: number): T[][] {
@@ -90,8 +93,11 @@ export async function runRules(opts?: {
 
   try {
     // A sync can hand us thousands of freshly-upserted ids; splatting them all
-    // into one `id: { in: [...] }` blows SQLite's bound-parameter limit, so fetch
-    // in chunks. When no ids are given (the manual backfill) it's a single query.
+    // into one `id: { in: [...] }` makes a statement no database enjoys, so fetch
+    // in chunks. (The chunk size was originally SQLite's 999 bound-parameter
+    // ceiling; Postgres' limit is far higher, but batching a large IN list is
+    // good hygiene regardless.) When no ids are given (the manual backfill) it's
+    // a single query.
     const txs: RuleTx[] = [];
     const idBatches = opts?.transactionIds
       ? chunk(opts.transactionIds, ID_QUERY_CHUNK)
@@ -102,7 +108,9 @@ export async function runRules(opts?: {
         select: txSelect,
         orderBy: [{ date: "desc" }, { id: "desc" }],
       });
-      txs.push(...batch);
+      // Out of `Decimal` here, so the graph input and everything downstream of it
+      // sees a plain number (see `RuleTx`).
+      txs.push(...batch.map((row) => ({ ...row, amount: money(row.amount) })));
     }
     // Each batch is ordered, but the concatenation across batches isn't; restore
     // the global date-desc, id-desc order so a run is deterministic regardless of

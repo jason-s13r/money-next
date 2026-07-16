@@ -9,21 +9,23 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "postinstall": "prisma generate",
+    "db:up": "docker compose up -d --wait",
+    "db:down": "docker compose down",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts"
+    "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts",
+    "db:import": "tsx --env-file-if-exists=.env scripts/import-sqlite.ts"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"
   },
   "dependencies": {
     "@gorules/zen-engine": "^0.54.0",
-    "@prisma/adapter-better-sqlite3": "^7.8.0",
+    "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
     "akahu": "^2.5.1",
-    "better-sqlite3": "^12.11.1",
     "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4"
@@ -32,7 +34,7 @@
     "@prisma/config": "7.8.0",
     "@prisma/dev": "^0.24.14",
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^24.13.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@typescript/native-preview": "7.0.0-dev.20260707.2",

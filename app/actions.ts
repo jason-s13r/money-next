@@ -48,9 +48,11 @@ export async function fullSync() {
       },
     });
     throw error;
-  } finally {
-    await db.$disconnect();
   }
+  // Deliberately no `db.$disconnect()` here. This runs inside the server, where
+  // the client is shared by every request — disconnecting it would tear down the
+  // connection pool under whatever else is mid-flight. Only a script that owns
+  // its process should disconnect (see scripts/ingest.ts).
 
   revalidatePath("/");
   revalidatePath("/accounts");

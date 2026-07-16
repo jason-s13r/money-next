@@ -1,6 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { db } from "../db";
+import { money } from "../money";
 
 // The ingest and rules execution logs, for the /sync and /rules run-history pages,
 // plus the last-successful-sync marker the chrome shows staleness from. Read-only
@@ -89,7 +90,7 @@ export async function getRuleRun(id: number) {
       account: { select: { currency: true } },
     },
   });
-  const txById = new Map(rows.map((r) => [r.id, r]));
+  const txById = new Map(rows.map((r) => [r.id, { ...r, amount: money(r.amount) }]));
 
   const applications: RuleApplicationRow[] = run.applications.map((a) => {
     const tx = txById.get(a.transactionId);

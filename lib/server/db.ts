@@ -1,4 +1,4 @@
-import { PrismaBetterSqlite3 } from "@prisma/adapter-better-sqlite3";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../generated/prisma/client";
 
 // Deliberately no `import "server-only"` here: this module is also imported by
@@ -11,14 +11,15 @@ if (!databaseUrl) {
 }
 
 function createClient() {
-  // The adapter strips the `file:` prefix and passes the rest to SQLite, so a
-  // relative url resolves against process.cwd(). Run everything from the repo root.
-  const adapter = new PrismaBetterSqlite3({ url: databaseUrl! });
+  // The adapter owns a `pg` connection pool. A serverless deployment must point
+  // DATABASE_URL at a pooler rather than the database directly, or concurrent
+  // functions will exhaust Postgres' connection limit.
+  const adapter = new PrismaPg({ connectionString: databaseUrl! });
   return new PrismaClient({ adapter });
 }
 
 // `next dev` re-evaluates modules on every HMR pass; without this the process
-// accumulates a new SQLite connection per edit.
+// accumulates a new connection pool per edit.
 const globalForDb = globalThis as unknown as { db?: ReturnType<typeof createClient> };
 
 export const db = globalForDb.db ?? createClient();

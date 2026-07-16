@@ -1,6 +1,7 @@
 import { db } from "../../db";
 import { INCOME_GROUP_IDS, INCOME_GROUP_NAMES } from "../../../categories";
 import { displayConverter, getDisplayCurrency } from "../../currency";
+import { money, moneySum } from "../../money";
 import { fetchCutoff, periodKey, periodWindow, type Period } from "../../../periods";
 import {
   UNCATEGORISED,
@@ -89,7 +90,7 @@ export async function buildComparison(
   const byMagnitude = <T,>(rows: T[], value: (row: T) => number) =>
     [...rows].toSorted((a, b) => Math.abs(value(b)) - Math.abs(value(a)));
 
-  const allSpendCategories = byMagnitude(spendRanking, (r) => r._sum.amount ?? 0)
+  const allSpendCategories = byMagnitude(spendRanking, (r) => moneySum(r._sum.amount))
     .map((r) => (r.categoryGroupId ? groupName.get(r.categoryGroupId) : undefined))
     .filter((name): name is string => name != null);
 
@@ -117,9 +118,10 @@ export async function buildComparison(
     const bucket = periods.get(key);
     if (!bucket) continue;
 
-    const value = Math.abs(toDisplay(row.amount, row.account.currency, row.date));
+    const raw = money(row.amount);
+    const value = Math.abs(toDisplay(raw, row.account.currency, row.date));
 
-    if (row.amount > 0) {
+    if (raw > 0) {
       bucket.incomeTotal += value;
       const label = row.category?.name ?? UNCATEGORISED;
       if (!incomeGroupOf.has(label)) incomeGroupOf.set(label, row.categoryGroup?.name ?? null);

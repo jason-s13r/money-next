@@ -25,6 +25,92 @@ export type FxRateRow = {
   rate: number;
 };
 
+/**
+ * How far a reference rate may move from the last one we hold before we refuse
+ * to believe it.
+ *
+ * A wrong rate is the quietest way to corrupt this app: it never errors, it just
+ * silently restates every foreign balance and every converted metric. We take
+ * these rates from a third party (frankfurter.dev, relaying the ECB), so an
+ * upstream bug or compromise lands here unchallenged. Nothing else validates it.
+ *
+ * 20% in a day is far outside anything the ECB publishes for the currencies this
+ * app holds — the 2015 CHF unpegging, about the most violent move in recent
+ * major-currency history, was ~30%, and that is the kind of event worth a human
+ * glance rather than a silent import. So this rejects data-quality accidents (a
+ * misplaced decimal, an inverted quote, a zero) without vetoing real markets.
+ */
+export const FX_MAX_DAILY_MOVE = 0.2;
+
+/** A rate we declined to store, kept so the sync can say what it ignored. */
+export type FxAnomaly = {
+  currency: string;
+  date: Date;
+  rate: number;
+  /** The rate it was judged against; null when the rate is invalid on its face. */
+  previous: number | null;
+  reason: string;
+};
+
+/**
+ * Screen fetched rates against the last rate known for each currency, dropping
+ * any that jump more than {@link FX_MAX_DAILY_MOVE} or that are not a usable
+ * number at all.
+ *
+ * Rejection deliberately *drops the row* rather than failing the sync: FX is
+ * best-effort here, and yesterday's rate is a far better answer than no sync.
+ * Each currency chains — an accepted rate becomes the baseline for the next day
+ * — so a genuine multi-day trend passes while a single bad print is isolated.
+ *
+ * Pure, so it can be reasoned about without a database.
+ */
+export function screenFxRates(
+  rows: FxRateRow[],
+  lastKnown: Map<string, number>,
+): { accepted: FxRateRow[]; rejected: FxAnomaly[] } {
+  const accepted: FxRateRow[] = [];
+  const rejected: FxAnomaly[] = [];
+  const baseline = new Map(lastKnown);
+
+  // Oldest first, so each currency's baseline advances a day at a time.
+  const ordered = [...rows].toSorted((a, b) => a.date.getTime() - b.date.getTime());
+
+  for (const row of ordered) {
+    if (!Number.isFinite(row.rate) || row.rate <= 0) {
+      rejected.push({
+        currency: row.currency,
+        date: row.date,
+        rate: row.rate,
+        previous: null,
+        reason: "not a positive, finite rate",
+      });
+      continue;
+    }
+
+    const previous = baseline.get(row.currency);
+    if (previous !== undefined && previous > 0) {
+      const move = Math.abs(row.rate / previous - 1);
+      if (move > FX_MAX_DAILY_MOVE) {
+        rejected.push({
+          currency: row.currency,
+          date: row.date,
+          rate: row.rate,
+          previous,
+          reason: `moved ${(move * 100).toFixed(1)}% from ${previous}`,
+        });
+        // Baseline stays put: the next day is judged against the last rate we
+        // believed, not the one we just refused.
+        continue;
+      }
+    }
+
+    accepted.push(row);
+    baseline.set(row.currency, row.rate);
+  }
+
+  return { accepted, rejected };
+}
+
 type TimeSeriesResponse = {
   base: string;
   start_date: string;

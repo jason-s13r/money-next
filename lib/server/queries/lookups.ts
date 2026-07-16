@@ -2,6 +2,7 @@ import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
 import { db } from "../db";
+import { accountMoney, transactionMoney } from "../money";
 import {
   readLearnedRules,
   readTransferAutoLink,
@@ -13,7 +14,7 @@ import {
 // Single-record and catalog reads for the transaction detail page: the enrichment
 // pickers (categories, merchants), one transaction with its open conflicts, one
 // merchant, and the rules that would act on a transaction. Like the rest of the
-// read layer these touch only SQLite and await `connection()` first.
+// read layer these touch only the database and await `connection()` first.
 
 /**
  * The whole NZFCC catalog, for the category picker on a transaction. Ordered by
@@ -54,7 +55,7 @@ export const getMerchant = cache(async (id: string) => {
 
 export const getTransaction = cache(async (id: string) => {
   await connection();
-  return db.transaction.findUnique({
+  const tx = await db.transaction.findUnique({
     where: { id },
     // Only unresolved conflicts surface on the page; a dismissed one is settled
     // and stays out of the way until a future sync re-opens it.
@@ -66,6 +67,12 @@ export const getTransaction = cache(async (id: string) => {
       categoryGroup: { select: { name: true } },
     },
   });
+  if (!tx) return null;
+
+  // Both the row and its nested account carry money columns, and this whole
+  // object is handed to client components — so both have to leave `Decimal`
+  // behind here (see lib/server/money.ts).
+  return { ...transactionMoney(tx), account: accountMoney(tx.account) };
 });
 
 export type MatchingRule = LearnedRuleView & {

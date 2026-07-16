@@ -2,6 +2,7 @@ import "server-only";
 
 import { connection } from "next/server";
 import { db } from "../../db";
+import { money } from "../../money";
 import { UNCATEGORISED_WHERE } from "../../queries/transactions";
 import { type ReviewQueue } from "./types";
 
@@ -26,7 +27,7 @@ export async function getReviewQueue(percentile = 0.90): Promise<ReviewQueue> {
     return { rows: 0, overThreshold: 0, threshold: null };
   }
 
-  const amounts = rows.map((r) => Math.abs(r.amount)).toSorted((a, b) => a - b);
+  const amounts = rows.map((r) => Math.abs(money(r.amount))).toSorted((a, b) => a - b);
   // Nearest-rank: the smallest amount with at least `percentile` of the queue at
   // or below it. Clamped so the last index is never overrun.
   const rank = Math.min(amounts.length - 1, Math.ceil(percentile * amounts.length) - 1);

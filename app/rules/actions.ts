@@ -128,10 +128,16 @@ export async function generateRuleFromTransaction(
   });
   await db.ruleDocument.update({ where: { id: doc.id }, data: { content: JSON.stringify(graph) } });
 
+  // `mode: "insensitive"` is what makes this count *true*, not just consistent.
+  // The rule itself matches on `contains(lower(description), …)` (see
+  // `buildMatch`), so a case-sensitive count here would promise the user a
+  // smaller blast radius than the rule actually has.
   const matchCount = await db.transaction.count({
     where: {
       type: tx.type,
-      AND: match.tokens.map((t) => ({ description: { contains: t } })),
+      AND: match.tokens.map((t) => ({
+        description: { contains: t, mode: "insensitive" as const },
+      })),
     },
   });
 

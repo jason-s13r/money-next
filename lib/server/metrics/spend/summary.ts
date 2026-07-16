@@ -9,6 +9,7 @@ import {
   PERIODIC_INCOME_GROUP_ID,
 } from "../../../categories";
 import { displayConverter, getDisplayCurrency } from "../../currency";
+import { money } from "../../money";
 import { UNCATEGORISED_WHERE } from "../../queries/transactions";
 import {
   completeMonths,
@@ -26,9 +27,12 @@ import {
 // docs/metrics.md, Part 0).
 //
 // Month bucketing happens in JavaScript against an explicit NZ timezone rather
-// than in SQL. SQLite's `localtime` modifier reads the *server's* timezone, and
-// 287 transactions fall in a different month under NZ time than under UTC —
-// banks stamp most rows at midday UTC, which is evening in Auckland.
+// than in SQL, so the boundary can't drift with the server's timezone: 287
+// transactions fall in a different month under NZ time than under UTC — banks
+// stamp most rows at midday UTC, which is evening in Auckland. If this is ever
+// pushed into SQL, `date` is timestamptz, so it must be converted explicitly
+// (`date AT TIME ZONE 'Pacific/Auckland'`) — `date_trunc` alone would silently
+// bucket by UTC months and move that 287.
 
 export async function getSpendSummary(): Promise<SpendSummary> {
   await connection();
@@ -88,11 +92,12 @@ export async function getSpendSummary(): Promise<SpendSummary> {
     const group = row.categoryGroup?.name ?? null;
     if (group === null) continue;
 
-    const amount = toDisplay(row.amount, row.account.currency, row.date);
+    const raw = money(row.amount);
+    const amount = toDisplay(raw, row.account.currency, row.date);
 
     // Money in is periodic income (the query lets no other inflow through): feed
     // its own recurrence-tested series and take no further part in the spend side.
-    if (row.amount > 0) {
+    if (raw > 0) {
       const catKey = row.category?.name ?? group;
       let series = incomeMonths.get(catKey);
       if (!series) incomeMonths.set(catKey, (series = new Map()));

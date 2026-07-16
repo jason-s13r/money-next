@@ -1,8 +1,8 @@
 # Money
 
-A personal finance dashboard that mirrors your New Zealand bank accounts from [Akahu](https://akahu.nz) into a local SQLite database, then gives you fast, offline views of net worth, spending, income, and transactions.
+A personal finance dashboard that mirrors your New Zealand bank accounts from [Akahu](https://akahu.nz) into a local Postgres database, then gives you fast, offline views of net worth, spending, income, and transactions.
 
-Built with [Next.js](https://nextjs.org) 16, React 19, TypeScript, Tailwind CSS 4, Prisma 7, and SQLite via `better-sqlite3`.
+Built with [Next.js](https://nextjs.org) 16, React 19, TypeScript, Tailwind CSS 4, Prisma 7, and Postgres.
 
 ## What it does
 
@@ -15,7 +15,9 @@ Built with [Next.js](https://nextjs.org) 16, React 19, TypeScript, Tailwind CSS 
 
 ## Data model
 
-The local SQLite mirror is the source of truth for the UI. Akahu ids are used as primary keys so re-syncing is idempotent.
+The local Postgres mirror is the source of truth for the UI. Akahu ids are used as primary keys so re-syncing is idempotent.
+
+Money is stored as `numeric(19, 4)` so sums are exact, and converted to plain numbers at the read boundary ([lib/server/money.ts](lib/server/money.ts)) — nothing above the query layer handles a `Decimal`.
 
 Key tables:
 
@@ -33,7 +35,7 @@ Categories follow the [NZFCC](https://nzfcc.org) standard. Spending groups are m
 
 ## Getting started
 
-Requires Node.js `^20.19 || ^22.12 || >=24.0` and `pnpm`.
+Requires Node.js `^20.19 || ^22.12 || >=24.0`, `pnpm`, and Docker or Podman for the local Postgres.
 
 ```bash
 # 1. Install dependencies and generate the Prisma client
@@ -42,15 +44,18 @@ pnpm install
 # 2. Configure environment
 cp .env.example .env
 # Edit .env and add your Akahu credentials from https://my.akahu.nz
-# DATABASE_URL defaults to file:./money.db
+# DATABASE_URL defaults to the local Postgres started in step 3
 
-# 3. Create the database and run migrations
+# 3. Start Postgres (Docker or Podman)
+pnpm db:up
+
+# 4. Create the schema
 pnpm db:migrate
 
-# 4. Pull your accounts and transactions from Akahu
+# 5. Pull your accounts and transactions from Akahu
 pnpm db:sync
 
-# 5. Start the dev server
+# 6. Start the dev server
 pnpm dev
 ```
 
@@ -67,6 +72,8 @@ Open [http://localhost:3000](http://localhost:3000).
 | `pnpm db:sync` | Incremental sync from Akahu (safe to re-run, cron-friendly). |
 | `pnpm db:sync --full` | Re-fetch the whole history window. |
 | `pnpm db:sync --days 90` | Sync an explicit lookback window. |
+| `pnpm db:up` | Start the local Postgres from `compose.yaml`. |
+| `pnpm db:down` | Stop it. |
 | `pnpm db:migrate` | Run Prisma migrations in dev. |
 | `pnpm db:deploy` | Deploy migrations in production. |
 | `pnpm db:studio` | Open Prisma Studio. |
@@ -86,7 +93,8 @@ lib/
     akahu.ts          Akahu client setup
     currency.ts       Multi-currency conversion using cached ECB rates
     data.ts           Server data fetchers used by pages
-    db.ts             Prisma + better-sqlite3 client
+    db.ts             Prisma client (Postgres via @prisma/adapter-pg)
+    money.ts          Decimal -> number boundary for money columns
     fx.ts             ECB FX rate fetcher
     matching.ts       Similar-transaction and transfer-candidate matching
     nzfcc.ts          NZFCC category catalog fetcher
@@ -107,7 +115,7 @@ scripts/ingest.ts     Cron-friendly sync entry point
 
 ## Key design notes
 
-- **Offline-first reads.** The dashboard never calls Akahu during a page load. All reads hit local SQLite; sync is an explicit background job.
+- **Offline-first reads.** The dashboard never calls Akahu during a page load. All reads hit the local database; sync is an explicit background job.
 - **Multi-currency.** Balances and transactions are converted through EUR-based ECB rates cached in `FxRate`. The dashboard totals in whichever currency most of your active accounts are held in.
 - **User ownership of enrichment.** When you manually set a category or merchant, it is marked `source: "user"` and later Akahu syncs will not overwrite it. If Akahu later disagrees, a `TransactionConflict` is raised for you to reconcile.
 - **Transfer handling.** Akahu tags rows as `TRANSFER` but never links the legs. The app lets you manually link legs (same- or cross-currency), and can auto-link unambiguous opposite legs via rules.

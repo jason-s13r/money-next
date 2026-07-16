@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { db } from "../db";
 import { LIQUID_TYPES, LOCKED_TYPES } from "../../categories";
 import { displayConverter, getDisplayCurrency } from "../currency";
+import { accountMoney } from "../money";
 
 // Net worth, split by how reachable it is. Every account is valued in the display
 // currency (see lib/currency.ts); a balance has no transaction date, so it converts
@@ -38,7 +39,9 @@ export type BalanceSummary = {
 
 export async function getBalanceSummary(): Promise<BalanceSummary> {
   await connection();
-  const accounts = await db.account.findMany({ where: { status: "ACTIVE" } });
+  // Converted out of `Decimal` at the read, so everything below is plain float
+  // arithmetic — which is what FX conversion and utilisation ratios are anyway.
+  const accounts = (await db.account.findMany({ where: { status: "ACTIVE" } })).map(accountMoney);
 
   // Every account is valued in the display currency. A balance has no transaction
   // date, so it converts at the currency's latest rate — the nearest on or before

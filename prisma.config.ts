@@ -10,9 +10,7 @@ export default defineConfig({
     path: "prisma/migrations",
   },
   datasource: {
-    // NOTE: the better-sqlite3 adapter strips the `file:` prefix and hands the
-    // rest to SQLite, so this path resolves relative to `process.cwd()` — not
-    // to this file. Always run prisma/scripts from the project root.
+    // `pnpm db:up` starts the local Postgres this points at by default.
     url: env("DATABASE_URL"),
   },
 });

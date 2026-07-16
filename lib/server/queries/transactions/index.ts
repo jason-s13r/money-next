@@ -1,6 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { db } from "../../db";
+import { money, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
 import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";
 import {
@@ -27,8 +28,8 @@ export { getCardSuffixes, getCategoryNames, getTransactionTypes } from "./slugs"
  * One page of an account's transactions, newest first, with the total row count
  * so the caller can render page numbers.
  *
- * Offset pagination is fine at this scale (thousands of rows, local SQLite) and
- * gives addressable `?page=N` urls. Institutions report most transactions with a
+ * Offset pagination is fine at this scale (thousands of rows) and gives
+ * addressable `?page=N` urls. Institutions report most transactions with a
  * midday timestamp rather than a real time, so thousands of rows tie on `date`
  * alone; `id` breaks the tie and keeps a row from appearing on two pages.
  */
@@ -49,7 +50,7 @@ export async function getAccountTransactions(
     db.transaction.count({ where: { accountId } }),
   ]);
 
-  return { items: await enrichTransactions(rows), total };
+  return { items: await enrichTransactions(rows.map(transactionMoney)), total };
 }
 
 /**
@@ -87,9 +88,12 @@ export function getCategoryTransactions(group: string, category: string, page: n
 // Every text field a reader might recognise a transaction by: the raw bank
 // description, the enriched merchant/category names, and the
 // particulars/code/reference/counterparty fields a bank splits a payment across.
-// `contains` on SQLite compiles to `LIKE`, which is case-insensitive for ASCII —
-// Prisma's `mode: "insensitive"` isn't supported on this provider and isn't
-// needed for it.
+//
+// Every `contains` here must carry `mode: "insensitive"`. Postgres' LIKE is
+// case-sensitive, unlike SQLite's, so without it a search for "countdown" stops
+// matching "COUNTDOWN" — which is how banks write most descriptions. The
+// insensitive form is backed by the pg_trgm index (see the migration), so it
+// stays indexed rather than falling back to a scan.
 const searchableScalarFields = [
   "description",
   "particulars",
@@ -110,11 +114,13 @@ export async function searchTransactions(query: string, page: number, perPage = 
   return listTransactions(
     {
       OR: [
-        ...searchableScalarFields.map((field) => ({ [field]: { contains: query } })),
+        ...searchableScalarFields.map((field) => ({
+          [field]: { contains: query, mode: "insensitive" },
+        })),
         // The enriched merchant/category names are relations now, so they match
         // through a relation filter rather than a scalar column.
-        { merchant: { is: { name: { contains: query } } } },
-        { category: { is: { name: { contains: query } } } },
+        { merchant: { is: { name: { contains: query, mode: "insensitive" } } } },
+        { category: { is: { name: { contains: query, mode: "insensitive" } } } },
       ],
     },
     page,
@@ -131,7 +137,7 @@ export async function searchTransactions(query: string, page: number, perPage = 
  * queue, worked biggest-first, and the queue mixes inflows and outflows (an
  * uncategorised refund alongside a payment), so the honest "largest" is `|amount|`
  * — the same measure the dashboard's review banner uses (see `getReviewQueue`).
- * SQLite can't `ORDER BY abs(amount)` through Prisma, so that one case fetches the
+ * Prisma can't express `ORDER BY abs(amount)`, so that one case fetches the
  * queue's ids and orders them here before hydrating the page. The queue is small
  * and already fetched whole for its percentile threshold, so this stays cheap.
  */
@@ -153,17 +159,20 @@ async function listUncategorisedByMagnitude(
   ]);
 
   // Largest magnitude first (or last), with id as a stable tiebreak so a row can't
-  // drift between pages when two amounts share a magnitude.
-  const ordered = all.toSorted((a, b) => {
-    const byMagnitude = Math.abs(b.amount) - Math.abs(a.amount);
-    const signed = dir === "desc" ? byMagnitude : -byMagnitude;
-    return signed !== 0 ? signed : b.id.localeCompare(a.id);
-  });
+  // drift between pages when two amounts share a magnitude. Ordering only, so the
+  // float comparison is enough — nothing is summed here.
+  const ordered = all
+    .map((r) => ({ id: r.id, amount: money(r.amount) }))
+    .toSorted((a, b) => {
+      const byMagnitude = Math.abs(b.amount) - Math.abs(a.amount);
+      const signed = dir === "desc" ? byMagnitude : -byMagnitude;
+      return signed !== 0 ? signed : b.id.localeCompare(a.id);
+    });
 
   const pageIds = ordered.slice((page - 1) * perPage, page * perPage).map((r) => r.id);
   const rows = await db.transaction.findMany({ where: { id: { in: pageIds } }, include: listInclude });
   // `findMany`'s own order isn't the magnitude order, so restore it by id.
-  const byId = new Map(rows.map((r) => [r.id, r]));
+  const byId = new Map(rows.map((r) => [r.id, transactionMoney(r)]));
   const items = pageIds.map((id) => byId.get(id)!);
 
   return { items: await enrichTransactions(items), total: all.length, net };

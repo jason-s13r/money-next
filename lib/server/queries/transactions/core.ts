@@ -2,6 +2,7 @@ import "server-only";
 import { connection } from "next/server";
 import { db } from "../../db";
 import { convert, FALLBACK_DISPLAY_CURRENCY, loadRates } from "../../currency";
+import { moneySum, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
 import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";
 
@@ -10,13 +11,17 @@ import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";
 // `listTransactions` core that the account/category/merchant/card/type/search
 // pages all call. The listing functions themselves live in `index.ts`.
 //
-// The dashboard reads only from SQLite. Nothing here calls Akahu — that happens
-// out-of-band in scripts/ingest.ts, so page loads never wait on a bank refresh.
+// The dashboard reads only from the database. Nothing here calls Akahu — that
+// happens out-of-band in scripts/ingest.ts, so page loads never wait on a bank
+// refresh.
 //
-// Every query awaits `connection()` first. better-sqlite3 is synchronous, so
-// without it these queries resolve during prerendering and the dashboard is
-// baked into static HTML at build time — permanently showing whatever balances
-// existed when it was built.
+// Every query awaits `connection()` first, so that a query can't resolve during
+// prerendering and bake the dashboard into static HTML at build time —
+// permanently showing whatever balances existed when it was built.
+//
+// This is also the layer that converts money out of Prisma's `Decimal` (see
+// lib/server/money.ts): rows leave here with plain numbers, so nothing above has
+// to know how money is stored.
 
 export const TRANSACTIONS_PER_PAGE = 50;
 
@@ -143,7 +148,9 @@ export async function netInDisplay(where: Prisma.TransactionWhereInput): Promise
 
   let net = 0;
   for (const b of byAccount) {
-    const raw = b._sum.amount ?? 0;
+    // Summed exactly by Postgres, then converted to a number here: the FX
+    // conversion below is float arithmetic either way.
+    const raw = moneySum(b._sum.amount);
     net += convert(raw, currencyById.get(b.accountId) ?? null, DISPLAY_CURRENCY, rates) ?? raw;
   }
   return net;
@@ -155,7 +162,7 @@ export async function netInDisplay(where: Prisma.TransactionWhereInput): Promise
  * on `date` (and other columns tie freely); `id` always breaks the tie so a row
  * never lands on two pages. `amount` here is the raw signed value — the magnitude
  * ordering the uncategorised queue wants is handled in
- * `getUncategorisedTransactions`, which SQLite can't express as an `orderBy`.
+ * `getUncategorisedTransactions`, which Prisma can't express as an `orderBy`.
  */
 function orderByForSort(sort: Sort): Prisma.TransactionOrderByWithRelationInput[] {
   const { dir } = sort;
@@ -210,7 +217,7 @@ export async function listTransactions(
     netInDisplay(where),
   ]);
 
-  return { items: await enrichTransactions(rows), total, net };
+  return { items: await enrichTransactions(rows.map(transactionMoney)), total, net };
 }
 
 export type TransactionListItem = Awaited<ReturnType<typeof listTransactions>>["items"][number];
