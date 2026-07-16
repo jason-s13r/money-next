@@ -8,6 +8,7 @@ import { SearchForm } from "@/ui/transactions/search-form";
 const navItems = [
   { href: "/", label: "Dashboard" },
   { href: "/breakdown", label: "Breakdown" },
+  { href: "/breakdown/flow", label: "Flow" },
   { href: "/transactions/recent", label: "Transactions" },
   { href: "/accounts", label: "Accounts" },
   { href: "/rules", label: "Rules" },

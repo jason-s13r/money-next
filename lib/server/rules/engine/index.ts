@@ -108,7 +108,7 @@ export async function runRules(opts?: {
     // the global date-desc, id-desc order so a run is deterministic regardless of
     // how the id list was chunked.
     if (idBatches.length > 1) {
-      txs.sort((a, b) =>
+      txs.toSorted((a, b) =>
         b.date.getTime() - a.date.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
       );
     }

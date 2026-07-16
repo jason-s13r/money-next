@@ -96,6 +96,6 @@ export async function getBalanceSummary(): Promise<BalanceSummary> {
     facility,
     byCurrency: [...totalsByCurrency]
       .map(([currency, total]) => ({ currency, total }))
-      .sort((a, b) => b.total - a.total),
+      .toSorted((a, b) => b.total - a.total),
   };
 }

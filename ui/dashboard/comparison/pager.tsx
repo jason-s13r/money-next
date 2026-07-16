@@ -16,7 +16,6 @@ export function WindowPager({
 }) {
   return (
     <NavPair
-      className="mt-4"
       left={{ href: earlierHref, label: "← Earlier" }}
       right={{ href: moreRecentHref, label: "More recent →" }}
     />

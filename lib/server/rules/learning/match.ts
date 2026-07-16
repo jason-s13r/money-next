@@ -38,7 +38,7 @@ function isDistinctive(token: string): boolean {
 export function distinctiveTokens(description: string, limit = 4): string[] {
   return [...descriptionTokens(description)]
     .filter(isDistinctive)
-    .sort((a, b) => b.length - a.length)
+    .toSorted((a, b) => b.length - a.length)
     .slice(0, limit);
 }
 

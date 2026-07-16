@@ -36,7 +36,9 @@ export function ComparisonCards({
         ))}
       </div>
 
-      <WindowPager earlierHref={earlierHref} moreRecentHref={moreRecentHref} />
+      <div className="mt-4">
+        <WindowPager earlierHref={earlierHref} moreRecentHref={moreRecentHref} />
+      </div>
     </>
   );
 }

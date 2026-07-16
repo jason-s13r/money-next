@@ -44,7 +44,7 @@ export default async function BreakdownPage(props: PageProps<"/breakdown">) {
       : null;
 
   return (
-    <main className="mx-auto w-full max-w-5xl p-2">
+    <main className="mx-auto mb-10 w-full max-w-5xl p-2">
       <header className="mb-8">
         <h1 className="text-2xl font-semibold">Income and spending</h1>
       </header>

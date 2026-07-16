@@ -91,7 +91,7 @@ export async function getSimilarTransactions(
     .filter((s) => s.sameMerchant || s.score >= SIMILAR_THRESHOLD)
     // Best matches first; the sort is stable, so equal scores keep the newest-first
     // order the query already imposed.
-    .sort((a, b) => b.score - a.score)
+    .toSorted((a, b) => b.score - a.score)
     .slice(0, limit)
     .map((s) => s.tx);
 }
@@ -255,7 +255,7 @@ export async function getTransferCandidates(
 
   const rank = (c: (typeof candidates)[number]) => (c.kind === "amount" ? 0 : 1);
   return candidates
-    .sort(
+    .toSorted(
       (a, b) =>
         rank(a) - rank(b) ||
         Math.abs(a.delta ?? 0) - Math.abs(b.delta ?? 0) ||

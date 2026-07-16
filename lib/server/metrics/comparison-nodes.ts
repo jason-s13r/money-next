@@ -1,5 +1,5 @@
-import type { Comparison } from "@/lib/server/metrics/comparison";
-import { UNCATEGORISED, UNKNOWN_MERCHANT } from "@/lib/server/metrics/comparison";
+import type { Comparison } from "./comparison/types";
+import { UNCATEGORISED, UNKNOWN_MERCHANT } from "./comparison/types";
 import { isKnownGroup } from "@/lib/categories";
 import { slugify } from "@/lib/slug";
 import type { SpendNode } from "@/ui/dashboard/spend-row";

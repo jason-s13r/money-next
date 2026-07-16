@@ -56,11 +56,17 @@ export function isKnownGroup(group: string): group is SpendingGroup {
  *  burn. "Other Income" (refunds, one-offs) is deliberately not counted there. */
 export const PERIODIC_INCOME_GROUP = "Periodic Income";
 
+/** Everything else that came in — refunds, one-offs. Named because the Sankey has
+ *  a synthetic bucket whose label is the same string but means something else:
+ *  this is a group a subcategory belongs to, that is a row standing in for the
+ *  income too small to name. Comparing against the wrong one silently misranks. */
+export const OTHER_INCOME_GROUP = "Other Income";
+
 // The invented income groups (see lib/nzfcc.ts). Inflows carry no NZFCC group, so
 // a credit category is filed under one of these — "Periodic Income" for recurring
 // receipts, "Other Income" for the rest. Kept as one list so a query can exclude
 // income in a single place and pages can tell an income group from a spending one.
-export const INCOME_GROUP_NAMES = [PERIODIC_INCOME_GROUP, "Other Income"] as const;
+export const INCOME_GROUP_NAMES = [PERIODIC_INCOME_GROUP, OTHER_INCOME_GROUP] as const;
 
 export function isIncomeGroup(group: string): boolean {
   return (INCOME_GROUP_NAMES as readonly string[]).includes(group);

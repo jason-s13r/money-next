@@ -24,7 +24,7 @@ export default async function UncategorisedPage(props: PageProps<"/categories/un
   return (
     <Listing
       title="Uncategorised"
-      subtitle="Transactions with no specific category, in either direction. Counted in the totals, but not yet assigned one."
+      subtitle=""
       stats={[
         { label: "Net", value: formatMoney(net, null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },

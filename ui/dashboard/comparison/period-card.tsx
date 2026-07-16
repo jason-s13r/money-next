@@ -3,26 +3,11 @@ import { netOf } from "@/lib/server/metrics/comparison";
 import { formatMoneyWhole } from "@/lib/format";
 import { formatPeriodKey } from "@/lib/periods";
 import { slotColor } from "@/lib/server/metrics/comparison-nodes";
-import { Swatch } from "../comparison-table";
 
 /** Net colour: green for a surplus period, red for a deficit. */
 const netClass = (net: number) => (net >= 0 ? "text-status-good" : "text-status-critical");
 /** A net figure with an explicit + or − sign and no cents. */
 const signedWhole = (net: number) => `${net >= 0 ? "+" : "−"}${formatMoneyWhole(Math.abs(net))}`;
-
-function Legend({ title, categories }: { title: string; categories: string[] }) {
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs">
-      <span className="text-muted">{title}</span>
-      {categories.map((category) => (
-        <span key={category} className="flex items-center gap-1.5 text-secondary">
-          <Swatch color={slotColor(categories, category)} />
-          {category}
-        </span>
-      ))}
-    </div>
-  );
-}
 
 /**
  * One stacked bar on the shared axis. Segments are separated by a 2px gap in the

@@ -154,7 +154,7 @@ async function listUncategorisedByMagnitude(
 
   // Largest magnitude first (or last), with id as a stable tiebreak so a row can't
   // drift between pages when two amounts share a magnitude.
-  const ordered = all.sort((a, b) => {
+  const ordered = all.toSorted((a, b) => {
     const byMagnitude = Math.abs(b.amount) - Math.abs(a.amount);
     const signed = dir === "desc" ? byMagnitude : -byMagnitude;
     return signed !== 0 ? signed : b.id.localeCompare(a.id);

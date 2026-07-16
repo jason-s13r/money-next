@@ -28,8 +28,7 @@ function parseWindow(searchParams: Record<string, string | string[] | undefined>
   const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
 
   const from = rawFrom ? new Date(rawFrom) : null;
-  const offset =
-    from && !Number.isNaN(from.getTime()) ? offsetForStartDate(now, period, WINDOW, from) : 0;
+  const offset = from && !Number.isNaN(from.getTime()) ? offsetForStartDate(now, period, WINDOW, from) : 0;
 
   return { period, offset };
 }
@@ -50,21 +49,16 @@ export default async function DashboardPage(props: PageProps<"/">) {
 
   const base = `/breakdown?period=${period}`;
   const windowStart = (o: number) => periodStart(periodWindow(now, period, WINDOW, o)[0], period);
-  const earlierHref = comparison.hasOlder
-    ? `${base}&from=${isoDate(windowStart(offset + STEP))}`
-    : null;
+  const earlierHref = comparison.hasOlder ? `${base}&from=${isoDate(windowStart(offset + STEP))}` : null;
   const moreRecentHref =
-    offset > 0
-      ? offset - STEP <= 0
-        ? base
-        : `${base}&from=${isoDate(windowStart(offset - STEP))}`
-      : null;
+    offset > 0 ? (offset - STEP <= 0 ? base : `${base}&from=${isoDate(windowStart(offset - STEP))}`) : null;
 
   // The net-worth-over-time chart reuses the balances and spend already loaded
   // above: the accessible figure its line anchors to, and the burns its three
   // projections run at. Its own query is just the per-day net flow, over all
   // history — the chart is always daily and scrolls/zooms on the client.
   const series = await getBalanceSeries(balances, spend, now);
+
   // Runway scenarios are built outside JSX so the Hero component receives plain
   // strings and colour tokens rather than inline templates.
   const money = (amount: number) => formatMoneyWhole(amount, balances.displayCurrency);
@@ -90,10 +84,7 @@ export default async function DashboardPage(props: PageProps<"/">) {
           )} locked in KiwiSaver and investments.`}
           runways={runways}
         />
-        <CurrencyBreakdown
-          byCurrency={balances.byCurrency}
-          displayCurrency={balances.displayCurrency}
-        />
+        <CurrencyBreakdown byCurrency={balances.byCurrency} displayCurrency={balances.displayCurrency} />
       </section>
 
       {/* Spending Akahu left without a category. Surfacing the count is the point:
@@ -116,18 +107,11 @@ export default async function DashboardPage(props: PageProps<"/">) {
       <section>
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-3">
           <PeriodSelector period={period} href="/" />
-          <a
-            href={`/breakdown?period=${period}`}
-            className="text-sm text-secondary hover:text-foreground"
-          >
+          <a href={`/breakdown?period=${period}`} className="text-sm text-secondary hover:text-foreground">
             Full breakdown →
           </a>
         </div>
-        <ComparisonCards
-          comparison={comparison}
-          earlierHref={earlierHref}
-          moreRecentHref={moreRecentHref}
-        />
+        <ComparisonCards comparison={comparison} earlierHref={earlierHref} moreRecentHref={moreRecentHref} />
       </section>
     </main>
   );

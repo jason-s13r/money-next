@@ -1,7 +1,7 @@
 import { db } from "../../db";
 import { INCOME_GROUP_IDS, INCOME_GROUP_NAMES } from "../../../categories";
 import { displayConverter, getDisplayCurrency } from "../../currency";
-import { periodKey, periodWindow, type Period } from "../../../periods";
+import { fetchCutoff, periodKey, periodWindow, type Period } from "../../../periods";
 import {
   UNCATEGORISED,
   UNKNOWN_MERCHANT,
@@ -12,7 +12,7 @@ import {
 
 /** Descending by money. */
 const ranked = (totals: Map<string, number>) =>
-  [...totals].sort((a, b) => b[1] - a[1]).map(([label]) => label);
+  [...totals].toSorted((a, b) => b[1] - a[1]).map(([label]) => label);
 
 /** A merchant level with no *named* merchant reveals nothing but the total it
  *  sits under, so it is not offered — the "Unknown" remainder alone is a reveal
@@ -44,10 +44,20 @@ export async function buildComparison(
   offset = 0,
   now: Date = new Date(),
 ): Promise<Comparison> {
+  // Only the window's rows are ever bucketed — every other row falls through the
+  // `periods.get(key)` miss below — so don't read them. The bound is deliberately
+  // generous and `offset` is folded into the count so that paging back still
+  // reaches: a row's period is decided by its NZ key, and NZ leads UTC, so a
+  // transaction stamped before the window's first UTC midnight can still belong to
+  // it. Exact membership stays with the key; this only spares the read.
+  //
+  // The rankings and the `hasOlder`/`through` probes below run their own queries
+  // over all of history and are unaffected.
   const rows = await db.transaction.findMany({
     where: {
       type: { notIn: ["TRANSFER"] },
       transferGroupId: null,
+      date: { gte: fetchCutoff(now, period, count + offset) },
     },
     select: {
       date: true,
@@ -77,7 +87,7 @@ export async function buildComparison(
   });
 
   const byMagnitude = <T,>(rows: T[], value: (row: T) => number) =>
-    [...rows].sort((a, b) => Math.abs(value(b)) - Math.abs(value(a)));
+    [...rows].toSorted((a, b) => Math.abs(value(b)) - Math.abs(value(a)));
 
   const allSpendCategories = byMagnitude(spendRanking, (r) => r._sum.amount ?? 0)
     .map((r) => (r.categoryGroupId ? groupName.get(r.categoryGroupId) : undefined))

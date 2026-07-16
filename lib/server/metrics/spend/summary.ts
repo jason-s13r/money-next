@@ -135,7 +135,7 @@ export async function getSpendSummary(): Promise<SpendSummary> {
     })),
     byCategory: [...byCategory]
       .map(([group, total]) => ({ group, total }))
-      .sort((a, b) => b.total - a.total),
+      .toSorted((a, b) => b.total - a.total),
     medianEssential: median(keys.map((k) => essentialByMonth.get(k)!)),
     forecastBurn: catMonths.size === 0 ? null : forecastBurn,
     forecastIncome,
