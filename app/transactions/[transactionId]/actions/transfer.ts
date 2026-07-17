@@ -2,7 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import type { Prisma } from "@/lib/generated/prisma/client";
-import { db } from "@/lib/server/db";
+import { recordUserChanges } from "@/lib/server/changes";
+import { getDb } from "@/lib/server/db";
 import { money } from "@/lib/server/money";
 import { linkTransferLegs } from "@/lib/server/matching/transfers";
 
@@ -20,7 +21,26 @@ import { linkTransferLegs } from "@/lib/server/matching/transfers";
  * so linking never leaves a transaction in two transfers at once.
  */
 export async function linkTransfer(sourceId: string, targetId: string) {
-  await linkTransferLegs(sourceId, targetId);
+  const db = await getDb();
+
+  // The log call lives here rather than inside `linkTransferLegs`, which is
+  // shared with the rules auto-linker and so cannot know whether a person or a
+  // rule is asking — and `source` is the whole point of the log. Each caller
+  // attributes its own; the shared function stays mechanical.
+  const legs = await db.transaction.findMany({
+    where: { id: { in: [sourceId, targetId] } },
+    select: { id: true, description: true },
+  });
+  const describe = (id: string) => legs.find((l) => l.id === id)?.description ?? null;
+
+  if (!(await linkTransferLegs(db, sourceId, targetId))) return;
+
+  // Both legs, because a transfer is a fact about both of them: opening either
+  // transaction should show how it came to be part of this transfer.
+  await recordUserChanges(db, [
+    { transactionId: sourceId, field: "transfer", toLabel: describe(targetId) },
+    { transactionId: targetId, field: "transfer", toLabel: describe(sourceId) },
+  ]);
 
   revalidatePath(`/transactions/${sourceId}`);
   revalidatePath(`/transactions/${targetId}`);
@@ -45,6 +65,7 @@ const TRANSFER_SEARCH_FIELDS = [
  * reader searching for a counterparty does not type it in the bank's caps.
  */
 export async function searchTransferCandidates(sourceId: string, query: string) {
+  const db = await getDb();
   const q = query.trim();
   if (q.length < 2) return [];
   const rows = await db.transaction.findMany({
@@ -84,26 +105,47 @@ export type TransferSearchResult = Awaited<
  * the empty group deleted.
  */
 export async function unlinkTransfer(transactionId: string) {
+  const db = await getDb();
   const tx = await db.transaction.findUnique({ where: { id: transactionId } });
   if (!tx || tx.transferGroupId == null) return;
 
   const groupId = tx.transferGroupId;
   const others = await db.transaction.findMany({
     where: { transferGroupId: groupId, id: { not: transactionId } },
-    select: { id: true },
+    select: { id: true, description: true },
   });
 
   const writes: Prisma.PrismaPromise<unknown>[] = [
     db.transaction.update({ where: { id: transactionId }, data: { transferGroupId: null } }),
   ];
   // A one-leg "transfer" is meaningless: release the straggler and drop the group.
-  if (others.length <= 1) {
+  const releasesOthers = others.length <= 1;
+  if (releasesOthers) {
     writes.push(
       db.transaction.updateMany({ where: { transferGroupId: groupId }, data: { transferGroupId: null } }),
       db.transferGroup.delete({ where: { id: groupId } }),
     );
   }
   await db.$transaction(writes);
+
+  // The unlinked leg, plus any straggler this released — a leg that falls out of
+  // a transfer because the group collapsed did have its field changed, even
+  // though nobody clicked on it, and the log's job is to explain exactly that
+  // kind of change when someone later asks why.
+  await recordUserChanges(db, [
+    {
+      transactionId,
+      field: "transfer",
+      fromLabel: others.map((o) => o.description).join(", ") || null,
+    },
+    ...(releasesOthers
+      ? others.map((o) => ({
+          transactionId: o.id,
+          field: "transfer" as const,
+          fromLabel: tx.description,
+        }))
+      : []),
+  ]);
 
   revalidatePath(`/transactions/${transactionId}`);
   for (const o of others) revalidatePath(`/transactions/${o.id}`);

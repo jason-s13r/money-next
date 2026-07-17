@@ -5,7 +5,7 @@
 // server — can import it. The interactive counterparts live in the transaction
 // page's server action (which wraps `linkTransferLegs` with `revalidatePath`).
 
-import { db } from "../db";
+import type { ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
 
 /**
@@ -17,7 +17,11 @@ import type { Prisma } from "../../generated/prisma/client";
  * Returns `true` when a change was made, `false` when the two were already in the
  * same group (the no-op the auto-linker relies on to stay idempotent).
  */
-export async function linkTransferLegs(sourceId: string, targetId: string): Promise<boolean> {
+export async function linkTransferLegs(
+  db: ScopedDb,
+  sourceId: string,
+  targetId: string,
+): Promise<boolean> {
   if (sourceId === targetId) throw new Error("A transaction cannot be a transfer of itself.");
 
   const [source, target] = await Promise.all([
@@ -27,6 +31,16 @@ export async function linkTransferLegs(sourceId: string, targetId: string): Prom
   if (!source) throw new Error(`Unknown transaction: ${sourceId}`);
   if (!target) throw new Error(`Unknown transaction: ${targetId}`);
 
+  // Belt and braces over the scoped client, which already filtered both reads.
+  // This is the sharpest IDOR in the app and the damage is *corruption*, not just
+  // a leak: pull another workspace's row into a transfer group and its legs drop
+  // out of that workspace's income/spend metrics, silently falsifying numbers
+  // nobody is looking at. The auto-linker also calls this outside any request, so
+  // the assertion is worth its two lines.
+  if (source.workspaceId !== db.$workspaceId || target.workspaceId !== db.$workspaceId) {
+    throw new Error("Refusing to link transfer legs across workspaces.");
+  }
+
   if (source.transferGroupId != null && source.transferGroupId === target.transferGroupId) {
     return false; // already in the same transfer
   }
@@ -34,7 +48,7 @@ export async function linkTransferLegs(sourceId: string, targetId: string): Prom
   const groupId =
     source.transferGroupId ??
     target.transferGroupId ??
-    (await db.transferGroup.create({ data: {} })).id;
+    (await db.transferGroup.create({ data: { workspaceId: db.$workspaceId } })).id;
 
   const writes: Prisma.PrismaPromise<unknown>[] = [];
   if (source.transferGroupId !== groupId) {
@@ -83,13 +97,16 @@ function transferTolerance(amount: number): number {
  * zero or more than one row qualifies, returns null — the auto-linker only acts on
  * a certain, one-to-one match and defers the rest to manual linking.
  */
-export async function findAutoTransferLeg(tx: {
-  id: string;
-  amount: number;
-  date: Date;
-  accountId: string;
-  currency: string | null;
-}): Promise<{ id: string } | null> {
+export async function findAutoTransferLeg(
+  db: ScopedDb,
+  tx: {
+    id: string;
+    amount: number;
+    date: Date;
+    accountId: string;
+    currency: string | null;
+  },
+): Promise<{ id: string } | null> {
   const opposite = -tx.amount;
   const tol = transferTolerance(tx.amount);
   const windowMs = TRANSFER_WINDOW_DAYS * DAY_MS;

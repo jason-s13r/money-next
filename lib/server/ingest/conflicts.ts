@@ -1,23 +1,27 @@
-// Reconciliation between a user-set enrichment field and what a later Akahu sync
-// reports for it. Lives here rather than in scripts/ingest.ts so it can be reused
-// (a review-queue page, tests) without importing the ingest entrypoint, which
-// runs a sync on import.
+// Reconciliation between an enrichment field the sync must not touch — one a user
+// or a rule owns — and what a later Akahu sync reports for it. Lives here rather
+// than in scripts/ingest.ts so it can be reused (a review-queue page, tests)
+// without importing the ingest entrypoint, which runs a sync on import.
 //
 // No `import "server-only"`: scripts/ingest.ts imports this from plain Node.
 
-import { db } from "../db";
+import type { ScopedDb } from "../db";
 import type { Prisma, TransactionConflict } from "../../generated/prisma/client";
 
-/** The enrichment fields a user can own and a sync can therefore conflict with. */
+/** The enrichment fields a user or rule can own, and a sync can conflict with. */
 export type EnrichmentField = "category" | "merchant";
 
 /**
- * Decide what should happen to the conflict on one user-owned field, given the
- * value the user holds and the value Akahu now reports. The field itself is never
- * touched — the user's value stands; this only manages the prompt to reconcile:
+ * Decide what should happen to the conflict on one defended field, given the
+ * value being held and the value Akahu now reports. The field itself is never
+ * touched — the held value stands; this only manages the prompt to reconcile:
  *
  *   - Akahu reports a *different, non-null* value  → raise (or refresh) a conflict.
  *   - Akahu agrees, or reports nothing (null)       → clear any conflict.
+ *
+ * That second line is why extending this to rule-owned fields costs almost
+ * nothing and adds almost no prompts: a rule usually exists precisely *because*
+ * Akahu says nothing, and Akahu saying nothing has never been a conflict.
  *
  * A conflict the user already dismissed is only re-opened if Akahu's value has
  * changed *again* since it was dismissed — dismissing once shouldn't re-nag on
@@ -27,8 +31,11 @@ export type EnrichmentField = "category" | "merchant";
  * is nothing to do (the common case: no conflict now, none before).
  */
 export function reconcileConflict(
+  db: ScopedDb,
   field: EnrichmentField,
   transactionId: string,
+  /** What owns the held value: `user` or `rule`. See `TransactionConflict.heldSource`. */
+  heldSource: string,
   userValueId: string | null,
   userValueLabel: string | null,
   akahuValueId: string | null,
@@ -41,11 +48,11 @@ export function reconcileConflict(
     return existing ? db.transactionConflict.delete({ where: { id: existing.id } }) : null;
   }
 
-  const data = { userValueId, userValueLabel, akahuValueId, akahuValueLabel };
+  const data = { heldSource, userValueId, userValueLabel, akahuValueId, akahuValueLabel };
 
   if (!existing) {
     return db.transactionConflict.create({
-      data: { transactionId, field, status: "open", ...data },
+      data: { workspaceId: db.$workspaceId, transactionId, field, status: "open", ...data },
     });
   }
 

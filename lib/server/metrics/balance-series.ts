@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { db } from "../db";
+import { getDb } from "../db";
 import { displayConverter, getDisplayCurrency } from "../currency";
 import { money } from "../money";
 import { periodKey, periodStart, periodWindow } from "../../periods";
@@ -78,6 +78,7 @@ export async function getBalanceSeries(
   now: Date = new Date(),
 ): Promise<BalanceSeries> {
   await connection();
+  const db = await getDb();
 
   const display = await getDisplayCurrency();
 

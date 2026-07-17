@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatMoneyWhole } from "@/lib/format";
 import { formatPeriodKey } from "@/lib/periods";
 import type { BalanceSeries } from "@/lib/server/metrics/balance-series";
@@ -57,7 +57,10 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
 
   const N = days.length;
 
-  const money = (n: number) => formatMoneyWhole(n, displayCurrency);
+  const money = useCallback(
+    (n: number) => formatMoneyWhole(n, displayCurrency),
+    [displayCurrency],
+  );
   const compact = useMemo(
     () =>
       new Intl.NumberFormat("en-NZ", {
@@ -148,7 +151,7 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     };
   }, [containerW, rangeKey, totalUnits, worthBoundaries, nets, N, currentWorth, futureForecast, futureEmergency, futurePessimistic]);
 
-  const { bw, plotW, yScale, fx, fy, worthPath, worthArea, nowX } = geom;
+  const { bw, plotW, fx, nowX } = geom;
 
   // Open with today centred in the view (history to its left, the projection to
   // its right), and re-anchor there when the zoom changes.
@@ -268,7 +271,20 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
         ...(psWorth != null ? [{ color: C_PESSIMISTIC, label: "Pessimistic", value: money(psWorth), y: psWorth }] : []),
       ],
     };
-  }, [hover, days, worthBoundaries, nets, now, N, futureForecast, futureEmergency, currentWorth, fullFmt]);
+  }, [
+    hover,
+    days,
+    worthBoundaries,
+    nets,
+    now,
+    N,
+    futureForecast,
+    futureEmergency,
+    futurePessimistic,
+    currentWorth,
+    fullFmt,
+    money,
+  ]);
 
   const legend: { color: string; dashed?: boolean; label: string }[] = [
     { color: C_WORTH, label: "Available balance" },
@@ -286,14 +302,9 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
       <BalanceChartSvg
         scrollRef={scrollRef}
         geom={geom}
-        days={days}
         nets={nets}
         worthBoundaries={worthBoundaries}
         currentWorth={currentWorth}
-        now={now}
-        futureForecast={futureForecast}
-        futureEmergency={futureEmergency}
-        futurePessimistic={futurePessimistic}
         displayCurrency={displayCurrency}
         compact={compact}
         xLabels={xLabels}

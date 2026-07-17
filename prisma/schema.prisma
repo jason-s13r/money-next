@@ -17,10 +17,187 @@ datasource db {
   provider = "postgresql"
 }
 
+// ---------------------------------------------------------------------------
+// Tenancy
+//
+// The tenant is a `Workspace`. Financial data hangs off a workspace, never off a
+// user: a solo user is a workspace with one member and a shared one is a
+// workspace with two, so the query layer can't tell the difference and doesn't
+// need to. See docs/multi-user.md.
+//
+// These tables are empty until phase 3 brings auth — except `Workspace` and
+// `BankLink`, which are populated with one bootstrap row each so the existing
+// single-user data has an owner.
+// ---------------------------------------------------------------------------
+
+/// A tenant: the thing financial data belongs to, and the unit of sharing.
+model Workspace {
+  id   String @id @default(cuid())
+  name String
+  /// URL-safe identity, unique across the instance. Phase 3 routes on it
+  /// (`app/w/[workspace]/`), which is also what keeps any future cache key
+  /// workspace-specific for free.
+  slug String @unique
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  members   Membership[]
+  invites   Invite[]
+  bankLinks BankLink[]
+
+  // Every tenant-owned table, related rather than left as a loose column, so
+  // that deleting a workspace cascades to its financial data in one statement.
+  // That is not tidiness: Akahu's accreditation (and the Privacy Act) require
+  // deletion on request to be real, so "delete a workspace" must never become a
+  // soft delete of the rows that matter.
+  accounts            Account[]
+  transactions        Transaction[]
+  pendingTransactions PendingTransaction[]
+  balanceSnapshots    BalanceSnapshot[]
+  transferGroups      TransferGroup[]
+  conflicts           TransactionConflict[]
+  merchants           Merchant[]
+  ruleDocuments       RuleDocument[]
+  ruleRuns            RuleRun[]
+  fieldChanges        FieldChange[]
+  syncStates          SyncState[]
+  syncRuns            SyncRun[]
+}
+
+/// A person. Deliberately minimal, and matches the core fields Better Auth
+/// expects so phase 3 adopts this table rather than renaming it: Better Auth
+/// owns authentication (credentials, sessions, MFA); this app only ever needs
+/// the identity a `Membership` points at.
+model User {
+  id            String  @id @default(cuid())
+  name          String
+  email         String  @unique
+  emailVerified Boolean @default(false)
+  image         String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  memberships    Membership[]
+  invitesSent    Invite[]     @relation("InviteInvitedBy")
+  bankLinksAdded BankLink[]
+  // Deliberately `onDelete: SetNull` on the other side, unlike everything else
+  // hanging off a workspace: deleting a person must not delete the record that
+  // the edit happened, only the claim about who made it.
+  fieldChanges   FieldChange[]
+}
+
+/// A user's place in a workspace, and what they may do there. Many-to-many from
+/// day one: a user can belong to and create several workspaces. Any future limit
+/// on that is a check inside `createWorkspace`/`acceptInvite` — the only two
+/// places a membership is born — not a schema reshape.
+model Membership {
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// owner | editor | viewer. A plain string, matching this schema's no-enums
+  /// style, and enforced at the write boundary (`requireRole`), never only in
+  /// the UI. Adding a role later is a new string plus its place in the
+  /// ordering, not a migration.
+  role String
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  /// One membership per user per workspace; the role is a field, not a second row.
+  @@unique([workspaceId, userId])
+  @@index([userId])
+}
+
+/// A pending invitation to join a workspace. Redeeming one is the other entry
+/// point (with `createWorkspace`) for a new membership.
+model Invite {
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// Who it was addressed to, and the role they get on acceptance.
+  email String
+  role  String
+
+  /// The bearer secret from the invite link. Unique so redemption is a single
+  /// lookup; phase 4 stores a hash of it rather than the token itself.
+  token String @unique
+
+  invitedByUserId String?
+  invitedBy       User?   @relation("InviteInvitedBy", fields: [invitedByUserId], references: [id], onDelete: SetNull)
+
+  expiresAt  DateTime  @db.Timestamptz(3)
+  acceptedAt DateTime? @db.Timestamptz(3)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(3)
+
+  @@index([workspaceId])
+  @@index([email])
+}
+
+/// A workspace's connection to Akahu — the thing accounts are ingested through,
+/// and the unit a user revokes.
+///
+/// v1 holds exactly one bootstrap row per instance, carrying no credentials: the
+/// tokens stay in env (`AKAHU_APP_ID_TOKEN`/`AKAHU_USER_ACCESS_TOKEN`) and are
+/// resolved by link. Phase 7's per-user OAuth adds encrypted token columns here
+/// and nothing else moves — that's the point of introducing the model now.
+///
+/// `status`/`revokedAt` are also what Akahu's accreditation requires an app to
+/// expose to consumers (see docs/multi-user.md), so they are modelled from the
+/// start rather than retrofitted.
+model BankLink {
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// What the user calls this connection.
+  name String
+
+  /// ACTIVE | INACTIVE (Akahu stopped refreshing it) | REVOKED (access withdrawn,
+  /// here or at Akahu). Ingest only runs for ACTIVE links.
+  status String @default("ACTIVE")
+
+  /// Set when access ends, whichever side ended it. Kept distinct from deletion:
+  /// a revoked link stops syncing but its already-ingested history remains until
+  /// the workspace is deleted.
+  revokedAt DateTime? @db.Timestamptz(3)
+
+  /// Who connected it. Null for the bootstrap link, which predates users.
+  connectedByUserId String?
+  connectedBy       User?   @relation(fields: [connectedByUserId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  accounts   Account[]
+  syncState  SyncState?
+  syncRuns   SyncRun[]
+
+  @@index([workspaceId, status])
+}
+
 /// A connected financial account, mirrored from Akahu's `/accounts`.
 model Account {
   /// Akahu account id, e.g. `acc_...`
   id               String  @id
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// The Akahu connection this account was ingested through, and the thing a
+  /// user revokes to disconnect it. Restrict, not Cascade: unlinking a bank must
+  /// be a deliberate decision about the history, not a silent shredding of it.
+  bankLinkId String
+  bankLink   BankLink @relation(fields: [bankLinkId], references: [id], onDelete: Restrict)
+
   name             String
   /// ACTIVE | INACTIVE
   status           String
@@ -92,6 +269,10 @@ model Connection {
 model Transaction {
   /// Akahu transaction id, e.g. `trans_...`
   id        String  @id
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   accountId String
   account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -150,7 +331,7 @@ model Transaction {
   /// relation) to match the denormalised style here; group members are resolved by
   /// querying this column. Always user-made: Akahu tags a row's `type` as TRANSFER
   /// but never says which rows belong together.
-  transferGroupId Int?
+  transferGroupId String?
   transferGroup   TransferGroup? @relation(fields: [transferGroupId], references: [id], onDelete: SetNull)
 
   /// Timestamps as reported by Akahu, not by us.
@@ -164,6 +345,9 @@ model Transaction {
 
   conflicts TransactionConflict[]
 
+  // The prefix of nearly every metrics query, now that they all filter by
+  // workspace before they filter by anything else.
+  @@index([workspaceId, date])
   @@index([accountId, date])
   @@index([date])
   @@index([categoryGroupId])
@@ -194,6 +378,10 @@ model Transaction {
 /// but no merchant or category — so those columns are absent here.
 model PendingTransaction {
   id        Int     @id @default(autoincrement())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   accountId String
   account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -222,6 +410,9 @@ model PendingTransaction {
 
   syncedAt DateTime @default(now()) @db.Timestamptz(3)
 
+  // Each sync replaces this table for one workspace (see `syncPendingTransactions`),
+  // so the workspace is both the read prefix and the delete predicate.
+  @@index([workspaceId, date])
   @@index([accountId, date])
   @@index([date])
 }
@@ -234,10 +425,20 @@ model PendingTransaction {
 /// the Prisma side: legs point at it by `transferGroupId` and are read back with a
 /// plain query, matching the denormalised style of the rest of the schema.
 model TransferGroup {
-  id        Int      @id @default(autoincrement())
+  /// A cuid, not a counter. These ids identify one workspace's transfer; a
+  /// sequential one would publish how many transfers exist across every
+  /// workspace on the instance, and could be walked. Scoping makes a guessed id
+  /// return nothing — this makes there be nothing to guess.
+  id        String   @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
   transactions Transaction[]
+
+  @@index([workspaceId])
 }
 
 /// Historical daily FX reference rates from the ECB, fetched via frankfurter.dev
@@ -264,13 +465,27 @@ model FxRate {
 /// The user's value is kept; this row is the prompt to reconcile on the tx page.
 model TransactionConflict {
   id            Int         @id @default(autoincrement())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   transactionId String
   transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
 
   /// Which enrichment field diverged: `category` | `merchant`.
   field String
 
-  /// The value the user set (and that we are keeping), for display without a join.
+  /// What owns the value we are keeping: `user` (someone set it by hand) or
+  /// `rule` (their rules set it). Both outrank Akahu, so both are defended
+  /// against the sync and both can therefore diverge from it — but the reader is
+  /// owed the difference, because "you set this" and "your rule set this" call
+  /// for different fixes. Every conflict raised before this column existed was
+  /// user-held by construction, the sync having protected nothing else, so the
+  /// backfill is `user` and is not a guess.
+  heldSource String @default("user")
+
+  /// The value being kept (see `heldSource`), for display without a join. Named
+  /// `userValue*` from when the user was the only owner the sync deferred to.
   userValueId    String?
   userValueLabel String?
   /// The value Akahu reported on the sync that raised this, for a side-by-side.
@@ -297,6 +512,20 @@ model TransactionConflict {
 model Merchant {
   /// Akahu merchant id, e.g. `merchant_...`
   id   String @id
+
+  /// The one table that is half catalog, half tenant data.
+  ///
+  /// `null` = Akahu's global merchant catalog (`merchant_...`), shared by every
+  /// workspace. Set = a private merchant a user minted here (`user_...`, see
+  /// `createMerchantAndSetForTransaction`) — a name they typed, which is their
+  /// data and nobody else's.
+  ///
+  /// So reads OR the two together and creates always stamp the workspace. This
+  /// is the one model where the scoped client cannot simply inject an equality
+  /// filter; see `scopedDb`.
+  workspaceId String?
+  workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   name String
   /// The merchant's website, when Akahu resolved one. Previously discarded at
   /// ingest; kept now so no enrichment field is lost.
@@ -360,6 +589,10 @@ model Category {
 /// history only exists because we record it.
 model BalanceSnapshot {
   id        Int     @id @default(autoincrement())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   accountId String
   account   Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
@@ -374,19 +607,41 @@ model BalanceSnapshot {
   @@index([accountId, capturedAt])
 }
 
-/// Single-row table tracking incremental transaction sync progress.
+/// Incremental transaction sync progress, one row per bank link.
+///
+/// Was a single `"singleton"` row, which was only ever right because there was
+/// one connection in the world. A high-water mark is a property of the link it
+/// was read through — two links refresh at different times and reach back to
+/// different dates — so the link id *is* the primary key.
 model SyncState {
-  id String @id @default("singleton")
+  bankLinkId String   @id
+  bankLink   BankLink @relation(fields: [bankLinkId], references: [id], onDelete: Cascade)
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   /// High-water mark: the `date` of the newest transaction we have stored.
   /// The next sync starts slightly before this to catch late-settling rows.
   lastTransactionDate DateTime? @db.Timestamptz(3)
   updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
+
+  @@index([workspaceId])
 }
 
 /// Audit log of ingest runs, so a silently failing cron is visible.
 model SyncRun {
   id         Int       @id @default(autoincrement())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// Which link this run was for, so `/sync` and the nav's status widget read
+  /// per-workspace history. Nullable, and `SetNull` on delete, so disconnecting
+  /// a bank leaves its audit trail behind rather than erasing the record that
+  /// the syncs happened.
+  bankLinkId String?
+  bankLink   BankLink? @relation(fields: [bankLinkId], references: [id], onDelete: SetNull)
+
   startedAt  DateTime  @default(now()) @db.Timestamptz(3)
   finishedAt DateTime? @db.Timestamptz(3)
   /// running | success | failed
@@ -397,6 +652,7 @@ model SyncRun {
 
   error String?
 
+  @@index([workspaceId, startedAt])
   @@index([startedAt])
 }
 
@@ -410,23 +666,31 @@ model SyncRun {
 /// handed to the engine, and `jsonb` would reorder keys for no gain here.
 model RuleDocument {
   id   Int    @id @default(autoincrement())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   name String
-  /// Stable URL-safe identifier, unique across documents. The UI now edits a
+  /// Stable URL-safe identifier, unique *within a workspace*. The UI now edits a
   /// single active document in place, so this is an identity key rather than a
-  /// route segment.
-  slug String @unique
+  /// route segment. Instance-wide uniqueness would have made the second
+  /// workspace's first rule document collide with the first workspace's.
+  slug String
 
   /// The JDM decision graph, serialised with `JSON.stringify`. Parsed back into
   /// `{ nodes, edges }` before evaluation.
   content String
 
-  /// Exactly one document should be active. The rules runner picks the active
-  /// one; activating a document deactivates the others (see the rules actions).
+  /// Exactly one document should be active *per workspace*. The rules runner
+  /// picks the active one; activating a document deactivates the others in the
+  /// same workspace (see the rules actions).
   active Boolean @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
+  @@unique([workspaceId, slug])
+  @@index([workspaceId, active])
   @@index([active])
 }
 
@@ -435,7 +699,13 @@ model RuleDocument {
 /// changed something (or errored), so the log reads as "what the rules did" rather
 /// than a heartbeat of every no-op sync. Mirrors `SyncRun`.
 model RuleRun {
-  id         Int       @id @default(autoincrement())
+  /// A cuid: this one appears in a URL (`/rules/runs/<id>`), so a counter would
+  /// hand every visitor a running total of the instance's rule activity.
+  id         String    @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
   startedAt  DateTime  @default(now()) @db.Timestamptz(3)
   finishedAt DateTime? @db.Timestamptz(3)
   /// What triggered the run: `sync` (during ingest) | `manual` (Apply now).
@@ -452,31 +722,80 @@ model RuleRun {
 
   error String?
 
-  applications RuleApplication[]
+  changes FieldChange[]
 
+  @@index([workspaceId, startedAt])
   @@index([startedAt])
 }
 
-/// A single edit a rule run made to a transaction: which field it set and to what,
-/// so the run report can list exactly which transactions changed. `transactionId`
-/// is a plain column (not a relation) to match the denormalised style here; the
-/// report joins the current transaction rows back in for display and tolerates a
-/// since-deleted one.
-model RuleApplication {
-  id    Int     @id @default(autoincrement())
-  runId Int
-  run   RuleRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+/// An append-only log of every change to an attributable enrichment field.
+///
+/// One row per field per change, written by all three writers — the Akahu sync,
+/// the rules engine, and a person using the app — so "who set this category, and
+/// what was it before?" is answered by history rather than by the current value.
+/// `Transaction.categorySource`/`merchantSource` still say who *owns* a field
+/// now; this says how it got that way.
+///
+/// Why a table and not an `updatedByUserId` column: a column holds only the most
+/// recent writer and forgets everything before it, and it costs a column per
+/// attributable field. This started life as `RuleApplication` — the same shape,
+/// for one writer — and generalising it to all three subsumed both. See
+/// docs/multi-user.md.
+///
+/// Changes only, never genesis: a transaction arriving from Akahu already
+/// categorised writes nothing here, because `syncedAt` plus a `source` of `akahu`
+/// on the row itself already say that. The first logged change carries the
+/// original value in `fromLabel`, so the origin survives anyway.
+model FieldChange {
+  id String @id @default(cuid())
 
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// A plain column, not a relation, and deliberately so: an append-only log must
+  /// not be quietly rewritten by a cascade, and the rules-run report has always
+  /// joined the current transaction rows back in for display while tolerating a
+  /// since-deleted one. (Inherited from `RuleApplication`, which did the same.)
   transactionId String
-  /// Which field the rule set: `category` | `merchant` | `transfer`.
+
+  /// Which field changed: `category` | `merchant` | `transfer`.
   field String
-  /// Human labels for the change, stored so the report needs no extra join for
-  /// the values themselves: what the field was, and what the rule set it to.
+
+  /// What made the change: `akahu` (the sync) | `user` (a person) | `rule` (the
+  /// rules engine). The same vocabulary as `Transaction.categorySource`, and the
+  /// same precedence: user beats rule beats akahu.
+  source String
+
+  /// The person who made it, when `source` is `user`.
+  ///
+  /// Null on every row written before phase 3, which is the honest reading rather
+  /// than a fudge: this instance did not know who anyone was yet. Also null for
+  /// `akahu` and `rule` changes, which have no person behind them — a *manually*
+  /// triggered rule run records who asked for it on `RuleRun`, not here, because
+  /// the person chose to run the rules, not to make this particular edit.
+  actorUserId String?
+  actor       User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+
+  /// The run that made it, when `source` is `rule`. What `RuleApplication.runId`
+  /// was, and what `/rules/runs/<id>` still reads.
+  ruleRunId String?
+  ruleRun   RuleRun? @relation(fields: [ruleRunId], references: [id], onDelete: Cascade)
+
+  /// The value before and after. Ids for joining back, labels stored alongside so
+  /// a reader needs no join for the values themselves — and so the history still
+  /// reads correctly after a category is renamed or a merchant deleted, which is
+  /// the point of a log. `transfer` carries the other leg: no id pair, since a
+  /// group is not a value.
+  fromId    String?
   fromLabel String?
+  toId      String?
   toLabel   String?
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
-  @@index([runId])
+  /// The transaction history panel's query: one transaction's changes, newest
+  /// first, within the workspace the scoped client already filters on.
+  @@index([workspaceId, transactionId, createdAt])
+  @@index([ruleRunId])
   @@index([transactionId])
 }

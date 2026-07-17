@@ -1,5 +1,6 @@
 import type { Account as AkahuAccount, Transaction as AkahuTransaction } from "akahu";
-import { db } from "../db";
+import { changeRows, type FieldChangeEntry } from "../changes";
+import type { ScopedDb } from "../db";
 import { reconcileConflict } from "./conflicts";
 import type { Prisma } from "../../generated/prisma/client";
 import { OTHER_INCOME_GROUP } from "./nzfcc";
@@ -22,13 +23,39 @@ function isEnriched(
   return "category" in tx || "merchant" in tx || "meta" in tx;
 }
 
-export async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[]): Promise<string[]> {
+/**
+ * Whether the sync must leave a field alone, given what owns it.
+ *
+ * This is the `user > rule > akahu` precedence, enforced at the only place that
+ * can enforce it — everything here is the `akahu` end of it, so anything above
+ * `akahu` wins. `applyOutput` implements the other half (a rule yields to a user
+ * but not to Akahu).
+ *
+ * `rule` used to be missing, and the field change log is what found it: the sync
+ * overwrote every rule-set field with Akahu's value — usually `null`, since a
+ * rule's whole reason to exist is that Akahu had nothing to say — and the rules
+ * put it back on the same pass. One transaction had been round-tripping like that
+ * for ten syncs. The final state was always right, which is exactly why nothing
+ * caught it for so long. See docs/multi-user.md.
+ */
+function defended(source: string | undefined): boolean {
+  return source === "user" || source === "rule";
+}
+
+export async function syncTransactions(
+  db: ScopedDb,
+  link: { id: string; workspaceId: string },
+  args: SyncArgs,
+  accounts: AkahuAccount[],
+): Promise<string[]> {
   const knownAccountIds = new Set(accounts.map((a) => a._id));
   const { akahuClient, akahuUserToken } = await import("../akahu");
   const akahu = akahuClient();
   const token = akahuUserToken();
 
-  const state = await db.syncState.findUnique({ where: { id: "singleton" } });
+  // Per-link high-water mark: two links refresh at different times and reach
+  // back to different dates, so there is no such thing as a global one.
+  const state = await db.syncState.findUnique({ where: { bankLinkId: link.id } });
 
   let start: Date;
   if (args.days !== undefined) {
@@ -91,6 +118,11 @@ export async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[])
 
     const txOps: Prisma.PrismaPromise<unknown>[] = [];
     const conflictOps: Prisma.PrismaPromise<unknown>[] = [];
+    // What this page actually changed, for the field change log. Only rows we
+    // hold already can produce one: a transaction we are seeing for the first
+    // time has no `from` to have changed from, and its arrival is already
+    // recorded by the row itself (`syncedAt`, and a `source` of `akahu`).
+    const changes: FieldChangeEntry[] = [];
 
     for (const tx of page.items) {
       // A transaction can outlive the account it belonged to; inserting it
@@ -174,33 +206,60 @@ export async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[])
       const prior = priorById.get(tx._id);
       const update: Record<string, unknown> = { ...row };
 
-      if (prior?.categorySource === "user") {
+      if (defended(prior?.categorySource)) {
         delete update.categoryId;
         delete update.categoryGroupId;
         const op = reconcileConflict(
+          db,
           "category",
           tx._id,
-          prior.categoryId,
-          prior.category?.name ?? null,
+          prior!.categorySource,
+          prior!.categoryId,
+          prior!.category?.name ?? null,
           row.categoryId,
           enriched?.category?.name ?? null,
           conflictByKey.get(`${tx._id}:category`),
         );
         if (op) conflictOps.push(op);
+      } else if (prior && prior.categoryId !== row.categoryId) {
+        // Not a refused write, an accepted one: the field was Akahu's to set and
+        // Akahu changed its mind. The conflict above is the other outcome — the
+        // write we declined — and declining to write is not a change, so it logs
+        // nothing here. The user's own edit is already in the log, and is what
+        // explains how the conflict came to exist.
+        changes.push({
+          transactionId: tx._id,
+          field: "category",
+          fromId: prior.categoryId,
+          fromLabel: prior.category?.name ?? null,
+          toId: row.categoryId,
+          toLabel: enriched?.category?.name ?? null,
+        });
       }
 
-      if (prior?.merchantSource === "user") {
+      if (defended(prior?.merchantSource)) {
         delete update.merchantId;
         const op = reconcileConflict(
+          db,
           "merchant",
           tx._id,
-          prior.merchantId,
-          prior.merchant?.name ?? null,
+          prior!.merchantSource,
+          prior!.merchantId,
+          prior!.merchant?.name ?? null,
           row.merchantId,
           merchant?.name ?? null,
           conflictByKey.get(`${tx._id}:merchant`),
         );
         if (op) conflictOps.push(op);
+      } else if (prior && prior.merchantId !== row.merchantId) {
+        changes.push({
+          transactionId: tx._id,
+          field: "merchant",
+          fromId: prior.merchantId,
+          fromLabel: prior.merchant?.name ?? null,
+          toId: row.merchantId,
+          toLabel: merchant?.name ?? null,
+        });
       }
 
       synced++;
@@ -208,7 +267,7 @@ export async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[])
       txOps.push(
         db.transaction.upsert({
           where: { id: tx._id },
-          create: { id: tx._id, ...row },
+          create: { id: tx._id, workspaceId: db.$workspaceId, ...row },
           update: update as Prisma.TransactionUpdateInput,
         }),
       );
@@ -217,8 +276,12 @@ export async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[])
     // One write transaction per page keeps this fast and means a crash
     // mid-page can't leave a partially-applied page behind. Groups lead, then the
     // categories that point at them, then merchants — so every transaction that
-    // follows finds the rows it points at; conflict ops trail the transaction
-    // upserts they reference.
+    // follows finds the rows it points at; conflict ops and log rows trail the
+    // transaction upserts they describe.
+    //
+    // The log rows belong *in* this transaction rather than after it: a log that
+    // records a change the crash rolled back is worse than no log, because it is
+    // the thing you would consult to find out what happened.
     await db.$transaction([
       ...[...categoryGroups].map(([id, name]) =>
         db.categoryGroup.upsert({ where: { id }, create: { id, name }, update: { name } }),
@@ -233,14 +296,21 @@ export async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[])
         }),
       ),
       ...[...merchants.values()].map((merchant) =>
+        // Akahu's merchant catalog is global — `workspaceId: null`, shared by
+        // every workspace, same as Category and Connection. Only the merchants a
+        // user mints by hand on the transaction page are tenant data. The scoped
+        // client refuses to guess which kind this is, so say so.
         db.merchant.upsert({
           where: { id: merchant.id },
-          create: merchant,
+          create: { ...merchant, workspaceId: null },
           update: { name: merchant.name, website: merchant.website, logo: merchant.logo },
         }),
       ),
       ...txOps,
       ...conflictOps,
+      ...(changes.length > 0
+        ? [db.fieldChange.createMany({ data: changeRows(db.$workspaceId, "akahu", changes) })]
+        : []),
     ]);
 
     cursor = page.cursor.next ?? undefined;
@@ -256,8 +326,12 @@ export async function syncTransactions(args: SyncArgs, accounts: AkahuAccount[])
   // mid-sync doesn't cause the next run to skip the window it never finished.
   if (newest) {
     await db.syncState.upsert({
-      where: { id: "singleton" },
-      create: { id: "singleton", lastTransactionDate: newest },
+      where: { bankLinkId: link.id },
+      create: {
+        bankLinkId: link.id,
+        workspaceId: db.$workspaceId,
+        lastTransactionDate: newest,
+      },
       update: { lastTransactionDate: newest },
     });
   }

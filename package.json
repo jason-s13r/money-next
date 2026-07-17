@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test --env-file-if-exists=.env tests/*.test.ts",
     "postinstall": "prisma generate",
     "db:up": "docker compose up -d --wait",
     "db:down": "docker compose down",
@@ -15,8 +16,7 @@
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
-    "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts",
-    "db:import": "tsx --env-file-if-exists=.env scripts/import-sqlite.ts"
+    "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"
@@ -37,12 +37,11 @@
     "@types/node": "^24.13.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "@typescript/native-preview": "7.0.0-dev.20260707.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
     "prisma": "^7.8.0",
     "tailwindcss": "^4",
     "tsx": "^4.23.0",
-    "typescript": "^7"
+    "typescript": "^5.9.3"
   }
 }

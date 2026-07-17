@@ -1,7 +1,7 @@
 import "server-only";
 
 import { connection } from "next/server";
-import { db } from "../../db";
+import { getDb } from "../../db";
 import {
   FORECAST_EXCLUDED_CATEGORY_IDS,
   isEssential,
@@ -10,7 +10,6 @@ import {
 } from "../../../categories";
 import { displayConverter, getDisplayCurrency } from "../../currency";
 import { money } from "../../money";
-import { UNCATEGORISED_WHERE } from "../../queries/transactions";
 import {
   completeMonths,
   FETCH_DAYS,
@@ -36,6 +35,7 @@ import {
 
 export async function getSpendSummary(): Promise<SpendSummary> {
   await connection();
+  const db = await getDb();
 
   const cutoff = new Date(Date.now() - FETCH_DAYS * 24 * 60 * 60 * 1000);
   // Categorised spending (money out Akahu tagged with a `categoryGroup`) plus

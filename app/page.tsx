@@ -63,9 +63,6 @@ export default async function DashboardPage(props: PageProps<"/">) {
   // strings and colour tokens rather than inline templates.
   const money = (amount: number) => formatMoneyWhole(amount, balances.displayCurrency);
   const runways = getRunways(balances, spend, money);
-  // Whether any balance is held outside the display currency — the totals are only
-  // "converted" when there is something to convert.
-  const hasForeign = balances.byCurrency.some((b) => b.currency !== balances.displayCurrency);
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2 flex gap-6 flex-col">

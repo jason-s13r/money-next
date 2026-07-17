@@ -1,7 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
-import { db } from "../db";
+import { getDb } from "../db";
 import { accountMoney, moneySum } from "../money";
 
 // Account reads, and the net-worth roll-up across them. Like the rest of the read
@@ -11,6 +11,7 @@ import { accountMoney, moneySum } from "../money";
 
 export async function getAccounts() {
   await connection();
+  const db = await getDb();
   const rows = await db.account.findMany({
     orderBy: [{ status: "asc" }, { connection: { name: "asc" } }, { name: "asc" }],
     include: {
@@ -39,6 +40,7 @@ export async function getAccounts() {
 // the second caller reuses the first query.
 export const getAccount = cache(async (id: string) => {
   await connection();
+  const db = await getDb();
   const account = await db.account.findUnique({
     where: { id },
     include: { connection: { select: { id: true, name: true, logo: true } } },
@@ -49,6 +51,7 @@ export const getAccount = cache(async (id: string) => {
 /** Sum of current balances across active accounts, grouped by currency. */
 export async function getNetWorth() {
   await connection();
+  const db = await getDb();
   const grouped = await db.account.groupBy({
     by: ["currency"],
     where: { status: "ACTIVE", currency: { not: null } },

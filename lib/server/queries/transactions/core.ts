@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { db } from "../../db";
+import { getDb } from "../../db";
 import { convert, FALLBACK_DISPLAY_CURRENCY, loadRates } from "../../currency";
 import { moneySum, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
@@ -68,12 +68,13 @@ export async function enrichTransactions<
     id: string;
     amount: number;
     accountId: string;
-    transferGroupId: number | null;
+    transferGroupId: string | null;
     account: { currency: string | null };
   },
 >(items: T[]) {
+  const db = await getDb();
   const groupIds = [
-    ...new Set(items.map((i) => i.transferGroupId).filter((id): id is number => id != null)),
+    ...new Set(items.map((i) => i.transferGroupId).filter((id): id is string => id != null)),
   ];
 
   const [legs, openConflicts, rates] = await Promise.all([
@@ -90,7 +91,7 @@ export async function enrichTransactions<
     loadRates([...items.map((i) => i.account.currency), DISPLAY_CURRENCY]),
   ]);
 
-  const byGroup = new Map<number, typeof legs>();
+  const byGroup = new Map<string, typeof legs>();
   for (const leg of legs) {
     const group = byGroup.get(leg.transferGroupId!) ?? [];
     group.push(leg);
@@ -132,6 +133,7 @@ export async function enrichTransactions<
  * one number. Falls back to a subtotal's raw amount when no rate covers it.
  */
 export async function netInDisplay(where: Prisma.TransactionWhereInput): Promise<number> {
+  const db = await getDb();
   const byAccount = await db.transaction.groupBy({
     by: ["accountId"],
     where,
@@ -205,6 +207,7 @@ export async function listTransactions(
   perPage = TRANSACTIONS_PER_PAGE,
 ) {
   await connection();
+  const db = await getDb();
   const [rows, total, net] = await Promise.all([
     db.transaction.findMany({
       where,

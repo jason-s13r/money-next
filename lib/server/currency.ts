@@ -1,5 +1,5 @@
 import "server-only";
-import { db } from "./db";
+import { getDb } from "./db";
 import { DEFAULT_CURRENCY } from "../format";
 import { FX_BASE_CURRENCY } from "./fx";
 
@@ -23,6 +23,7 @@ export const FALLBACK_DISPLAY_CURRENCY = DEFAULT_CURRENCY;
  * account carries a currency.
  */
 export async function getDisplayCurrency(): Promise<string> {
+  const db = await getDb();
   const grouped = await db.account.groupBy({
     by: ["currency"],
     where: { status: "ACTIVE", currency: { not: null } },
@@ -44,6 +45,7 @@ export async function loadRates(
   currencies: (string | null)[],
   date: Date | null = null,
 ): Promise<Map<string, number>> {
+  const db = await getDb();
   const wanted = [...new Set(currencies.filter((c): c is string => !!c && c !== FX_BASE_CURRENCY))];
   const map = new Map<string, number>([[FX_BASE_CURRENCY, 1]]);
   if (wanted.length === 0) return map;
@@ -100,6 +102,7 @@ export async function displayConverter(
   display: string,
   currencies: (string | null)[],
 ): Promise<DisplayConverter> {
+  const db = await getDb();
   // A conversion is needed only if some row is held in a currency other than the
   // display one. The base counts here even though its rate is 1: it still converts
   // *to* the display currency.

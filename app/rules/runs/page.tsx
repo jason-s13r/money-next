@@ -61,7 +61,7 @@ export default async function RuleRunsPage(props: PageProps<"/rules/runs">) {
                   </td>
                   <td className="py-2 pr-4 capitalize">{run.trigger}</td>
                   <td className="py-2 pr-4 text-right font-mono tabular-nums">
-                    {run._count.applications.toLocaleString("en-NZ")}
+                    {run._count.changes.toLocaleString("en-NZ")}
                   </td>
                   <td className="py-2 pr-4 text-right font-mono tabular-nums opacity-70">
                     {run.categorised.toLocaleString("en-NZ")}

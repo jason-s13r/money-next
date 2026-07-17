@@ -1,18 +1,16 @@
 import "server-only";
 import { connection } from "next/server";
-import { db } from "../../db";
+import { getDb } from "../../db";
 import { money, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
 import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";
 import {
-  DISPLAY_CURRENCY,
   enrichTransactions,
   listInclude,
   listTransactions,
   netInDisplay,
   TRANSACTIONS_PER_PAGE,
 } from "./core";
-import { getCardSuffixes, getCategoryNames, getTransactionTypes } from "./slugs";
 
 // The transaction listings every "what is in this bucket?" page renders — keyed by
 // account, category, merchant, card, type, or a free-text search. Each is a thin
@@ -39,6 +37,7 @@ export async function getAccountTransactions(
   perPage = TRANSACTIONS_PER_PAGE,
 ) {
   await connection();
+  const db = await getDb();
   const [rows, total] = await Promise.all([
     db.transaction.findMany({
       where: { accountId },
@@ -152,6 +151,7 @@ async function listUncategorisedByMagnitude(
   perPage = TRANSACTIONS_PER_PAGE,
 ) {
   await connection();
+  const db = await getDb();
   const where = UNCATEGORISED_WHERE;
   const [all, net] = await Promise.all([
     db.transaction.findMany({ where, select: { id: true, amount: true } }),

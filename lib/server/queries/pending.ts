@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { db } from "../db";
+import { getDb } from "../db";
 import { convert, loadRates } from "../currency";
 import { pendingMoney } from "../money";
 import type { Prisma } from "../../generated/prisma/client";
@@ -47,6 +47,7 @@ export type PendingTransactionItem = Awaited<
  */
 export async function getPendingTransactions() {
   await connection();
+  const db = await getDb();
   const rows = await db.pendingTransaction.findMany({
     orderBy: [{ date: "desc" }, { id: "desc" }],
     include: pendingListInclude,
@@ -57,6 +58,7 @@ export async function getPendingTransactions() {
 /** The pending transactions for one account, newest first. */
 export async function getAccountPendingTransactions(accountId: string) {
   await connection();
+  const db = await getDb();
   const rows = await db.pendingTransaction.findMany({
     where: { accountId },
     orderBy: [{ date: "desc" }, { id: "desc" }],

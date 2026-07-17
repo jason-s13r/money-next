@@ -1,5 +1,5 @@
 import type { Account as AkahuAccount, ConnectionInfo as AkahuConnection } from "akahu";
-import { db } from "../db";
+import { catalogDb, type ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
 import { parseDate } from "./shared";
 
@@ -18,6 +18,11 @@ function connectionRow(connection: AkahuConnection): Prisma.ConnectionCreateInpu
   };
 }
 
+/**
+ * Mirror the institutions these accounts are held at. Unscoped on purpose: an
+ * Akahu `conn_...` is institution-level, so ANZ is the same id for everybody.
+ * That is a catalog, not tenant data.
+ */
 export async function syncConnections(accounts: AkahuAccount[]): Promise<void> {
   const seen = new Map<string, AkahuConnection>();
   for (const account of accounts) {
@@ -28,7 +33,7 @@ export async function syncConnections(accounts: AkahuAccount[]): Promise<void> {
   }
 
   for (const connection of seen.values()) {
-    await db.connection.upsert({
+    await catalogDb.connection.upsert({
       where: { id: connection._id },
       create: connectionRow(connection),
       update: connectionRow(connection),
@@ -38,7 +43,12 @@ export async function syncConnections(accounts: AkahuAccount[]): Promise<void> {
   console.log(`connections:  ${seen.size} synced`);
 }
 
-export async function syncAccounts(accounts: AkahuAccount[], capturedAt: Date): Promise<void> {
+export async function syncAccounts(
+  db: ScopedDb,
+  link: { id: string; workspaceId: string },
+  accounts: AkahuAccount[],
+  capturedAt: Date,
+): Promise<void> {
   for (const account of accounts) {
     const balance = account.balance;
     const attributes = new Set(account.attributes);
@@ -48,6 +58,8 @@ export async function syncAccounts(accounts: AkahuAccount[], capturedAt: Date): 
       where: { id: account._id },
       create: {
         id: account._id,
+        workspaceId: db.$workspaceId,
+        bankLinkId: link.id,
         name: account.name,
         status: account.status,
         type: account.type,
@@ -97,6 +109,7 @@ export async function syncAccounts(accounts: AkahuAccount[], capturedAt: Date): 
       await db.balanceSnapshot.upsert({
         where: { accountId_capturedAt: { accountId: account._id, capturedAt } },
         create: {
+          workspaceId: db.$workspaceId,
           accountId: account._id,
           capturedAt,
           currency: balance.currency,

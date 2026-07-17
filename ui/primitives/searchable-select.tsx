@@ -59,7 +59,6 @@ export function SearchableSelect({
   );
 
   const rootRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
 
   const currentValue = optimistic ? optimistic.id : value;
@@ -103,14 +102,17 @@ export function SearchableSelect({
     return () => document.removeEventListener("pointerdown", onPointerDown);
   }, [open]);
 
-  // Focus the search box when the list opens, and reset the query each time.
-  useEffect(() => {
+  // Opening starts from a clean search each time. The input itself autoFocuses:
+  // it only mounts while open, so there is nothing to focus until then.
+  function toggle() {
     if (open) {
-      setQuery("");
-      setActive(0);
-      inputRef.current?.focus();
+      setOpen(false);
+      return;
     }
-  }, [open]);
+    setQuery("");
+    setActive(0);
+    setOpen(true);
+  }
 
   // Keep the highlighted row in view as the arrow keys move it.
   useEffect(() => {
@@ -156,7 +158,7 @@ export function SearchableSelect({
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={toggle}
         disabled={pending}
         aria-haspopup="listbox"
         aria-expanded={open}
@@ -181,7 +183,7 @@ export function SearchableSelect({
       {open ? (
         <div className="absolute z-10 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-current/20 bg-background shadow-lg">
           <input
-            ref={inputRef}
+            autoFocus
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);

@@ -15,10 +15,11 @@ const FIELD_LABEL: Record<string, string> = {
 
 export default async function RuleRunPage(props: PageProps<"/rules/runs/[id]">) {
   const { id } = await props.params;
-  const runId = Number(id);
-  if (!Number.isInteger(runId)) notFound();
 
-  const data = await getRuleRun(runId);
+  // No integer parse any more: run ids are cuids. An unknown id falls through to
+  // the same notFound() the parse used to guard, and the scoped client means an
+  // id belonging to another workspace is exactly as unknown as a made-up one.
+  const data = await getRuleRun(id);
   if (!data) notFound();
   const { run, applications } = data;
 

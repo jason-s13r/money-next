@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { catalogDb as db } from "../db";
 import { fetchFxRates, FX_BASE_CURRENCY, screenFxRates } from "../fx";
 import { DAY_MS } from "./shared";
 

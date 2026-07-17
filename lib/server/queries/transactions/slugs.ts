@@ -1,7 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
-import { db } from "../../db";
+import { getDb } from "../../db";
 
 // The slug resolvers that let an unknown key 404: each returns the distinct set
 // of values on record for a listing dimension (type, card suffix, category name),
@@ -10,6 +10,7 @@ import { db } from "../../db";
 /** The transaction types on record, for resolving a slug back and 404ing unknowns. */
 export const getTransactionTypes = cache(async () => {
   await connection();
+  const db = await getDb();
   const rows = await db.transaction.findMany({
     distinct: ["type"],
     orderBy: { type: "asc" },
@@ -21,6 +22,7 @@ export const getTransactionTypes = cache(async () => {
 /** The card suffixes on record, so an unknown one 404s instead of listing nothing. */
 export const getCardSuffixes = cache(async () => {
   await connection();
+  const db = await getDb();
   const rows = await db.transaction.findMany({
     where: { cardSuffix: { not: null } },
     distinct: ["cardSuffix"],
@@ -32,6 +34,7 @@ export const getCardSuffixes = cache(async () => {
 /** The category names a group actually holds, for resolving a slug back. */
 export const getCategoryNames = cache(async (group: string) => {
   await connection();
+  const db = await getDb();
   const rows = await db.transaction.findMany({
     where: { categoryGroup: { is: { name: group } }, categoryId: { not: null } },
     distinct: ["categoryId"],

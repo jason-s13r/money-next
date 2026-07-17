@@ -1,4 +1,4 @@
-import { RULE_SOURCE, type RuleInput, type RuleOutput, type RuleTx } from "./types";
+import type { RuleInput, RuleTx } from "./types";
 
 /** Build the flat context a decision graph is evaluated against. */
 export function buildInput(tx: RuleTx): RuleInput {

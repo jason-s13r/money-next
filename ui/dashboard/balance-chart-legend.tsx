@@ -1,11 +1,4 @@
-import {
-  C_FORECAST,
-  C_EMERGENCY,
-  C_PESSIMISTIC,
-  C_WORTH,
-  RANGES,
-  DEFAULT_RANGE,
-} from "./balance-chart.util";
+import { RANGES } from "./balance-chart.util";
 
 type LegendItem = { color: string; dashed?: boolean; label: string };
 

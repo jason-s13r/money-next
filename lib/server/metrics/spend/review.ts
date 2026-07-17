@@ -1,7 +1,7 @@
 import "server-only";
 
 import { connection } from "next/server";
-import { db } from "../../db";
+import { getDb } from "../../db";
 import { money } from "../../money";
 import { UNCATEGORISED_WHERE } from "../../queries/transactions";
 import { type ReviewQueue } from "./types";
@@ -18,6 +18,7 @@ import { type ReviewQueue } from "./types";
  */
 export async function getReviewQueue(percentile = 0.90): Promise<ReviewQueue> {
   await connection();
+  const db = await getDb();
   const rows = await db.transaction.findMany({
     where: UNCATEGORISED_WHERE,
     select: { amount: true },

@@ -1,7 +1,6 @@
 "use client";
 
 import { formatMoneyWhole } from "@/lib/format";
-import { formatPeriodKey } from "@/lib/periods";
 import {
   AXIS_W,
   C_DOWN,
@@ -10,7 +9,6 @@ import {
   C_PESSIMISTIC,
   C_UP,
   C_WORTH,
-  DAY_MS,
   H,
   type Hover,
   PAD_T,
@@ -37,14 +35,9 @@ type Geom = {
 type ChartSvgProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>;
   geom: Geom;
-  days: string[];
   nets: number[];
   worthBoundaries: number[];
   currentWorth: number;
-  now: number;
-  futureForecast: number;
-  futureEmergency: number;
-  futurePessimistic: number;
   displayCurrency: string;
   compact: Intl.NumberFormat;
   xLabels: { x: number; text: string }[];
@@ -57,14 +50,9 @@ type ChartSvgProps = {
 export function BalanceChartSvg({
   scrollRef,
   geom,
-  days,
   nets,
   worthBoundaries,
   currentWorth,
-  now,
-  futureForecast,
-  futureEmergency,
-  futurePessimistic,
   displayCurrency,
   compact,
   xLabels,

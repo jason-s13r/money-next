@@ -46,8 +46,6 @@ export function getRunways(
 ): Runway[] {
   const forecastMonthly =
     spend.forecastBurn === null ? null : spend.forecastBurn - spend.forecastIncome;
-  const pessimisticMonthly = spend.forecastBurn;
-  const emergencyMonthly = spend.medianEssential;
 
   const forecastMonths =
     forecastMonthly === null || forecastMonthly <= 0
@@ -55,18 +53,6 @@ export function getRunways(
         ? null
         : Infinity
       : balances.liquid / forecastMonthly;
-  const pessimisticMonths =
-    pessimisticMonthly === null || pessimisticMonthly <= 0
-      ? pessimisticMonthly === null
-        ? null
-        : Infinity
-      : balances.liquid / pessimisticMonthly;
-  const emergencyMonths =
-    emergencyMonthly === null || emergencyMonthly <= 0
-      ? emergencyMonthly === null
-        ? null
-        : Infinity
-      : balances.liquid / emergencyMonthly;
 
   const make = (
     label: string,

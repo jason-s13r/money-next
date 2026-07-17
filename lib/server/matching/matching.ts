@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { db } from "../db";
+import { getDb } from "../db";
 import { convert, loadRates } from "../currency";
 import { transactionMoney } from "../money";
 import type { Prisma } from "../../generated/prisma/client";
@@ -65,6 +65,7 @@ export async function getSimilarTransactions(
   limit = 100,
 ) {
   await connection();
+  const db = await getDb();
 
   // Same-type rows are the candidate pool; at this app's scale (a personal
   // ledger) scoring them in memory is cheap, and it is the only way to catch the
@@ -129,8 +130,9 @@ const FX_TOLERANCE = 0.03;
  * grouped. A group can hold more than the opposite leg: a currency-conversion
  * counterpart and a separate fee row can all sit in the same transfer.
  */
-export async function getTransferGroupLegs(tx: { id: string; transferGroupId: number | null }) {
+export async function getTransferGroupLegs(tx: { id: string; transferGroupId: string | null }) {
   await connection();
+  const db = await getDb();
   if (tx.transferGroupId == null) return [];
   const legs = await db.transaction.findMany({
     where: { transferGroupId: tx.transferGroupId, id: { not: tx.id } },
@@ -175,6 +177,7 @@ export async function getTransferCandidates(
   limit = 50,
 ) {
   await connection();
+  const db = await getDb();
 
   const opposite = -tx.amount;
   const tol = transferTolerance(tx.amount);

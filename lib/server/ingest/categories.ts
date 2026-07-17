@@ -1,4 +1,4 @@
-import { db } from "../db";
+import { catalogDb as db } from "../db";
 import { fetchNzfccCatalog, OTHER_INCOME_GROUP, PERIODIC_INCOME_GROUP } from "./nzfcc";
 
 /**

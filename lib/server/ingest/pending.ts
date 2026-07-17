@@ -2,7 +2,7 @@ import type {
   Account as AkahuAccount,
   PendingTransaction as AkahuPendingTransaction,
 } from "akahu";
-import { db } from "../db";
+import type { ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
 
 /** Pending rows are enriched only with `meta` (no merchant/category). */
@@ -24,7 +24,11 @@ function isEnrichedPending(
  * runs after a successful fetch, a transient error never wipes good data. Pending
  * rows never enter any balance, spend or rules path; they are display-only.
  */
-export async function syncPendingTransactions(accounts: AkahuAccount[]): Promise<void> {
+export async function syncPendingTransactions(
+  db: ScopedDb,
+  link: { id: string; workspaceId: string },
+  accounts: AkahuAccount[],
+): Promise<void> {
   try {
     const knownAccountIds = new Set(accounts.map((a) => a._id));
     const { akahuClient, akahuUserToken } = await import("../akahu");
@@ -39,6 +43,7 @@ export async function syncPendingTransactions(accounts: AkahuAccount[]): Promise
       const enriched = isEnrichedPending(tx) ? tx : undefined;
       const conversion = enriched?.meta?.conversion;
       rows.push({
+        workspaceId: db.$workspaceId,
         accountId: tx._account,
         connectionId: tx._connection,
         date: new Date(tx.date),
@@ -59,6 +64,13 @@ export async function syncPendingTransactions(accounts: AkahuAccount[]): Promise
 
     // Replace the whole set in one write transaction: the table always equals
     // Akahu's current pending, and a crash can't leave a half-applied snapshot.
+    //
+    // The empty `deleteMany({})` is the sharpest thing the scoped client buys.
+    // Unscoped and multi-tenant it reads "delete every pending row in the
+    // database" — so any one workspace's sync would wipe everyone else's pending
+    // rows, and a single-workspace test would never show it. The scoped client
+    // narrows it to this workspace; the replace semantics, which are right for
+    // this data, are unchanged.
     await db.$transaction([
       db.pendingTransaction.deleteMany({}),
       ...(rows.length > 0 ? [db.pendingTransaction.createMany({ data: rows })] : []),

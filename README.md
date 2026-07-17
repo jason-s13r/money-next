@@ -127,10 +127,14 @@ scripts/ingest.ts     Cron-friendly sync entry point
 Copy `.env.example` to `.env` and fill in:
 
 ```env
-DATABASE_URL="file:./money.db"
+DATABASE_URL="postgresql://money:money@127.0.0.1:5432/money?schema=public"
 AKAHU_APP_ID_TOKEN=        # from Akahu app settings
 AKAHU_USER_ACCESS_TOKEN=   # from https://my.akahu.nz
+ID_NAMESPACE=              # optional; labels ids this app mints. Defaults to "app"
 ```
+
+`pnpm db:up` starts the Postgres in [compose.yaml](compose.yaml), whose credentials
+match the string above. See [.env.example](.env.example) for the full annotated set.
 
 ## License
 

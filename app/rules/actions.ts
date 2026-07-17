@@ -1,7 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { db } from "@/lib/server/db";
+import { getDb } from "@/lib/server/db";
 import { runRules, defaultDecisionGraph } from "@/lib/server/rules/engine";
 import {
   deriveMatch,
@@ -20,10 +20,13 @@ import type { GenerateRuleResult } from "./types";
 
 /** A slug unique across documents, `-2`/`-3`… appended on collision. */
 async function uniqueSlug(name: string): Promise<string> {
+  const db = await getDb();
   const base = slugify(name) || "rules";
   let slug = base;
   for (let n = 2; ; n++) {
-    if (!(await db.ruleDocument.findUnique({ where: { slug } }))) return slug;
+    // findFirst, not findUnique: a slug is only unique within a workspace now,
+    // and the scoped client supplies the workspace half of that key.
+    if (!(await db.ruleDocument.findFirst({ where: { slug } }))) return slug;
     slug = `${base}-${n}`;
   }
 }
@@ -35,11 +38,13 @@ async function uniqueSlug(name: string): Promise<string> {
  * demotes any stragglers when it creates one.
  */
 async function getOrCreateActiveDocument() {
+  const db = await getDb();
   const existing = await db.ruleDocument.findFirst({ where: { active: true } });
   if (existing) return existing;
 
   const doc = await db.ruleDocument.create({
     data: {
+      workspaceId: db.$workspaceId,
       name: "Automations",
       slug: await uniqueSlug("Automations"),
       content: JSON.stringify(defaultDecisionGraph()),
@@ -55,6 +60,7 @@ async function getOrCreateActiveDocument() {
 
 /** Load the active graph, hand it to `mutate`, and persist the result. */
 async function editActiveGraph(mutate: (graph: Graph) => void) {
+  const db = await getDb();
   const doc = await getOrCreateActiveDocument();
   const graph = JSON.parse(doc.content) as Graph;
   mutate(graph);
@@ -68,7 +74,8 @@ async function editActiveGraph(mutate: (graph: Graph) => void) {
  * the summary so the button can report what changed.
  */
 export async function applyRulesNow() {
-  const summary = await runRules({ trigger: "manual" });
+  const db = await getDb();
+  const summary = await runRules(db, { trigger: "manual" });
   revalidatePath("/rules");
   revalidatePath("/rules/runs");
   revalidatePath("/transactions/recent");
@@ -94,6 +101,7 @@ export async function toggleTransfersAutoLink(enabled: boolean) {
 export async function generateRuleFromTransaction(
   transactionId: string,
 ): Promise<GenerateRuleResult> {
+  const db = await getDb();
   const tx = await db.transaction.findUnique({
     where: { id: transactionId },
     select: {

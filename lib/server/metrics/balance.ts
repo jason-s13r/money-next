@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { db } from "../db";
+import { getDb } from "../db";
 import { LIQUID_TYPES, LOCKED_TYPES } from "../../categories";
 import { displayConverter, getDisplayCurrency } from "../currency";
 import { accountMoney } from "../money";
@@ -39,6 +39,7 @@ export type BalanceSummary = {
 
 export async function getBalanceSummary(): Promise<BalanceSummary> {
   await connection();
+  const db = await getDb();
   // Converted out of `Decimal` at the read, so everything below is plain float
   // arithmetic — which is what FX conversion and utilisation ratios are anyway.
   const accounts = (await db.account.findMany({ where: { status: "ACTIVE" } })).map(accountMoney);

@@ -12,11 +12,11 @@
 // `apply.ts`, and the starter graph in `graph.ts`.
 
 import { ZenEngine, type ZenDecision } from "@gorules/zen-engine";
-import { db } from "../../db";
+import type { FieldChangeEntry } from "../../changes";
+import type { ScopedDb } from "../../db";
 import { money } from "../../money";
 import {
   RULE_SOURCE,
-  type RuleChange,
   type RuleOutput,
   type RuleTx,
   type RulesRunSummary,
@@ -48,11 +48,18 @@ function chunk<T>(items: T[], size: number): T[][] {
  * Builds the engine once and disposes it at the end; a per-transaction failure is
  * counted and stepped over rather than aborting the batch.
  */
-export async function runRules(opts?: {
-  transactionIds?: string[];
-  /** What triggered the run, for the log. Defaults to `manual`. */
-  trigger?: "sync" | "manual";
-}): Promise<RulesRunSummary> {
+export async function runRules(
+  // Taken as a parameter rather than resolved here: the two callers resolve the
+  // workspace differently — a server action from the session, the ingest from
+  // the bank link it is syncing — and this runs in plain Node as well as in a
+  // request, where there is no session to reach for.
+  db: ScopedDb,
+  opts?: {
+    transactionIds?: string[];
+    /** What triggered the run, for the log. Defaults to `manual`. */
+    trigger?: "sync" | "manual";
+  },
+): Promise<RulesRunSummary> {
   const trigger = opts?.trigger ?? "manual";
   const doc = await db.ruleDocument.findFirst({
     where: { active: true },
@@ -83,13 +90,20 @@ export async function runRules(opts?: {
     const message = error instanceof Error ? error.message : String(error);
     // Record the failure so a persistently-broken graph is visible in the log.
     await db.ruleRun.create({
-      data: { startedAt, finishedAt: new Date(), trigger, status: "failed", error: message },
+      data: {
+        workspaceId: db.$workspaceId,
+        startedAt,
+        finishedAt: new Date(),
+        trigger,
+        status: "failed",
+        error: message,
+      },
     });
     throw new Error(`Active rule document "${doc.name}" is not a valid decision graph: ${message}`);
   }
 
   // Every edit made this run, recorded against the RuleRun at the end.
-  const applications: { transactionId: string; field: string; fromLabel: string | null; toLabel: string | null }[] = [];
+  const changes: FieldChangeEntry[] = [];
 
   try {
     // A sync can hand us thousands of freshly-upserted ids; splatting them all
@@ -126,8 +140,8 @@ export async function runRules(opts?: {
       try {
         const response = await decision.evaluate(buildInput(tx));
         const output = (response.result ?? {}) as RuleOutput;
-        for (const change of await applyOutput(tx, output)) {
-          applications.push({ transactionId: tx.id, ...change });
+        for (const change of await applyOutput(db, tx, output)) {
+          changes.push({ transactionId: tx.id, ...change });
           if (change.field === "category") summary.categorised++;
           else if (change.field === "merchant") summary.merchantsSet++;
           else if (change.field === "transfer") summary.transfersLinked++;
@@ -142,9 +156,10 @@ export async function runRules(opts?: {
 
   // Log the run only when it actually did something (or hit errors), so the report
   // stays a record of changes rather than a heartbeat of every no-op sync.
-  if (applications.length > 0 || summary.errors > 0) {
+  if (changes.length > 0 || summary.errors > 0) {
     await db.ruleRun.create({
       data: {
+        workspaceId: db.$workspaceId,
         startedAt,
         finishedAt: new Date(),
         trigger,
@@ -154,7 +169,22 @@ export async function runRules(opts?: {
         merchantsSet: summary.merchantsSet,
         transfersLinked: summary.transfersLinked,
         errors: summary.errors,
-        applications: { create: applications },
+        // The run's edits go straight into the field change log, nested so they
+        // commit with the run and inherit its id as `ruleRunId` — which is what
+        // `/rules/runs/<id>` reads back. `source` says which of the three writers
+        // this was; no `actorUserId`, even on a manual run: the person asked for
+        // the rules to run, they did not choose this edit. `RuleRun.trigger`
+        // already records that they asked.
+        //
+        // Nested creates are outside what the scoped client rewrites — it only
+        // stamps the top-level `data` — so these carry the workspace themselves.
+        changes: {
+          create: changes.map((c) => ({
+            ...c,
+            workspaceId: db.$workspaceId,
+            source: RULE_SOURCE,
+          })),
+        },
       },
     });
   }

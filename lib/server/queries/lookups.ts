@@ -1,7 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
-import { db } from "../db";
+import { getDb } from "../db";
 import { accountMoney, transactionMoney } from "../money";
 import {
   readLearnedRules,
@@ -22,6 +22,7 @@ import {
  */
 export const getCategories = cache(async () => {
   await connection();
+  const db = await getDb();
   const rows = await db.category.findMany({
     orderBy: [{ group: { name: "asc" } }, { name: "asc" }],
     select: { id: true, name: true, direction: true, group: { select: { name: true } } },
@@ -38,6 +39,7 @@ export const getCategories = cache(async () => {
 /** Every merchant on record, for the merchant picker on a transaction. */
 export const getMerchants = cache(async () => {
   await connection();
+  const db = await getDb();
   return db.merchant.findMany({
     orderBy: { name: "asc" },
     select: { id: true, name: true, logo: true },
@@ -47,6 +49,7 @@ export const getMerchants = cache(async () => {
 /** A merchant by id, for its page's title and to 404 an unknown id. */
 export const getMerchant = cache(async (id: string) => {
   await connection();
+  const db = await getDb();
   return db.merchant.findUnique({
     where: { id },
     select: { id: true, name: true, website: true, logo: true },
@@ -55,6 +58,7 @@ export const getMerchant = cache(async (id: string) => {
 
 export const getTransaction = cache(async (id: string) => {
   await connection();
+  const db = await getDb();
   const tx = await db.transaction.findUnique({
     where: { id },
     // Only unresolved conflicts surface on the page; a dismissed one is settled
@@ -94,6 +98,7 @@ export async function getRulesForTransaction(tx: {
   description: string;
 }): Promise<{ matching: MatchingRule[]; transferMatches: boolean }> {
   await connection();
+  const db = await getDb();
   const doc = await db.ruleDocument.findFirst({ where: { active: true } });
   if (!doc) return { matching: [], transferMatches: false };
 

@@ -1,4 +1,4 @@
-import { db } from "../../db";
+import type { ScopedDb } from "../../db";
 import { findAutoTransferLeg, linkTransferLegs } from "../../matching/transfers";
 import type { Prisma } from "../../../generated/prisma/client";
 import { RULE_SOURCE, type RuleChange, type RuleOutput, type RuleTx } from "./types";
@@ -10,7 +10,11 @@ import { RULE_SOURCE, type RuleChange, type RuleOutput, type RuleTx } from "./ty
  * changes it made (empty when the rule left the transaction untouched), both to
  * tally the summary and to record the per-transaction run log.
  */
-export async function applyOutput(tx: RuleTx, output: RuleOutput): Promise<RuleChange[]> {
+export async function applyOutput(
+  db: ScopedDb,
+  tx: RuleTx,
+  output: RuleOutput,
+): Promise<RuleChange[]> {
   const changes: RuleChange[] = [];
   // Unchecked so the scalar `merchantId`/`categoryId` FK columns can be written
   // directly (the checked update input routes `merchantId` through the relation).
@@ -27,7 +31,13 @@ export async function applyOutput(tx: RuleTx, output: RuleOutput): Promise<RuleC
       // Keep the denormalised group id in step with the category (real group id).
       data.categoryGroupId = category.groupId;
       data.categorySource = RULE_SOURCE;
-      changes.push({ field: "category", fromLabel: tx.category?.name ?? null, toLabel: category.name });
+      changes.push({
+        field: "category",
+        fromId: tx.categoryId,
+        fromLabel: tx.category?.name ?? null,
+        toId: category.id,
+        toLabel: category.name,
+      });
     }
   }
 
@@ -40,7 +50,13 @@ export async function applyOutput(tx: RuleTx, output: RuleOutput): Promise<RuleC
     if (merchant) {
       data.merchantId = merchant.id;
       data.merchantSource = RULE_SOURCE;
-      changes.push({ field: "merchant", fromLabel: tx.merchant?.name ?? null, toLabel: merchant.name });
+      changes.push({
+        field: "merchant",
+        fromId: tx.merchantId,
+        fromLabel: tx.merchant?.name ?? null,
+        toId: merchant.id,
+        toLabel: merchant.name,
+      });
     }
   }
 
@@ -52,14 +68,14 @@ export async function applyOutput(tx: RuleTx, output: RuleOutput): Promise<RuleC
   // only says "this looks like a transfer"; we find the opposite leg and group it,
   // and only when the match is unambiguous.
   if (output.autoLinkTransfer === true && tx.transferGroupId == null) {
-    const leg = await findAutoTransferLeg({
+    const leg = await findAutoTransferLeg(db, {
       id: tx.id,
       amount: tx.amount,
       date: tx.date,
       accountId: tx.accountId,
       currency: tx.account.currency,
     });
-    if (leg && (await linkTransferLegs(tx.id, leg.id))) {
+    if (leg && (await linkTransferLegs(db, tx.id, leg.id))) {
       const legTx = await db.transaction.findUnique({
         where: { id: leg.id },
         select: { description: true },

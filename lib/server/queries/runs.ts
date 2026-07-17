@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { db } from "../db";
+import { getDb } from "../db";
 import { money } from "../money";
 
 // The ingest and rules execution logs, for the /sync and /rules run-history pages,
@@ -10,6 +10,7 @@ import { money } from "../money";
 /** When the ingest task last completed, so the UI can show staleness. */
 export async function getLastSync() {
   await connection();
+  const db = await getDb();
   return db.syncRun.findFirst({
     where: { status: "success" },
     orderBy: { startedAt: "desc" },
@@ -23,6 +24,7 @@ export const RULE_RUNS_PER_PAGE = 25;
 /** Paginated history of every ingest run, newest first. */
 export async function getSyncRuns(page: number) {
   await connection();
+  const db = await getDb();
   const [items, total] = await Promise.all([
     db.syncRun.findMany({
       orderBy: { startedAt: "desc" },
@@ -37,12 +39,13 @@ export async function getSyncRuns(page: number) {
 /** The rules execution log — runs newest first, each with its edit count. */
 export async function getRuleRuns(page: number) {
   await connection();
+  const db = await getDb();
   const [items, total] = await Promise.all([
     db.ruleRun.findMany({
       orderBy: { startedAt: "desc" },
       skip: (page - 1) * RULE_RUNS_PER_PAGE,
       take: RULE_RUNS_PER_PAGE,
-      include: { _count: { select: { applications: true } } },
+      include: { _count: { select: { changes: true } } },
     }),
     db.ruleRun.count(),
   ]);
@@ -50,7 +53,7 @@ export async function getRuleRuns(page: number) {
 }
 
 export type RuleApplicationRow = {
-  id: number;
+  id: string;
   field: string;
   fromLabel: string | null;
   toLabel: string | null;
@@ -66,19 +69,24 @@ export type RuleApplicationRow = {
 };
 
 /**
- * One rule run with the transactions it edited. The applications carry the
- * change labels; the current transaction rows are joined back in (in bulk) so the
- * report can link to each and show its date/amount, tolerating a since-deleted one.
+ * One rule run with the transactions it edited. The changes carry the labels; the
+ * current transaction rows are joined back in (in bulk) so the report can link to
+ * each and show its date/amount, tolerating a since-deleted one.
+ *
+ * This reads the field change log filtered to one run — the rows a rule wrote —
+ * which is all `RuleApplication` ever was. The log holds the sync's and the
+ * user's edits alongside them, but a run report only ever wanted its own.
  */
-export async function getRuleRun(id: number) {
+export async function getRuleRun(id: string) {
   await connection();
+  const db = await getDb();
   const run = await db.ruleRun.findUnique({
     where: { id },
-    include: { applications: { orderBy: { id: "asc" } } },
+    include: { changes: { orderBy: { id: "asc" } } },
   });
   if (!run) return null;
 
-  const txIds = [...new Set(run.applications.map((a) => a.transactionId))];
+  const txIds = [...new Set(run.changes.map((a) => a.transactionId))];
   const rows = await db.transaction.findMany({
     where: { id: { in: txIds } },
     select: {
@@ -92,7 +100,7 @@ export async function getRuleRun(id: number) {
   });
   const txById = new Map(rows.map((r) => [r.id, { ...r, amount: money(r.amount) }]));
 
-  const applications: RuleApplicationRow[] = run.applications.map((a) => {
+  const applications: RuleApplicationRow[] = run.changes.map((a) => {
     const tx = txById.get(a.transactionId);
     return {
       id: a.id,

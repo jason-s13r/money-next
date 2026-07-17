@@ -1,4 +1,4 @@
-import { db } from "../../db";
+import { getDb } from "../../db";
 import { INCOME_GROUP_IDS, INCOME_GROUP_NAMES } from "../../../categories";
 import { displayConverter, getDisplayCurrency } from "../../currency";
 import { money, moneySum } from "../../money";
@@ -45,6 +45,7 @@ export async function buildComparison(
   offset = 0,
   now: Date = new Date(),
 ): Promise<Comparison> {
+  const db = await getDb();
   // Only the window's rows are ever bucketed — every other row falls through the
   // `periods.get(key)` miss below — so don't read them. The bound is deliberately
   // generous and `offset` is folded into the count so that paging back still
@@ -96,7 +97,6 @@ export async function buildComparison(
 
   const keys = periodWindow(now, period, count, offset);
   const currentKey = periodKey(now, period);
-  const window = new Set(keys);
   const periods = new Map(keys.map((key) => [key, blank(key, currentKey)]));
 
   const incomeGroupOf = new Map<string, string | null>();

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { db } from "@/lib/server/db";
+import { getDb } from "@/lib/server/db";
 import { getCategories, getMerchants } from "@/lib/server/queries/lookups";
 import { getRuleRuns } from "@/lib/server/queries/runs";
 import { readLearnedRules, readTransferAutoLink, type Graph } from "@/lib/server/rules/learning";
@@ -15,6 +15,7 @@ export const metadata = { title: "Rules" };
 const RECENT_RUNS = 8;
 
 export default async function RulesPage() {
+  const db = await getDb();
   const [doc, categories, merchants, runList] = await Promise.all([
     db.ruleDocument.findFirst({ where: { active: true } }),
     getCategories(),
@@ -142,8 +143,8 @@ export default async function RulesPage() {
                   <span className="text-xs text-status-critical">{run.errors} errored</span>
                 ) : null}
                 <span className="ml-auto text-xs text-muted tabular-nums">
-                  {run._count.applications.toLocaleString("en-NZ")}{" "}
-                  {run._count.applications === 1 ? "edit" : "edits"}
+                  {run._count.changes.toLocaleString("en-NZ")}{" "}
+                  {run._count.changes === 1 ? "edit" : "edits"}
                 </span>
               </li>
             ))}

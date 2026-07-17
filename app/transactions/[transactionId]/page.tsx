@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { SearchableSelect, type SelectOption } from "@/ui/primitives/searchable-select";
 import { positiveAmountClass } from "@/lib/ui/amount";
 import { getCategories, getMerchants, getTransaction, getRulesForTransaction } from "@/lib/server/queries/lookups";
+import { getTransactionHistory } from "@/lib/server/queries/history";
 import {
   getSimilarTransactions,
   getTransferCandidates,
@@ -15,6 +16,7 @@ import {
   setTransactionMerchant,
 } from "./actions/merchant";
 import { ConflictBanner } from "@/ui/transactions/detail/conflict-banner";
+import { TransactionHistory } from "@/ui/transactions/detail/history";
 import { SimilarTransactions } from "@/ui/transactions/detail/similar-transactions";
 import { LearnRule } from "@/ui/transactions/detail/learn-rule";
 import { MatchingRules } from "@/ui/transactions/detail/matching-rules";
@@ -43,7 +45,7 @@ export default async function TransactionPage(
   // Options for the enrichment pickers. Loaded here so the page stays one server
   // round-trip; both are small enough to hand to the client whole (see
   // SearchableSelect). The bound actions carry this transaction's id.
-  const [categories, merchants, similar, transferLegs, transferCandidates, rulesForTx] =
+  const [categories, merchants, similar, transferLegs, transferCandidates, rulesForTx, history] =
     await Promise.all([
       getCategories(),
       getMerchants(),
@@ -51,6 +53,7 @@ export default async function TransactionPage(
       getTransferGroupLegs(tx),
       getTransferCandidates(tx, account.currency),
       getRulesForTransaction({ type: tx.type, description: tx.description }),
+      getTransactionHistory(transactionId),
     ]);
 
   const categoryOptions: SelectOption[] = categories.map((c) => ({
@@ -126,6 +129,7 @@ export default async function TransactionPage(
             <ConflictBanner
               conflictId={merchantConflict.id}
               field="merchant"
+              heldSource={merchantConflict.heldSource}
               userLabel={merchantConflict.userValueLabel}
               akahuLabel={merchantConflict.akahuValueLabel}
             />
@@ -153,6 +157,7 @@ export default async function TransactionPage(
             <ConflictBanner
               conflictId={categoryConflict.id}
               field="category"
+              heldSource={categoryConflict.heldSource}
               userLabel={categoryConflict.userValueLabel}
               akahuLabel={categoryConflict.akahuValueLabel}
             />
@@ -172,6 +177,11 @@ export default async function TransactionPage(
         legs={transferLegs}
         candidates={transferCandidates}
       />
+
+      {/* Directly under the three fields it explains — merchant, category and
+          transfer — since it is the answer to the question those fields raise:
+          why does it say that, and who decided? */}
+      <TransactionHistory entries={history} />
 
       <SimilarTransactions
         sourceId={tx.id}

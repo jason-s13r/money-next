@@ -22,10 +22,14 @@ export function SearchForm() {
   const [value, setValue] = useState(urlQuery);
 
   // Reflect the url back into the input when the query changes elsewhere —
-  // back/forward navigation, following a link, or clearing the search.
-  useEffect(() => {
+  // back/forward navigation, following a link, or clearing the search. Adjusting
+  // during render rather than in an effect: React re-runs this component before
+  // committing, so the input never paints the stale value.
+  const [lastUrlQuery, setLastUrlQuery] = useState(urlQuery);
+  if (urlQuery !== lastUrlQuery) {
+    setLastUrlQuery(urlQuery);
     setValue(urlQuery);
-  }, [urlQuery]);
+  }
 
   const navigate = (next: string) => {
     const q = next.trim();

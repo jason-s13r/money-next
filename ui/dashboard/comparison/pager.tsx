@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { NavPair } from "@/ui/primitives/nav-pair";
 
 /**
