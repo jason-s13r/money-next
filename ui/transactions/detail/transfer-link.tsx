@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Link, useCanEdit } from "@/ui/chrome/workspace-context";
 import { useState, useTransition } from "react";
 import type { TransferCandidate, TransferLeg } from "@/lib/server/matching/matching";
 import { formatDate, formatMoney } from "@/lib/format";
@@ -9,8 +9,8 @@ import {
   linkTransfer,
   searchTransferCandidates,
   unlinkTransfer,
-} from "@/app/transactions/[transactionId]/actions/transfer";
-import type { TransferSearchResult } from "@/app/transactions/[transactionId]/actions/transfer";
+} from "@/app/w/[workspace]/transactions/[transactionId]/actions/transfer";
+import type { TransferSearchResult } from "@/app/w/[workspace]/transactions/[transactionId]/actions/transfer";
 
 const btn =
   "rounded border border-current/25 px-2.5 py-1 text-xs hover:border-current/50 disabled:opacity-50";
@@ -108,6 +108,10 @@ export function TransferLink({
   candidates: TransferCandidate[];
 }) {
   const [pending, startTransition] = useTransition();
+  // A viewer keeps the legs — how a transfer nets out, and what it cost, is one
+  // of the more useful things on this page to *read* — and loses the linking:
+  // unlink, the candidate list and the search are all `enrichment.update`.
+  const canEdit = useCanEdit();
 
   // The residual a same-currency transfer didn't cancel is its fee. Only meaningful
   // when every leg shares one currency; a cross-currency conversion has no single
@@ -119,6 +123,10 @@ export function TransferLink({
 
   const linkAction = (targetId: string) =>
     startTransition(() => linkTransfer(sourceId, targetId));
+
+  // Nothing to say: not a transfer, and not theirs to make one. Without this a
+  // viewer gets an empty section heading on every ordinary transaction.
+  if (!canEdit && legs.length === 0) return null;
 
   return (
     <section className="mb-8">
@@ -150,14 +158,16 @@ export function TransferLink({
                   <span className={`font-mono tabular-nums ${positiveAmountClass(leg.amount)}`}>
                     {formatMoney(leg.amount, leg.account.currency)}
                   </span>
-                  <button
-                    type="button"
-                    disabled={pending}
-                    onClick={() => startTransition(() => unlinkTransfer(leg.id))}
-                    className={btn}
-                  >
-                    Unlink
-                  </button>
+                  {canEdit ? (
+                    <button
+                      type="button"
+                      disabled={pending}
+                      onClick={() => startTransition(() => unlinkTransfer(leg.id))}
+                      className={btn}
+                    >
+                      Unlink
+                    </button>
+                  ) : null}
                 </div>
               </li>
             ))}
@@ -165,6 +175,7 @@ export function TransferLink({
         </>
       ) : null}
 
+      {canEdit ? (
       <details className="group">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 border-b border-current/20 pb-2 text-sm font-medium opacity-60 [&::-webkit-details-marker]:hidden">
           <span className="flex items-center gap-1.5">
@@ -219,6 +230,7 @@ export function TransferLink({
 
         <ManualLink sourceId={sourceId} onLink={linkAction} disabled={pending} />
       </details>
+      ) : null}
     </section>
   );
 }

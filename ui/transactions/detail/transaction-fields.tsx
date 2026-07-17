@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 
 // The labelled field rows that make up a transaction's detail page: a titled
 // section wrapping a definition list, a plain read-only field, and an editable

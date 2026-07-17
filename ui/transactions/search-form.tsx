@@ -3,6 +3,9 @@
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 
+import { useWorkspaceSlug } from "@/ui/chrome/workspace-context";
+import { workspacePath } from "@/lib/workspace-path";
+
 // The transaction search box that lives in the nav bar. Typing debounces into a
 // client-side navigation to /transactions/search, so results stream in as you
 // type while the query stays addressable in the url (the back button works, and
@@ -17,6 +20,10 @@ export function SearchForm() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
+
+  // This one builds its urls rather than rendering a <Link>, so it prefixes the
+  // workspace itself. The no-JS <form action> below needs a real path too.
+  const searchPath = workspacePath(useWorkspaceSlug(), SEARCH_PATH);
 
   const urlQuery = searchParams.get("q") ?? "";
   const [value, setValue] = useState(urlQuery);
@@ -33,12 +40,12 @@ export function SearchForm() {
 
   const navigate = (next: string) => {
     const q = next.trim();
-    const href = q ? `${SEARCH_PATH}?q=${encodeURIComponent(q)}` : SEARCH_PATH;
+    const href = q ? `${searchPath}?q=${encodeURIComponent(q)}` : searchPath;
     startTransition(() => {
       // Replace once we're on the search page so every keystroke doesn't pile a
       // new entry onto the history stack; push the first time to transition onto
       // the page (and keep the origin page in history).
-      if (pathname === SEARCH_PATH) router.replace(href);
+      if (pathname === searchPath) router.replace(href);
       else router.push(href);
     });
   };
@@ -54,7 +61,7 @@ export function SearchForm() {
 
   return (
     <form
-      action={SEARCH_PATH}
+      action={searchPath}
       role="search"
       className="flex"
       onSubmit={(event) => {

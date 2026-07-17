@@ -1,5 +1,5 @@
 import "server-only";
-import { getDb } from "./db";
+import { getDb } from "./db/request";
 import { DEFAULT_CURRENCY } from "../format";
 import { FX_BASE_CURRENCY } from "./fx";
 

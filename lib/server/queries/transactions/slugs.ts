@@ -1,7 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
-import { getDb } from "../../db";
+import { getDb } from "../../db/request";
 
 // The slug resolvers that let an unknown key 404: each returns the distinct set
 // of values on record for a listing dimension (type, card suffix, category name),

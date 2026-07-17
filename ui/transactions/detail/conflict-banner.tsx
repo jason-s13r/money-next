@@ -1,7 +1,8 @@
 "use client";
 
 import { useTransition } from "react";
-import { acceptAkahuValue, keepUserValue } from "@/app/transactions/[transactionId]/actions/conflict";
+import { acceptAkahuValue, keepUserValue } from "@/app/w/[workspace]/transactions/[transactionId]/actions/conflict";
+import { useCanEdit } from "@/ui/chrome/workspace-context";
 
 /**
  * Shown under an enrichment field when a sync found Akahu asserting a different
@@ -13,6 +14,13 @@ import { acceptAkahuValue, keepUserValue } from "@/app/transactions/[transaction
  * made about this row, the other is a standing instruction misfiring on it, and
  * telling the reader the first when it was the second sends them looking for an
  * edit they never made.
+ *
+ * A `viewer` sees the notice and not the buttons. The disagreement is worth
+ * knowing about — it is the reason a number on the page is what it is, which is
+ * exactly what a read-only reader is here for — but resolving it is an
+ * enrichment write their role does not carry. This is the one place on the page
+ * where hiding the control and hiding the information would not be the same
+ * thing, so it doesn't do both.
  */
 export function ConflictBanner({
   conflictId,
@@ -28,6 +36,7 @@ export function ConflictBanner({
   akahuLabel: string | null;
 }) {
   const [pending, startTransition] = useTransition();
+  const canEdit = useCanEdit();
 
   const dash = <span className="opacity-50">none</span>;
   const byRule = heldSource === "rule";
@@ -42,6 +51,7 @@ export function ConflictBanner({
         <span className="font-medium text-foreground">{userLabel ?? dash}</span>; Akahu now
         reports <span className="font-medium text-foreground">{akahuLabel ?? dash}</span>.
       </p>
+      {canEdit ? (
       <div className="mt-1.5 flex gap-2">
         <button
           type="button"
@@ -60,6 +70,7 @@ export function ConflictBanner({
           Use Akahu&rsquo;s
         </button>
       </div>
+      ) : null}
     </div>
   );
 }

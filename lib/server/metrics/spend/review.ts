@@ -1,7 +1,7 @@
 import "server-only";
 
 import { connection } from "next/server";
-import { getDb } from "../../db";
+import { getDb } from "../../db/request";
 import { money } from "../../money";
 import { UNCATEGORISED_WHERE } from "../../queries/transactions";
 import { type ReviewQueue } from "./types";

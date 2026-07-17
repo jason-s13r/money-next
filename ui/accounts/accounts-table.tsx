@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import { formatMoney } from "@/lib/format";
 
 // The accounts listing table. Structurally typed on just the fields it shows, so

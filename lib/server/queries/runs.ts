@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { getDb } from "../db";
+import { getDb } from "../db/request";
 import { money } from "../money";
 
 // The ingest and rules execution logs, for the /sync and /rules run-history pages,

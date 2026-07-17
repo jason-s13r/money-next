@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import { useState } from "react";
 import { formatMoneyWhole } from "@/lib/format";
 import { CELL, CHEVRON, Swatch } from "./comparison-table";

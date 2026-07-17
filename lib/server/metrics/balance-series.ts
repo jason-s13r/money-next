@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { getDb } from "../db";
+import { getDb } from "../db/request";
 import { displayConverter, getDisplayCurrency } from "../currency";
 import { money } from "../money";
 import { periodKey, periodStart, periodWindow } from "../../periods";

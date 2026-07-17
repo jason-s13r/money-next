@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import type { PendingTransactionItem } from "@/lib/server/queries/pending";
 import { DEFAULT_CURRENCY as DISPLAY_CURRENCY, formatDate, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";

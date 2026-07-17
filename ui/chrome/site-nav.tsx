@@ -1,9 +1,17 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import { Suspense } from "react";
 import { SearchForm } from "@/ui/transactions/search-form";
+import { listWorkspaces } from "@/lib/server/auth/workspaces";
+import { requireWorkspace } from "@/lib/server/auth/session";
+import { AccountMenu } from "./account-menu";
 
-// The global navigation bar shown above every page (rendered once by the root
-// layout). A plain server component — links only, no interactivity.
+// The navigation bar shown above every page inside a workspace (rendered by
+// app/w/[workspace]/layout.tsx — it used to live in the root layout, and moved
+// when the workspace moved into the URL: every link here is workspace-relative,
+// and /login has no workspace to link within).
+//
+// Still a server component. `<Link>` is the workspace-aware one, so these hrefs
+// stay written the way they always were.
 
 const navItems = [
   { href: "/", label: "Dashboard" },
@@ -15,7 +23,12 @@ const navItems = [
   { href: "/sync", label: "Sync" },
 ];
 
-export function SiteNav() {
+export async function SiteNav() {
+  const [{ user, workspace, role }, workspaces] = await Promise.all([
+    requireWorkspace(),
+    listWorkspaces(),
+  ]);
+
   return (
     <header className="sticky top-0 z-50 border-b border-current/10 bg-background/80 backdrop-blur">
       <nav
@@ -42,6 +55,12 @@ export function SiteNav() {
             <SearchForm />
           </Suspense>
         </div>
+        <AccountMenu
+          user={{ name: user.name, email: user.email }}
+          current={workspace}
+          role={role}
+          workspaces={workspaces}
+        />
       </nav>
     </header>
   );

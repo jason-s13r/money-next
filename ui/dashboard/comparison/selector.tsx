@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import { PERIOD_LABELS, PERIODS, type Period } from "@/lib/periods";
 
 export function PeriodSelector({ period, href }: { period: Period; href: string }) {

@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import type { HistoryEntry } from "@/lib/server/queries/history";
 import { formatDateTime } from "@/lib/format";
 

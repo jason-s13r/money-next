@@ -1,15 +1,20 @@
 /**
- * Where the workspace comes from, until phase 3 brings auth.
+ * The workspace the single-user era's data was backfilled to.
  *
- * There is no session yet, so there is nothing to resolve a tenant *from*: every
- * request is the same person. Rather than leave the query layer unscoped until
- * auth lands, it is scoped now against a hardcoded workspace — so the isolation
- * work is proven against real data while there is exactly one tenant and a
- * mistake cannot leak anything.
+ * Phase 3 said it would delete this file. It didn't, quite, and the reason is
+ * worth keeping: `getDb()` no longer reads these — it resolves the workspace
+ * from the request and proves membership, exactly as promised — but two things
+ * outside a request still need to name *the* workspace by id, because the Akahu
+ * token in env belongs to precisely one tenant:
  *
- * Phase 3 deletes `BOOTSTRAP_WORKSPACE_ID` and nothing else: `getDb()` starts
- * reading the workspace from the session instead of from here, and every call
- * site above it is already written against a scoped client.
+ *   - `scripts/create-user.ts --owner`, which has no session to resolve from and
+ *     must hand the first account ownership of something.
+ *   - the bootstrap `BankLink`, which is where that env token is bound.
+ *
+ * So these are no longer "where the workspace comes from" — nothing routes
+ * through them any more. They are the name of the default workspace, and they
+ * stop being needed at all when phase 7 gives every workspace its own bank
+ * connection and no workspace is default.
  *
  * These ids are inserted by the `tenancy_models` migration as fixed literals
  * (not `cuid()`s) so this constant and that backfill can agree without a lookup.

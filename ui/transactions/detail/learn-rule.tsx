@@ -1,9 +1,10 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import { useState, useTransition } from "react";
-import { generateRuleFromTransaction } from "@/app/rules/actions";
-import type { GenerateRuleResult } from "@/app/rules/types";
+import { useCanEdit } from "@/ui/chrome/workspace-context";
+import { generateRuleFromTransaction } from "@/app/w/[workspace]/rules/actions";
+import type { GenerateRuleResult } from "@/app/w/[workspace]/rules/types";
 
 /**
  * Promote this transaction's hand-set category/merchant into a durable rule: one
@@ -25,8 +26,12 @@ export function LearnRule({
 }) {
   const [pending, startTransition] = useTransition();
   const [result, setResult] = useState<GenerateRuleResult | null>(null);
+  const canEdit = useCanEdit();
 
   if (!hasCategory && !hasMerchant) return null;
+  // Nothing here is a read: the whole component exists to write a standing rule,
+  // which is `enrichment.update` — not a viewer's to make.
+  if (!canEdit) return null;
 
   const targets = [hasCategory && "category", hasMerchant && "merchant"]
     .filter(Boolean)

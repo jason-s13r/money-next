@@ -83,19 +83,44 @@ export function changeRows(
 /**
  * Record what a person just did.
  *
- * The actor is null on every row this writes today, and that is the honest value
- * rather than a placeholder: there are no users until phase 3 brings auth, so a
- * null `actorUserId` says "written before this instance knew who anyone was",
- * which is true. Phase 3 replaces the one line below with the session's user id
- * and every call site above is already correct — the same seam `getDb()` uses for
- * the workspace.
+ * The actor is read here rather than passed in, and that is the point of the
+ * seam: every one of the nine call sites is a server action that has already
+ * resolved a session, so threading a user id through nine signatures would add
+ * nine chances to forget one — and a forgotten one doesn't fail, it silently
+ * writes `null` and blames nobody. Reading it here means "user changed this" and
+ * "which user" cannot come apart.
+ *
+ * `getSession` is React-cached, so this costs nothing: the action above already
+ * paid for it.
+ *
+ * The import is dynamic because this module deliberately has no `server-only`
+ * (see the top of the file) and the Akahu sync imports `changeRows` from plain
+ * Node. `./auth/session` *does* import `server-only`, whose whole job is to throw
+ * when it is loaded outside a React Server Component — so a static import here
+ * would kill the ingest script on load, before a line of it ran. Checked, not
+ * assumed: making this import static and running the script throws
+ * "This module cannot be imported from a Client Component module".
+ *
+ * Deferring it to the call moves that load into the only place the session could
+ * exist anyway. The sync attributes its own writes to `akahu` and never calls
+ * this function, so the module it cannot load is one it never reaches.
+ *
+ * Rows still carry `null` when there is no session, which stays honest: it means
+ * "written before this instance knew who anyone was", and the rows written
+ * before phase 3 say exactly that.
  */
 export async function recordUserChanges(
   db: ScopedDb,
   entries: readonly FieldChangeEntry[],
 ): Promise<void> {
   if (entries.length === 0) return;
+
+  const { getSession } = await import("./auth/session");
+  const session = await getSession();
+
   await db.fieldChange.createMany({
-    data: changeRows(db.$workspaceId, "user", entries, { actorUserId: null }),
+    data: changeRows(db.$workspaceId, "user", entries, {
+      actorUserId: session?.user.id ?? null,
+    }),
   });
 }

@@ -34,6 +34,7 @@ export function SearchableSelect({
   placeholder = "Set…",
   clearLabel,
   ariaLabel,
+  readOnly = false,
 }: {
   options: SelectOption[];
   value: string | null;
@@ -48,6 +49,21 @@ export function SearchableSelect({
   /** When present, an entry that unsets the value (e.g. "Uncategorised"). */
   clearLabel?: string;
   ariaLabel: string;
+  /**
+   * Render the current value as text, with no control at all.
+   *
+   * For a `viewer`, whose role cannot enrich (see lib/server/auth/roles.ts). The
+   * caller decides rather than this component asking, so the primitive stays a
+   * primitive and does not need a workspace to render — but the reason is worth
+   * knowing: a combobox that opens, filters and then throws on select is a worse
+   * answer than a label, and it was the app's real behaviour for every viewer
+   * until phase 4 gave the instance its first one.
+   *
+   * Not `disabled`: a greyed-out control still says "this is yours, but not
+   * now", which is the wrong sentence. The value is not pending or unavailable —
+   * it is simply not theirs to set, and text says that without being asked.
+   */
+  readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -152,6 +168,14 @@ export function SearchableSelect({
       e.preventDefault();
       setOpen(false);
     }
+  }
+
+  // After the hooks, never before: an early return above them would change the
+  // hook order between roles and break the rules of hooks.
+  if (readOnly) {
+    return (
+      <span className={currentLabel ? "" : "text-muted"}>{currentLabel ?? "—"}</span>
+    );
   }
 
   return (

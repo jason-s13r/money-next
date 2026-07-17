@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { getDb } from "../../db";
+import { getDb } from "../../db/request";
 import { convert, FALLBACK_DISPLAY_CURRENCY, loadRates } from "../../currency";
 import { moneySum, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
@@ -23,7 +23,7 @@ import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";
 // lib/server/money.ts): rows leave here with plain numbers, so nothing above has
 // to know how money is stored.
 
-export const TRANSACTIONS_PER_PAGE = 50;
+export const TRANSACTIONS_PER_PAGE = 20;
 
 // The one currency every listing's amounts are compared and totalled in. Accounts
 // are held in AUD/CHF/EUR/USD as well as NZD, so a raw column of mixed-currency

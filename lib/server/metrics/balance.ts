@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { getDb } from "../db";
+import { getDb } from "../db/request";
 import { LIQUID_TYPES, LOCKED_TYPES } from "../../categories";
 import { displayConverter, getDisplayCurrency } from "../currency";
 import { accountMoney } from "../money";

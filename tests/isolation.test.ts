@@ -203,7 +203,12 @@ describe("the unscoped client stays unreachable", () => {
     try {
       matches = execFileSync(
         "git",
-        ["grep", "-l", "-E", 'from "[^"]*db/client"', "--", "*.ts", "*.tsx"],
+        // `--untracked` is load-bearing, and its absence was a real hole: `git
+        // grep` searches *tracked* files, so a brand-new file importing the raw
+        // client passed this test until the moment it was committed — i.e. it
+        // was silent exactly while the mistake was being made, which is the only
+        // time it could have helped.
+        ["grep", "-l", "--untracked", "-E", 'from "[^"]*db/client"', "--", "*.ts", "*.tsx"],
         { cwd: root, encoding: "utf8" },
       );
     } catch (error) {
@@ -221,6 +226,73 @@ describe("the unscoped client stays unreachable", () => {
       [],
       `these files import the unscoped Prisma client and can read every ` +
         `workspace's data: ${offenders.join(", ")}`,
+    );
+  });
+
+  // `authDb` is the unscoped client under a second name, added in phase 3 so
+  // Better Auth's adapter can reach the control plane (`Membership`/`Invite`
+  // span workspaces by definition — see CONTROL_PLANE_MODELS). That makes it the
+  // obvious next back door: "just use authDb" would be a one-line way around
+  // every guarantee above, and it would look reasonable in review.
+  //
+  // So it is fenced by inventory rather than by hope. Adding a file here is
+  // allowed — it just has to be a decision someone typed out, with a reason.
+  test("authDb is reached only from the auth layer and the bootstrap script", () => {
+    const root = new URL("..", import.meta.url).pathname;
+
+    let matches = "";
+    try {
+      matches = execFileSync(
+        "git",
+        // `-w` rather than `\bauthDb\b`: git grep's regex engine does not
+        // implement `\b`, and quietly matches nothing when given it — so the
+        // first draft of this test passed against a planted violation. A test
+        // that cannot fail is worse than no test, because it reads like a
+        // guarantee. `--untracked` for the same reason as above.
+        ["grep", "-l", "-w", "--untracked", "authDb", "--", "*.ts", "*.tsx"],
+        { cwd: root, encoding: "utf8" },
+      );
+    } catch (error) {
+      const { status, stdout } = error as { status?: number; stdout?: string };
+      if (status !== 1) throw error;
+      matches = stdout ?? "";
+    }
+
+    const allowed = new Set([
+      // Where it is defined and documented.
+      "lib/server/db/index.ts",
+      // The auth layer: Better Auth's adapter, and the two reads whose tenancy
+      // is "the user's", not "the workspace's" — resolving a membership, and
+      // listing the workspaces someone may switch to.
+      "lib/server/auth/index.ts",
+      "lib/server/auth/session.ts",
+      "lib/server/auth/workspaces.ts",
+      // Phase 4. `Membership` and `Invite` are the control plane — they decide
+      // tenancy rather than being scoped by it, which is why scopedDb exempts
+      // them and why there is no scoped client that could read them. Both files
+      // filter by a `workspaceId` that `requireWorkspace()` already proved.
+      "lib/server/auth/members.ts",
+      // The invite pages, where the caller is not in a workspace and may not
+      // have an account: `scopedDb` needs a workspace id to exist at all, and
+      // the whole question here is which workspace — if any — this person is
+      // being let into. Both read `Invite` by its own id and nothing else.
+      "app/invite/[id]/page.tsx",
+      "app/invite/[id]/actions.ts",
+      // The bootstrap: creates the first user, who by definition has no session
+      // and no membership yet.
+      "scripts/create-user.ts",
+      // This file.
+      "tests/isolation.test.ts",
+    ]);
+
+    const offenders = matches.split("\n").filter((f) => f && !allowed.has(f));
+
+    assert.deepEqual(
+      offenders,
+      [],
+      `these files use authDb, the unscoped client: ${offenders.join(", ")}. ` +
+        `Financial data goes through getDb() in a request or scopedDb(id) outside one. ` +
+        `If this really is control-plane code, add it to the list above with a reason.`,
     );
   });
 });

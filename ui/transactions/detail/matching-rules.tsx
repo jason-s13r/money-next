@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import type { MatchingRule } from "@/lib/server/queries/lookups";
 import { RuleOutputs } from "@/ui/rules/rule-output";
 

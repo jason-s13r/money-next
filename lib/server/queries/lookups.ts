@@ -1,7 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
-import { getDb } from "../db";
+import { getDb } from "../db/request";
 import { accountMoney, transactionMoney } from "../money";
 import {
   readLearnedRules,

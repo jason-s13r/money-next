@@ -1,7 +1,11 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { SiteNav } from "@/ui/chrome/site-nav";
 import "./globals.css";
+
+// The nav used to be rendered here, for every page. It moved to
+// app/w/[workspace]/layout.tsx when the workspace moved into the URL: the nav's
+// links are all workspace-relative now, and this layout also wraps /login, which
+// has no workspace to link within.
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -28,10 +32,7 @@ export default function RootLayout({
       lang="en"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">
-        <SiteNav />
-        {children}
-      </body>
+      <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }

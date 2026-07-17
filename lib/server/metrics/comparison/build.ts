@@ -1,4 +1,4 @@
-import { getDb } from "../../db";
+import { getDb } from "../../db/request";
 import { INCOME_GROUP_IDS, INCOME_GROUP_NAMES } from "../../../categories";
 import { displayConverter, getDisplayCurrency } from "../../currency";
 import { money, moneySum } from "../../money";

@@ -1,6 +1,8 @@
 import { redirect } from "next/navigation";
+import { requireWorkspace } from "@/lib/server/auth/session";
 import { TRANSACTIONS_PER_PAGE } from "@/lib/server/queries/transactions";
 import { firstParam } from "@/lib/search-params";
+import { workspacePath } from "@/lib/workspace-path";
 import { NavPair } from "./nav-pair";
 
 /** `?page=` is user input: anything that isn't a positive integer means page 1. */
@@ -19,15 +21,23 @@ export function parsePage(raw: string | string[] | undefined): number {
  *
  * Returns the total page count for the caller to hand to {@link Pagination}. Note
  * `redirect` throws, so control never returns from it.
+ *
+ * `pageHref` returns a workspace-relative path (`/transactions/recent?page=3`),
+ * which is what the pager's links want — `<Link>` prefixes the workspace itself.
+ * This redirect is the exception: it hands a path straight to Next rather than
+ * to a link, so it is the one place that has to say the workspace out loud.
  */
-export function paginate(
+export async function paginate(
   total: number,
   page: number,
   pageHref: (page: number) => string,
   perPage = TRANSACTIONS_PER_PAGE,
-): number {
+): Promise<number> {
   const totalPages = Math.ceil(total / perPage);
-  if (page > totalPages && totalPages > 0) redirect(pageHref(totalPages));
+  if (page > totalPages && totalPages > 0) {
+    const { workspace } = await requireWorkspace();
+    redirect(workspacePath(workspace.slug, pageHref(totalPages)));
+  }
   return totalPages;
 }
 

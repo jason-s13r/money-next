@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { getDb } from "../db";
+import { getDb } from "../db/request";
 
 // One transaction's field change log, for the History panel on its page. The
 // write side lives in lib/server/changes.ts; this is the only reader of it

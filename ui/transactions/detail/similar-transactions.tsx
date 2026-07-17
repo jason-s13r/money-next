@@ -1,12 +1,12 @@
 "use client";
 
-import Link from "next/link";
+import { Link, useCanEdit } from "@/ui/chrome/workspace-context";
 import { useState, useTransition } from "react";
 import type { SimilarTransaction } from "@/lib/server/matching/matching";
 import { formatDate, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
-import { applyCategoryToTransactions } from "@/app/transactions/[transactionId]/actions/category";
-import { applyMerchantToTransactions } from "@/app/transactions/[transactionId]/actions/merchant";
+import { applyCategoryToTransactions } from "@/app/w/[workspace]/transactions/[transactionId]/actions/category";
+import { applyMerchantToTransactions } from "@/app/w/[workspace]/transactions/[transactionId]/actions/merchant";
 
 /**
  * The list of transactions that look like the one on screen (see
@@ -18,6 +18,12 @@ import { applyMerchantToTransactions } from "@/app/transactions/[transactionId]/
  * ticked. They only appear for a field the source row actually has set, since
  * there is nothing to copy otherwise. After an apply the page revalidates and the
  * rows re-render showing their new values.
+ *
+ * For a `viewer` the table stays and the machinery goes: no checkboxes, no apply
+ * buttons. The list is a genuine read — these are the rows related to the one on
+ * screen, each a link — and it answers "what else looks like this?" for someone
+ * who will never change any of them. Only the selecting and applying is an
+ * enrichment write, so only that is withheld.
  */
 export function SimilarTransactions({
   sourceId,
@@ -32,6 +38,7 @@ export function SimilarTransactions({
 }) {
   const [selected, setSelected] = useState<Set<string>>(() => new Set(items.map((t) => t.id)));
   const [pending, startTransition] = useTransition();
+  const canEdit = useCanEdit();
 
   if (items.length === 0) return null;
 
@@ -64,12 +71,12 @@ export function SimilarTransactions({
             Similar transactions
           </span>
           <span className="tabular-nums">
-            {selectedIds.length} of {items.length} selected
+            {canEdit ? `${selectedIds.length} of ${items.length} selected` : `${items.length}`}
           </span>
         </summary>
 
         <div className="mt-3">
-      {category || merchant ? (
+      {!canEdit ? null : category || merchant ? (
         <div className="mb-3 flex flex-wrap gap-2">
           {category ? (
             <button
@@ -109,14 +116,16 @@ export function SimilarTransactions({
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-current/20 text-left">
-            <th className="py-2 pr-3">
-              <input
-                type="checkbox"
-                aria-label="Select all"
-                checked={selected.size === items.length}
-                onChange={toggleAll}
-              />
-            </th>
+            {canEdit ? (
+              <th className="py-2 pr-3">
+                <input
+                  type="checkbox"
+                  aria-label="Select all"
+                  checked={selected.size === items.length}
+                  onChange={toggleAll}
+                />
+              </th>
+            ) : null}
             <th className="py-2 pr-4 font-medium">Date</th>
             <th className="py-2 pr-4 font-medium">Description</th>
             <th className="py-2 pr-4 font-medium">Category</th>
@@ -126,14 +135,16 @@ export function SimilarTransactions({
         <tbody>
           {items.map((tx) => (
             <tr key={tx.id} className="border-b border-current/10">
-              <td className="py-2 pr-3">
-                <input
-                  type="checkbox"
-                  aria-label={`Select ${tx.description}`}
-                  checked={selected.has(tx.id)}
-                  onChange={() => toggle(tx.id)}
-                />
-              </td>
+              {canEdit ? (
+                <td className="py-2 pr-3">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${tx.description}`}
+                    checked={selected.has(tx.id)}
+                    onChange={() => toggle(tx.id)}
+                  />
+                </td>
+              ) : null}
               <td className="py-2 pr-4 whitespace-nowrap opacity-60">
                 <Link
                   href={`/transactions/${tx.id}`}

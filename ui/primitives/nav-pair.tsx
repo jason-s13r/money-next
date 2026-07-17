@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 
 // One prev/next navigation row: a link on each end that greys out (rather than
 // disappearing) when there is nowhere to go, so the control keeps its shape at the

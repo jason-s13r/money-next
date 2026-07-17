@@ -1,7 +1,7 @@
 import "server-only";
 
 import { connection } from "next/server";
-import { getDb } from "../../db";
+import { getDb } from "../../db/request";
 import {
   FORECAST_EXCLUDED_CATEGORY_IDS,
   isEssential,

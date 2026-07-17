@@ -1,7 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
-import { getDb } from "../db";
+import { getDb } from "../db/request";
 import { accountMoney, moneySum } from "../money";
 
 // Account reads, and the net-worth roll-up across them. Like the rest of the read

@@ -1,8 +1,9 @@
 "use client";
 
 import { useTransition } from "react";
-import { refreshAndSync } from "@/app/actions";
+import { refreshAndSync } from "@/app/w/[workspace]/actions";
 import { formatDateTime } from "@/lib/format";
+import { useCanEdit } from "@/ui/chrome/workspace-context";
 
 type SyncStatusProps = {
   lastSync: { finishedAt: Date | null } | null;
@@ -11,10 +12,15 @@ type SyncStatusProps = {
 
 export function SyncStatus({ lastSync, label = "Synced" }: SyncStatusProps) {
   const [isPending, startTransition] = useTransition();
+  // Triggering a sync is `sync.run`. *When it last ran* is not — it is how a
+  // reader knows whether the numbers in front of them are current, which matters
+  // most to the person who cannot refresh them.
+  const canEdit = useCanEdit();
 
   return (
     <span className="inline-flex items-center gap-2 text-sm text-muted">
       {lastSync?.finishedAt ? `${label} ${formatDateTime(lastSync.finishedAt)}` : "Never synced"}
+      {canEdit ? (
       <button
         type="button"
         onClick={() => startTransition(() => refreshAndSync())}
@@ -37,6 +43,7 @@ export function SyncStatus({ lastSync, label = "Synced" }: SyncStatusProps) {
         </svg>
         {isPending ? "Refreshing…" : "Refresh"}
       </button>
+      ) : null}
     </span>
   );
 }

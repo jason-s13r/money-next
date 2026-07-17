@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { Link } from "@/ui/chrome/workspace-context";
 import { formatMoneyWhole } from "@/lib/format";
 
 // The dashboard's uncategorised-spending callout. Surfacing the count is the

@@ -1,6 +1,6 @@
 import "server-only";
 import { connection } from "next/server";
-import { getDb } from "../../db";
+import { getDb } from "../../db/request";
 import { money, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
 import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";

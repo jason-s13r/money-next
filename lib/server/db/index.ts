@@ -1,28 +1,21 @@
-import { cache } from "react";
-
-import { BOOTSTRAP_WORKSPACE_ID } from "../tenancy";
 import { internalDb } from "./client";
-import { scopedDb } from "./scoped";
 
 export { scopedDb, type ScopedDb } from "./scoped";
 
 /**
- * The workspace-scoped client for the current request.
+ * `getDb()` — the request-scoped client — deliberately does *not* live here. It
+ * is in ./request, because it needs the session and this module must not.
  *
- * Memoised per request with React's `cache`, so resolving the workspace stays a
- * once-per-request job rather than a `ctx` parameter threaded through fifty
- * functions. Every query function opens with `const db = await getDb()` and is
- * otherwise unchanged.
+ * The reason is `scripts/ingest.ts` (and the tests): they import `catalogDb`
+ * and `scopedDb` from here and run in plain Node, outside any request. If this
+ * module reached for the auth layer, the cron would need `server-only` to
+ * resolve and `BETTER_AUTH_SECRET` to be set before it could sync a bank —
+ * which is nonsense, and would also make the import graph circular, since the
+ * auth layer needs `authDb` from here.
  *
- * Phase 2 has no auth, so the workspace is the bootstrap constant. Phase 3
- * replaces the one line below with `const { workspaceId } = await requireSession()`
- * — and because every call site above already goes through a scoped client, that
- * is the whole change. The scoping work is done now, against real data, while
- * there is one tenant and a mistake cannot leak anything.
+ * So: this module is the database, and knows nothing about who is asking.
+ * ./request is the database *for a request*, and is where the two meet.
  */
-export const getDb = cache(async () => {
-  return scopedDb(BOOTSTRAP_WORKSPACE_ID);
-});
 
 /**
  * The unscoped client, for the paths that have no workspace to be scoped to.
@@ -40,3 +33,23 @@ export const getDb = cache(async () => {
  * request or `scopedDb(id)` outside one.
  */
 export const catalogDb = internalDb;
+
+/**
+ * The unscoped client, for the tenancy control plane.
+ *
+ * Better Auth's adapter reads and writes `User`, `Session`, `AuthAccount`,
+ * `Verification`, `TwoFactor` — which have no workspace — and `Workspace`,
+ * `Membership`, `Invite`, which have one but must not be filtered by it. Those
+ * three are `CONTROL_PLANE_MODELS` for the reason spelled out there: they decide
+ * who may enter a workspace, so the code reading them legitimately spans
+ * workspaces. Redeeming an invite writes a membership for a workspace you are,
+ * by definition, not yet in.
+ *
+ * Same client as `catalogDb`, under a second name that says why — the two uses
+ * are unrelated and conflating them would make the next reader think the auth
+ * tables were a shared catalog.
+ *
+ * This is not a general-purpose escape hatch. It is for `lib/server/auth/` and
+ * the bootstrap script. Financial data goes through `getDb()` or `scopedDb(id)`.
+ */
+export const authDb = internalDb;
