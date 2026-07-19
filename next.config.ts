@@ -1,6 +1,13 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  // Traced, minimal server output for the container image (see Dockerfile). This
+  // copies only the server plus the node_modules actually reached — but NOT
+  // `public/` or `.next/static`, which the Dockerfile copies in by hand. The
+  // `@gorules/zen-engine` `.node` binary below is traced rather than bundled, so
+  // it must survive into `.next/standalone`; the Docker build verifies it does.
+  output: "standalone",
+
   // `@gorules/zen-engine` is a native (napi-rs) addon: it must be loaded with
   // Node's own `require`, not bundled into the Server Components graph, or the
   // `.node` binary can't be resolved at runtime. Since better-sqlite3 was

@@ -15,8 +15,11 @@
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
+    "db:roles": "tsx --env-file-if-exists=.env scripts/db-roles.ts",
+    "db:setup": "prisma migrate deploy && tsx --env-file-if-exists=.env scripts/db-roles.ts",
     "db:studio": "prisma studio",
     "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts",
+    "db:worker": "tsx --env-file-if-exists=.env scripts/worker.ts",
     "user:create": "tsx --env-file-if-exists=.env scripts/create-user.ts"
   },
   "engines": {

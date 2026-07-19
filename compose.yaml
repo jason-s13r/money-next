@@ -1,7 +1,9 @@
 # Development Postgres.
 #
-# This is the dev database only — the app itself is not containerised yet (that
-# lands with the self-host story, and adds `app` and `cron` services here).
+# This is the dev database only. The full self-host stack — app, a one-shot
+# migrate, postgres and cron, with NO published database port — lives in
+# compose.prod.yaml, not here: mixing the two topologies in one file would mean
+# `pnpm db:up` building the app image just to start a dev database.
 #
 # The port is bound to 127.0.0.1 deliberately, NOT the compose default of
 # 0.0.0.0: `next dev` runs on the host and has to reach the database, but a

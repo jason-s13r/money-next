@@ -2,7 +2,7 @@ import type {
   Account as AkahuAccount,
   PendingTransaction as AkahuPendingTransaction,
 } from "akahu";
-import type { ScopedDb } from "../db";
+import { scopedBatch, type ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
 
 /** Pending rows are enriched only with `meta` (no merchant/category). */
@@ -71,7 +71,7 @@ export async function syncPendingTransactions(
     // rows, and a single-workspace test would never show it. The scoped client
     // narrows it to this workspace; the replace semantics, which are right for
     // this data, are unchanged.
-    await db.$transaction([
+    await scopedBatch(db, [
       db.pendingTransaction.deleteMany({}),
       ...(rows.length > 0 ? [db.pendingTransaction.createMany({ data: rows })] : []),
     ]);

@@ -1,6 +1,6 @@
 import { internalDb } from "./client";
 
-export { scopedDb, type ScopedDb } from "./scoped";
+export { scopedDb, scopedBatch, withScopedTx, type ScopedDb, type ScopedTx } from "./scoped";
 
 /**
  * `getDb()` — the request-scoped client — deliberately does *not* live here. It

@@ -1,5 +1,12 @@
-// Formatting is done on the server, so it uses the server's timezone. That's
-// correct for a single-user dashboard running on the same machine as its owner.
+// Dates are stored as absolute instants (Timestamptz), so *displaying* one means
+// choosing a timezone to resolve it into a calendar day. This used to lean on the
+// server's default TZ, which was fine when the server was the owner's own machine
+// — but under the self-host container that default is UTC, and an NZ-midnight
+// transaction then renders as the previous day (in the tx header and the transfer
+// candidate list alike). So pin the display zone here, the same Pacific/Auckland
+// the period bucketing (lib/periods.ts) and spend metrics already fix on. A
+// genuinely multi-region deployment would carry this per-workspace instead.
+const DISPLAY_TIMEZONE = "Pacific/Auckland";
 
 // The app's one default/display currency, the single literal every other module
 // derives its NZD from: `format.ts` is safe for client and server alike (unlike
@@ -51,7 +58,10 @@ export function formatMonthShort(key: string) {
 }
 
 export function formatDate(date: Date) {
-  return new Intl.DateTimeFormat("en-NZ", { dateStyle: "medium" }).format(date);
+  return new Intl.DateTimeFormat("en-NZ", {
+    dateStyle: "medium",
+    timeZone: DISPLAY_TIMEZONE,
+  }).format(date);
 }
 
 export function formatDateTime(date: Date | null) {
@@ -59,5 +69,6 @@ export function formatDateTime(date: Date | null) {
   return new Intl.DateTimeFormat("en-NZ", {
     dateStyle: "medium",
     timeStyle: "short",
+    timeZone: DISPLAY_TIMEZONE,
   }).format(date);
 }

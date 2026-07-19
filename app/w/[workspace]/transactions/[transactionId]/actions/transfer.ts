@@ -1,10 +1,10 @@
 "use server";
 
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
-import type { Prisma } from "@/lib/generated/prisma/client";
 import { recordUserChanges } from "@/lib/server/changes";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
+import { withScopedTx } from "@/lib/server/db";
 import { money } from "@/lib/server/money";
 import { linkTransferLegs } from "@/lib/server/matching/transfers";
 
@@ -120,18 +120,16 @@ export async function unlinkTransfer(transactionId: string) {
     select: { id: true, description: true },
   });
 
-  const writes: Prisma.PrismaPromise<unknown>[] = [
-    db.transaction.update({ where: { id: transactionId }, data: { transferGroupId: null } }),
-  ];
   // A one-leg "transfer" is meaningless: release the straggler and drop the group.
   const releasesOthers = others.length <= 1;
-  if (releasesOthers) {
-    writes.push(
-      db.transaction.updateMany({ where: { transferGroupId: groupId }, data: { transferGroupId: null } }),
-      db.transferGroup.delete({ where: { id: groupId } }),
-    );
-  }
-  await db.$transaction(writes);
+  // One atomic transaction with the RLS variable set once (see withScopedTx).
+  await withScopedTx(db, async (tx) => {
+    await tx.transaction.update({ where: { id: transactionId }, data: { transferGroupId: null } });
+    if (releasesOthers) {
+      await tx.transaction.updateMany({ where: { transferGroupId: groupId }, data: { transferGroupId: null } });
+      await tx.transferGroup.delete({ where: { id: groupId } });
+    }
+  });
 
   // The unlinked leg, plus any straggler this released — a leg that falls out of
   // a transfer because the group collapsed did have its field changed, even

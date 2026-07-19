@@ -1,0 +1,120 @@
+# Production / self-host stack: app + postgres + a one-shot migrate + a cron sync.
+#
+# Unlike compose.yaml (dev Postgres only, published to 127.0.0.1 so `next dev` on
+# the host can reach it), here EVERYTHING runs in containers and Postgres
+# publishes NO host port — it is reachable only on the internal compose network.
+# Only `app` is exposed to the host.
+#
+#   docker compose -f compose.prod.yaml up -d --build
+#
+# Compose interpolates ${...} below from `.env` in this directory (the same file
+# `app` and `cron` load at runtime via env_file). DATABASE_URL is set per-service
+# to the internal `postgres` host, overriding whatever `.env` holds for dev.
+#
+# Each service connects as a different Postgres role (phase 6, RLS): `migrate` as
+# the owner (`POSTGRES_USER`, the only role that runs DDL and grants), `app` as
+# the least-privileged non-owner `money_app`, `cron` as `money_sync`. RLS is only
+# real because the runtime roles are non-owners it applies to. The migrate step
+# creates those roles and — via `db:setup` — sets their passwords from
+# APP_DB_PASSWORD / SYNC_DB_PASSWORD.
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-money}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-money}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # Check as the real user against the real database — pg_isready alone
+      # returns true before first-boot init finishes, and migrate can race it.
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-money} -d ${POSTGRES_DB:-money}"]
+      interval: 2s
+      timeout: 5s
+      retries: 15
+      start_period: 10s
+
+  # One-shot: apply migrations and set up the runtime roles, then exit. Runs on
+  # the build-stage tooling image because the minimal app image ships no Prisma
+  # CLI. `app` waits on this finishing successfully, so the schema is current and
+  # money_app/money_sync can log in before the app boots. `db:setup` is
+  # `migrate deploy` followed by `db:roles`, which sets the two roles' passwords.
+  migrate:
+    build:
+      context: .
+      target: build
+    command: ["pnpm", "db:setup"]
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-money}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-money}?schema=public
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}
+      SYNC_DB_PASSWORD: ${SYNC_DB_PASSWORD:?set SYNC_DB_PASSWORD in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  app:
+    build:
+      context: .
+      target: runner
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Override the dev DATABASE_URL from .env: inside compose the database is
+      # `postgres`, not 127.0.0.1, and the app connects as the least-privileged
+      # `money_app` role (RLS applies to it). Set BETTER_AUTH_URL in .env to the
+      # real origin.
+      DATABASE_URL: postgresql://money_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-money}?schema=public
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  # Same tooling image as migrate. `scripts/ingest.ts` (pnpm db:sync) needs tsx
+  # and the TS source, which the app image doesn't carry — so the incremental
+  # sync runs here, on a plain sleep loop. It enumerates workspaces and syncs each
+  # ACTIVE bank link through a workspace-scoped client, connecting as `money_sync`.
+  cron:
+    build:
+      context: .
+      target: build
+    command: ["sh", "-c", "while true; do pnpm db:sync || echo 'sync failed'; sleep \"${SYNC_INTERVAL_SECONDS:-21600}\"; done"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://money_sync:${SYNC_DB_PASSWORD:?set SYNC_DB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-money}?schema=public
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+  # The queue drainer (phase 7). Same tooling image and same `money_sync` identity
+  # as `cron`, but event-driven rather than time-driven: it short-polls for the
+  # `SyncRun` rows the web app enqueues (the /sync and nav sync buttons) and runs
+  # the Akahu fetch + ingest the web role no longer performs itself. Splitting it
+  # from `cron` keeps each loop to one job — `cron` is the scheduled sync, `worker`
+  # is the on-demand one — and the poll interval (WORKER_POLL_SECONDS, default 5s)
+  # independent of the 6-hourly cron cadence.
+  worker:
+    build:
+      context: .
+      target: build
+    command: ["pnpm", "db:worker"]
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://money_sync:${SYNC_DB_PASSWORD:?set SYNC_DB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-money}?schema=public
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:

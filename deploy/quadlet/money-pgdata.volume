@@ -1,0 +1,3 @@
+# Postgres data. Survives uninstall unless you pass --volume.
+[Unit]
+Description=money Postgres data volume

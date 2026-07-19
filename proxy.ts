@@ -86,6 +86,10 @@ const PUBLIC_PATHS = ["/login", "/enrol-mfa", "/invite"];
  */
 function csp(nonce: string) {
   const dev = process.env.NODE_ENV === "development";
+  // Set INSECURE_HTTP=1 for a plain-http deployment (e.g. on a trusted LAN with
+  // no TLS). It drops `upgrade-insecure-requests` below, which would otherwise
+  // rewrite every subresource to https:// and fail against an http-only origin.
+  const insecureHttp = process.env.INSECURE_HTTP === "1";
 
   return [
     "default-src 'self'",
@@ -103,9 +107,10 @@ function csp(nonce: string) {
     "base-uri 'self'",
     "form-action 'self'",
     "frame-ancestors 'none'",
-    // Only in production: dev is served over plain http on localhost, and
-    // upgrading those requests to https breaks it.
-    ...(dev ? [] : ["upgrade-insecure-requests"]),
+    // Only in production, and only over https: dev is served over plain http on
+    // localhost, and a LAN deployment may be too (INSECURE_HTTP=1). In either
+    // case upgrading subresource requests to https breaks them.
+    ...(dev || insecureHttp ? [] : ["upgrade-insecure-requests"]),
   ].join("; ");
 }
 

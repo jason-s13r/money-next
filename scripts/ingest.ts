@@ -13,7 +13,7 @@
  * gets its own SyncRun, so a failure is attributable to a connection rather than
  * to "the sync".
  */
-import { catalogDb } from "../lib/server/db";
+import { catalogDb, scopedDb } from "../lib/server/db";
 import { runSync, type SyncArgs } from "../lib/server/ingest/sync";
 
 function parseArgs(argv: string[]): SyncArgs {
@@ -29,51 +29,64 @@ function parseArgs(argv: string[]): SyncArgs {
 async function main() {
   const args = parseArgs(process.argv.slice(2));
 
-  // Deciding *which* workspaces to sync is the one job here that legitimately
-  // spans them, so it is the one query with no workspace to be scoped to.
-  const links = await catalogDb.bankLink.findMany({
-    where: { status: "ACTIVE" },
-    select: { id: true, name: true, workspaceId: true },
+  // *Which* workspaces exist is the one question here that legitimately spans
+  // tenants, and it is control-plane data — Workspace is unscoped, so this read
+  // is the one with no workspace to scope to. Everything below runs through a
+  // client scoped to a single workspace, which under RLS (phase 6) is also what
+  // lets the sync role touch these rows at all: an unscoped read of BankLink or
+  // write of SyncRun now matches or permits nothing. The prior version read
+  // BankLink and wrote SyncRun through the unscoped catalog client; RLS forces
+  // the per-workspace loop the design always intended.
+  const workspaces = await catalogDb.workspace.findMany({
+    select: { id: true },
     orderBy: { createdAt: "asc" },
   });
 
-  if (links.length === 0) {
-    console.log("no active bank links — nothing to sync");
-    return;
-  }
-
   let failures = 0;
+  let synced = 0;
 
-  for (const link of links) {
-    if (links.length > 1) console.log(`\n=== ${link.name} (${link.workspaceId}) ===`);
-
-    const run = await catalogDb.syncRun.create({
-      data: { workspaceId: link.workspaceId, bankLinkId: link.id },
+  for (const { id: workspaceId } of workspaces) {
+    const db = scopedDb(workspaceId);
+    const links = await db.bankLink.findMany({
+      where: { status: "ACTIVE" },
+      select: { id: true, name: true, workspaceId: true },
+      orderBy: { createdAt: "asc" },
     });
 
-    try {
-      const counts = await runSync(link, args);
-      await catalogDb.syncRun.update({
-        where: { id: run.id },
-        data: { status: "success", finishedAt: new Date(), ...counts },
+    for (const link of links) {
+      synced++;
+      console.log(`\n=== ${link.name} (${link.workspaceId}) ===`);
+
+      const run = await db.syncRun.create({
+        data: { workspaceId: link.workspaceId, bankLinkId: link.id },
       });
-      console.log(`done (sync run #${run.id})`);
-    } catch (error) {
-      // Record the failure before moving on, otherwise a cron-driven sync that
-      // keeps dying leaves no trace anywhere. One link failing must not stop the
-      // rest: they are different people's money.
-      failures++;
-      await catalogDb.syncRun.update({
-        where: { id: run.id },
-        data: {
-          status: "failed",
-          finishedAt: new Date(),
-          error: error instanceof Error ? error.message : String(error),
-        },
-      });
-      console.error(`sync run #${run.id} failed:`, error);
+
+      try {
+        const counts = await runSync(link, args);
+        await db.syncRun.update({
+          where: { id: run.id },
+          data: { status: "success", finishedAt: new Date(), ...counts },
+        });
+        console.log(`done (sync run #${run.id})`);
+      } catch (error) {
+        // Record the failure before moving on, otherwise a cron-driven sync that
+        // keeps dying leaves no trace anywhere. One link failing must not stop the
+        // rest: they are different people's money.
+        failures++;
+        await db.syncRun.update({
+          where: { id: run.id },
+          data: {
+            status: "failed",
+            finishedAt: new Date(),
+            error: error instanceof Error ? error.message : String(error),
+          },
+        });
+        console.error(`sync run #${run.id} failed:`, error);
+      }
     }
   }
+
+  if (synced === 0) console.log("no active bank links — nothing to sync");
 
   await catalogDb.$disconnect();
   if (failures > 0) process.exit(1);

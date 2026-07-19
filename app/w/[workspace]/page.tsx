@@ -14,6 +14,7 @@ import { CurrencyBreakdown } from "@/ui/dashboard/currency-breakdown";
 import { ReviewBanner } from "@/ui/dashboard/review-banner";
 import { BalanceChart } from "@/ui/dashboard/balance-chart";
 import { Hero } from "@/ui/primitives/stat-tile";
+import { Link } from "@/ui/chrome/workspace-context";
 
 export const metadata = { title: "Financial health" };
 
@@ -104,9 +105,9 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
       <section>
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-3">
           <PeriodSelector period={period} href="/" />
-          <a href={`/breakdown?period=${period}`} className="text-sm text-secondary hover:text-foreground">
+          <Link href={base} className="text-sm text-secondary hover:text-foreground">
             Full breakdown →
-          </a>
+          </Link>
         </div>
         <ComparisonCards comparison={comparison} earlierHref={earlierHref} moreRecentHref={moreRecentHref} />
       </section>

@@ -1,0 +1,16 @@
+# The whole stack shares ONE network namespace via this pod, so members reach
+# each other on 127.0.0.1 and no user-defined network is needed. Only the pod
+# publishes a host port (the app); Postgres stays private on loopback.
+#
+# PublishPort is set on the POD, not on any container — a pod owns the network
+# namespace, so individual members cannot publish ports. install.sh rewrites the
+# host side from APP_PORT.
+[Unit]
+Description=money pod (shared network namespace)
+
+[Pod]
+PodName=money
+PublishPort=3000:3000
+
+[Install]
+WantedBy=default.target

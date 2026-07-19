@@ -1,0 +1,21 @@
+# Scheduled full sync loop. Connects as the money_sync role. SYNC_INTERVAL_SECONDS
+# comes from money.env (default 6h); it IS expanded here because the shell in the
+# container evaluates ${...}, not systemd.
+[Unit]
+Description=money scheduled sync
+Requires=money-migrate.service
+After=money-migrate.service money-postgres.service
+
+[Container]
+ContainerName=money-cron
+Image=localhost/money-tooling:latest
+Pod=money.pod
+EnvironmentFile=%h/.config/money/money.env
+EnvironmentFile=%h/.config/money/db-sync.env
+Exec=sh -c "while true; do pnpm db:sync || echo 'sync failed'; sleep ${SYNC_INTERVAL_SECONDS:-21600}; done"
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

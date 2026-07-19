@@ -1,0 +1,19 @@
+# Drains the on-demand sync queue. Connects as the money_sync role.
+[Unit]
+Description=money sync worker
+Requires=money-migrate.service
+After=money-migrate.service money-postgres.service
+
+[Container]
+ContainerName=money-worker
+Image=localhost/money-tooling:latest
+Pod=money.pod
+EnvironmentFile=%h/.config/money/money.env
+EnvironmentFile=%h/.config/money/db-sync.env
+Exec=pnpm db:worker
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

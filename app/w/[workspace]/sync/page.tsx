@@ -3,6 +3,7 @@ import { formatDateTime } from "@/lib/format";
 import { StatList } from "@/ui/primitives/stat-list";
 import { Pagination, paginate, parsePage } from "@/ui/primitives/pagination";
 import { FullSyncButton } from "./full-sync-button";
+import { SyncAutoRefresh } from "./auto-refresh";
 
 export const metadata = { title: "Sync history" };
 
@@ -18,10 +19,14 @@ export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/s
 
   const succeeded = items.filter((r) => r.status === "success").length;
   const failed = items.filter((r) => r.status === "failed").length;
-  const running = items.filter((r) => r.status === "running").length;
+  // Queued (waiting for the worker) and running (claimed by it) are both "in
+  // flight" — count them together, and let that also drive the auto-refresh: while
+  // anything is pending the page pulls the result the worker lands out-of-band.
+  const inFlight = items.filter((r) => r.status === "queued" || r.status === "running").length;
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
+      <SyncAutoRefresh active={inFlight > 0} />
       <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold">Sync history</h1>
@@ -31,7 +36,7 @@ export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/s
               { label: "Total runs", value: total.toLocaleString("en-NZ") },
               { label: "Succeeded", value: succeeded.toLocaleString("en-NZ") },
               { label: "Failed", value: failed.toLocaleString("en-NZ") },
-              { label: "Running", value: running.toLocaleString("en-NZ") },
+              { label: "In flight", value: inFlight.toLocaleString("en-NZ") },
             ]}
           />
         </div>
@@ -97,7 +102,10 @@ function SyncStatusBadge({ status }: { status: string }) {
       ? "text-status-good"
       : status === "failed"
         ? "text-status-critical"
-        : "opacity-60";
+        : status === "running"
+          ? "opacity-60"
+          : // queued: waiting for the worker
+            "opacity-50 italic";
   return <span className={`font-medium ${classes}`}>{status}</span>;
 }
 

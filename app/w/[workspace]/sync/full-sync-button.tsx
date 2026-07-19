@@ -35,7 +35,7 @@ export function FullSyncButton() {
             clipRule="evenodd"
           />
         </svg>
-        {isPending ? "Syncing…" : "Full sync"}
+        {isPending ? "Queuing…" : "Full sync"}
       </button>
     </form>
   );

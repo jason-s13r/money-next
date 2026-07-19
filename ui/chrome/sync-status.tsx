@@ -41,7 +41,7 @@ export function SyncStatus({ lastSync, label = "Synced" }: SyncStatusProps) {
             clipRule="evenodd"
           />
         </svg>
-        {isPending ? "Refreshing…" : "Refresh"}
+        {isPending ? "Queuing…" : "Refresh"}
       </button>
       ) : null}
     </span>

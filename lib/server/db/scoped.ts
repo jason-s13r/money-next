@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+
+import type { Prisma } from "../../generated/prisma/client";
 import { internalDb } from "./client";
 
 /**
@@ -62,6 +65,25 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
  * or in `TENANT_MODELS`, and cannot be quietly forgotten into being unscoped.
  */
 export const CONTROL_PLANE_MODELS: ReadonlySet<string> = new Set(["Membership", "Invite"]);
+
+/**
+ * Set within a `withScopedTx` callback so the per-operation extension knows the
+ * RLS session variable is already set for the enclosing transaction and must not
+ * open its own — see the note at the query wrapper below. An `AsyncLocalStorage`
+ * rather than a flag on the client because the signal has to follow the async
+ * call tree of the callback, not the client instance (which is shared).
+ */
+const inScopedTx = new AsyncLocalStorage<boolean>();
+
+/**
+ * Set the Postgres GUC the RLS policies read, transaction-locally. Runs on the
+ * unscoped client so it composes into the same `$transaction` batch as the query
+ * — that is what puts both statements on one connection so the variable actually
+ * governs the query. `$executeRaw`'s tagged template parameterises the id.
+ */
+function setWorkspaceVar(workspaceId: string) {
+  return internalDb.$executeRaw`SELECT set_config('app.workspace_id', ${workspaceId}, true)`;
+}
 
 /** Operations whose `data` is a row (or rows) about to be written. */
 const CREATE_OPS: ReadonlySet<string> = new Set([
@@ -159,35 +181,52 @@ export function scopedDb(workspaceId: string) {
           }
 
           const a = args as Record<string, unknown>;
-          // `args` is typed per model and per operation, but this runs for all
-          // of them at once, so the rewritten args are handed back through a
-          // cast. The shapes are checked at every call site by the generated
+
+          // Rewrite the args with the tenancy filter (the app-level scope, still
+          // the primary mechanism). `next` is handed back through a cast: `args`
+          // is typed per model and per operation, but this runs for all of them
+          // at once. The shapes are checked at every call site by the generated
           // types; what is lost here is only the ability to name that shape.
-          const run = (next: Record<string, unknown>) =>
-            query(next as typeof args);
-
+          let next: Record<string, unknown>;
           if (CREATE_OPS.has(operation)) {
-            return run({ ...a, data: stampFor(model, workspaceId, a.data) });
-          }
-
-          if (operation === "upsert") {
-            return run({
+            next = { ...a, data: stampFor(model, workspaceId, a.data) };
+          } else if (operation === "upsert") {
+            next = {
               ...a,
               where: scopeWhere(model, workspaceId, a.where),
               create: stampFor(model, workspaceId, a.create),
-            });
+            };
+          } else {
+            // Everything else takes a `where`: the finds, count, aggregate,
+            // groupBy, update(Many), delete(Many).
+            //
+            // `findUnique`/`findFirst` need no special handling despite the plan
+            // expecting to rewrite them: Prisma 7 accepts a non-unique field
+            // alongside the unique one in `findUnique`'s where and filters on it,
+            // verified against the real database. So the IDOR case —
+            // `findUnique({ where: { id } })` handing over another workspace's
+            // transaction — is closed by the same injection as everything else.
+            next = { ...a, where: scopeWhere(model, workspaceId, a.where) };
           }
 
-          // Everything else takes a `where`: the finds, count, aggregate,
-          // groupBy, update(Many), delete(Many).
+          const run = () => query(next as typeof args);
+
+          // Then set the Postgres session variable the RLS policies read (phase
+          // 6, the backstop beneath the filter above). This model is RLS-guarded,
+          // so the query must run in a transaction that first sets
+          // `app.workspace_id` — set_config(..., true) is transaction-local, so a
+          // pooled connection never carries one request's scope into the next.
           //
-          // `findUnique`/`findFirst` need no special handling despite the plan
-          // expecting to rewrite them: Prisma 7 accepts a non-unique field
-          // alongside the unique one in `findUnique`'s where and filters on it,
-          // verified against the real database. So the IDOR case —
-          // `findUnique({ where: { id } })` handing over another workspace's
-          // transaction — is closed by the same injection as everything else.
-          return run({ ...a, where: scopeWhere(model, workspaceId, a.where) });
+          // Inside a `withScopedTx`, the variable is already set for the whole
+          // transaction: skip the per-op wrapper, both to avoid the cost and
+          // because nesting a transaction inside the interactive one would break
+          // its atomicity (a batch write splitting into separate transactions).
+          if (inScopedTx.getStore()) return run();
+          const [, result] = await internalDb.$transaction([
+            setWorkspaceVar(workspaceId),
+            run(),
+          ]);
+          return result;
         },
       },
     },
@@ -234,3 +273,56 @@ function stampFor(model: string, workspaceId: string, data: unknown) {
 }
 
 export type ScopedDb = ReturnType<typeof scopedDb>;
+
+/**
+ * The client handed to a `withScopedTx` callback: a scoped client bound to the
+ * open transaction. `$transaction` is removed because opening a nested one is a
+ * footgun the type should forbid — the whole point of the helper is that there
+ * is exactly one transaction, with the RLS variable set once at its start.
+ */
+export type ScopedTx = Omit<ScopedDb, "$transaction">;
+
+/**
+ * Run several scoped writes as one atomic transaction, with the RLS session
+ * variable set once for the whole of it.
+ *
+ * This exists because the per-operation wrapper above (which sets the variable
+ * in its own tiny transaction) is correct for single queries but wrong for a
+ * group that must be all-or-nothing: wrapping each member separately splits the
+ * group into independent transactions and loses atomicity.
+ *
+ * Use this form when the writes are interleaved with reads or branching logic —
+ * `linkTransferLegs`, the transfer-unlink action. It opens one interactive
+ * transaction, sets `app.workspace_id` on that connection, marks the async
+ * context so the per-operation wrapper stands down, and runs the callback against
+ * the transaction client. For a ready array of independent writes with no logic
+ * between them, `scopedBatch` pipelines in a single round trip.
+ */
+export function withScopedTx<T>(db: ScopedDb, fn: (tx: ScopedTx) => Promise<T>): Promise<T> {
+  return db.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT set_config('app.workspace_id', ${db.$workspaceId}, true)`;
+    return inScopedTx.run(true, () => fn(tx as unknown as ScopedTx));
+  });
+}
+
+/**
+ * Run a ready array of scoped writes as one atomic, pipelined transaction with
+ * the RLS variable set once at its head.
+ *
+ * The batch counterpart to `withScopedTx`, for the ingest steps that build a page
+ * of upserts up front and commit them together (`syncTransactions`,
+ * `syncPendingTransactions`). The ops are built from the scoped client as before;
+ * this prepends the `set_config` as the batch's first statement and runs the whole
+ * batch inside the `inScopedTx` context, so the per-operation wrapper stands down
+ * and every op executes on the one connection where the variable is set. That the
+ * async context reaches Prisma's internal batch execution — so the wrapper does
+ * not nest a transaction inside the batch — is verified against the database.
+ */
+export function scopedBatch(db: ScopedDb, ops: Prisma.PrismaPromise<unknown>[]) {
+  return inScopedTx.run(true, () =>
+    db.$transaction([
+      db.$executeRaw`SELECT set_config('app.workspace_id', ${db.$workspaceId}, true)`,
+      ...ops,
+    ]),
+  );
+}

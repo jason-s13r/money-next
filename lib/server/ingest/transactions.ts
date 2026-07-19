@@ -1,13 +1,13 @@
 import type { Account as AkahuAccount, Transaction as AkahuTransaction } from "akahu";
 import { changeRows, type FieldChangeEntry } from "../changes";
-import type { ScopedDb } from "../db";
+import { scopedBatch, type ScopedDb } from "../db";
 import { reconcileConflict } from "./conflicts";
 import type { Prisma } from "../../generated/prisma/client";
 import { OTHER_INCOME_GROUP } from "./nzfcc";
 import { DAY_MS, type SyncArgs } from "./shared";
 
 /** First run has no high-water mark, so pull this much history. */
-const DEFAULT_LOOKBACK_DAYS = 10 * 365;
+const DEFAULT_LOOKBACK_DAYS = 2 * 365;
 
 /**
  * On an incremental sync, rewind slightly past the newest transaction we hold.
@@ -282,7 +282,7 @@ export async function syncTransactions(
     // The log rows belong *in* this transaction rather than after it: a log that
     // records a change the crash rolled back is worse than no log, because it is
     // the thing you would consult to find out what happened.
-    await db.$transaction([
+    await scopedBatch(db, [
       ...[...categoryGroups].map(([id, name]) =>
         db.categoryGroup.upsert({ where: { id }, create: { id, name }, update: { name } }),
       ),

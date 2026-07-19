@@ -1,0 +1,21 @@
+# Postgres 17. Joins the pod, so it listens on the pod's loopback only — no
+# published port. Notify=healthy holds the unit "not ready" until pg_isready
+# passes, so migrate (which After=s it) doesn't race initdb on a fresh volume.
+[Unit]
+Description=money Postgres
+
+[Container]
+ContainerName=money-postgres
+Image=docker.io/library/postgres:17-bookworm
+Pod=money.pod
+Volume=money-pgdata.volume:/var/lib/postgresql/data
+EnvironmentFile=%h/.config/money/money.env
+HealthCmd=pg_isready -U money -d money
+Notify=healthy
+
+[Service]
+Restart=always
+TimeoutStartSec=120
+
+[Install]
+WantedBy=default.target

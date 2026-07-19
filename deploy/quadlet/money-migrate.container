@@ -1,0 +1,22 @@
+# One-shot: run migrations and (re)set the RLS role passwords, then exit.
+# Connects as the owner role. RemainAfterExit keeps it "active" so the app's
+# Requires= is satisfied without re-running on every app restart.
+[Unit]
+Description=money migrate (db:setup)
+Requires=money-postgres.service
+After=money-postgres.service
+
+[Container]
+ContainerName=money-migrate
+Image=localhost/money-tooling:latest
+Pod=money.pod
+EnvironmentFile=%h/.config/money/money.env
+EnvironmentFile=%h/.config/money/db-owner.env
+Exec=pnpm db:setup
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target

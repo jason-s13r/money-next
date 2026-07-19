@@ -13,7 +13,7 @@
  *
  * So these are no longer "where the workspace comes from" — nothing routes
  * through them any more. They are the name of the default workspace, and they
- * stop being needed at all when phase 7 gives every workspace its own bank
+ * stop being needed at all when Akahu OAuth gives every workspace its own bank
  * connection and no workspace is default.
  *
  * These ids are inserted by the `tenancy_models` migration as fixed literals

@@ -1,0 +1,19 @@
+# Next.js standalone server. Connects as the least-privileged money_app role.
+# The host port lives on money.pod (PublishPort), not here.
+[Unit]
+Description=money app
+Requires=money-migrate.service
+After=money-migrate.service money-postgres.service
+
+[Container]
+ContainerName=money-app
+Image=localhost/money-app:latest
+Pod=money.pod
+EnvironmentFile=%h/.config/money/money.env
+EnvironmentFile=%h/.config/money/db-app.env
+
+[Service]
+Restart=always
+
+[Install]
+WantedBy=default.target

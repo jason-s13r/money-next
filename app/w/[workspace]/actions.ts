@@ -2,13 +2,11 @@
 
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { requireRole } from "@/lib/server/auth/session";
-import { akahuClient, akahuUserToken } from "@/lib/server/akahu";
-import { runSync, type SyncCounts, type SyncLink } from "@/lib/server/ingest/sync";
 import { type ScopedDb } from "@/lib/server/db";
 import { getDb } from "@/lib/server/db/request";
 
 /**
- * The bank link these actions sync.
+ * The bank link a queued sync will run against.
  *
  * Read through the scoped client, so it can only ever be *this* workspace's
  * link — the sync triggers can't be pointed at somebody else's connection by
@@ -29,89 +27,71 @@ async function syncLink(db: ScopedDb) {
 }
 
 /**
- * Bracket a sync with the `SyncRun` row that records it: open before the first
- * Akahu call, close on the way out whether it succeeded or threw.
+ * Enqueue a sync rather than run it (phase 7).
  *
- * Shared by both actions because both need identical bookkeeping, and one of
- * them was previously missing it entirely — `refreshAndSync` ran the whole
- * ingest and recorded nothing, so the staleness marker in the nav never moved
- * when you pressed the sync button sitting next to it, and the run never
- * reached `/sync`. A failure is recorded and re-thrown: the caller still needs
- * to fail, but the reason belongs in the log rather than only in a stack trace
- * nobody kept.
+ * The web role (`money_app`) used to run the whole ingest in-request — Akahu
+ * fetch and all — which forced it to hold write access to the shared catalogs
+ * (`Category`, `CategoryGroup`, `FxRate`, `Connection`) and the Akahu rate limit,
+ * both shared across every workspace. Now the button writes a `SyncRun` in the
+ * `queued` state — a *tenant* INSERT `money_app` already holds — and the
+ * `money_sync` worker (scripts/worker.ts) picks it up, does the Akahu refresh and
+ * the catalog mirroring, and finalises the row. So a compromise of the web role
+ * can neither rewrite the catalogs nor spend the Akahu limit.
+ *
+ * Coalesced: a run already waiting to be claimed is reused rather than stacked, so
+ * mashing the button doesn't pile up identical jobs. A queued incremental is
+ * upgraded to a full sync if `full` asks for one — the stronger request wins.
  */
-async function recordRun(db: ScopedDb, run: (link: SyncLink) => Promise<SyncCounts>) {
+async function enqueueSync(db: ScopedDb, { full }: { full: boolean }) {
   const link = await syncLink(db);
-  const row = await db.syncRun.create({
-    data: { workspaceId: db.$workspaceId, bankLinkId: link.id },
-  });
 
-  try {
-    const counts = await run(link);
-    await db.syncRun.update({
-      where: { id: row.id },
-      data: { status: "success", finishedAt: new Date(), ...counts },
-    });
-  } catch (error) {
-    await db.syncRun.update({
-      where: { id: row.id },
-      data: {
-        status: "failed",
-        finishedAt: new Date(),
-        error: error instanceof Error ? error.message : String(error),
-      },
-    });
-    throw error;
+  const waiting = await db.syncRun.findFirst({
+    where: { status: "queued" },
+    orderBy: { startedAt: "asc" },
+  });
+  if (waiting) {
+    if (full && !waiting.full) {
+      await db.syncRun.update({ where: { id: waiting.id }, data: { full: true } });
+    }
+    return;
   }
+
+  await db.syncRun.create({
+    data: { workspaceId: db.$workspaceId, bankLinkId: link.id, status: "queued", full },
+  });
 }
 
 /**
- * Ask Akahu to refresh all connected accounts, then run a local incremental sync.
+ * Queue an incremental sync: an Akahu refresh followed by a sync from the stored
+ * high-water mark. The manual counterpart to the cron-driven `pnpm db:sync`.
  *
- * This is the manual counterpart to the cron-driven `pnpm db:sync`. It is safe
- * to call repeatedly: Akahu's refresh is idempotent for a given connection, and
- * the ingest upserts every row on its Akahu id.
+ * Returns as soon as the job is queued — the worker does the actual fetch, which
+ * can take several seconds, so the button is no longer blocked on it. `/sync`
+ * shows the run move queued → running → success, and refreshes itself while one is
+ * in flight.
  */
 export async function refreshAndSync() {
   // Until this line existed, this was an unauthenticated POST endpoint wired to
-  // a button in the nav: anyone who could reach the port could spend the
-  // instance's Akahu rate limit in a loop (T3).
+  // a button in the nav: anyone who could reach the port could queue syncs in a
+  // loop (T3). The Akahu spend now belongs to the worker, but the enqueue is still
+  // a state change that must carry `sync.run`.
   await requireRole({ sync: ["run"] });
 
   const db = await getDb();
+  await enqueueSync(db, { full: false });
 
-  await recordRun(db, async (link) => {
-    const akahu = akahuClient();
-    await akahu.accounts.refreshAll(akahuUserToken());
-    return runSync(link, { full: false });
-  });
-
-  await revalidateWorkspacePath("/");
-  await revalidateWorkspacePath("/accounts");
   await revalidateWorkspacePath("/sync");
 }
 
 /**
- * Run a full historical sync and record it as a `SyncRun`, just like the cron
- * script does. This can take a while, so it is offered as an explicit action
- * rather than running on every page load.
+ * Queue a full historical sync — re-fetches the whole history window rather than
+ * syncing incrementally. Same enqueue path as `refreshAndSync`, `full: true`.
  */
 export async function fullSync() {
   await requireRole({ sync: ["run"] });
 
   const db = await getDb();
+  await enqueueSync(db, { full: true });
 
-  await recordRun(db, async (link) => {
-    const akahu = akahuClient();
-    await akahu.accounts.refreshAll(akahuUserToken());
-    return runSync(link, { full: true });
-  });
-  // Deliberately no `db.$disconnect()` here. This runs inside the server, where
-  // the client is shared by every request — disconnecting it would tear down the
-  // connection pool under whatever else is mid-flight. Only a script that owns
-  // its process should disconnect (see scripts/ingest.ts).
-
-  await revalidateWorkspacePath("/");
-  await revalidateWorkspacePath("/accounts");
   await revalidateWorkspacePath("/sync");
 }

@@ -5,8 +5,7 @@
 // server — can import it. The interactive counterparts live in the transaction
 // page's server action (which wraps `linkTransferLegs` with `revalidatePath`).
 
-import type { ScopedDb } from "../db";
-import type { Prisma } from "../../generated/prisma/client";
+import { withScopedTx, type ScopedDb } from "../db";
 
 /**
  * Put `targetId` in the same transfer group as `sourceId`, creating the group if
@@ -45,32 +44,32 @@ export async function linkTransferLegs(
     return false; // already in the same transfer
   }
 
-  const groupId =
-    source.transferGroupId ??
-    target.transferGroupId ??
-    (await db.transferGroup.create({ data: { workspaceId: db.$workspaceId } })).id;
+  // One atomic transaction, with the RLS session variable set once for all of it
+  // (see withScopedTx). The group is created inside it too — a new group and the
+  // legs that justify it commit together or not at all, so a failed update can't
+  // strand an empty group.
+  await withScopedTx(db, async (tx) => {
+    const groupId =
+      source.transferGroupId ??
+      target.transferGroupId ??
+      (await tx.transferGroup.create({ data: { workspaceId: db.$workspaceId } })).id;
 
-  const writes: Prisma.PrismaPromise<unknown>[] = [];
-  if (source.transferGroupId !== groupId) {
-    writes.push(
-      db.transaction.updateMany({ where: { id: sourceId }, data: { transferGroupId: groupId } }),
-    );
-  }
-  if (target.transferGroupId !== groupId) {
-    writes.push(
-      db.transaction.updateMany({
+    if (source.transferGroupId !== groupId) {
+      await tx.transaction.updateMany({ where: { id: sourceId }, data: { transferGroupId: groupId } });
+    }
+    if (target.transferGroupId !== groupId) {
+      await tx.transaction.updateMany({
         where:
           target.transferGroupId == null
             ? { id: targetId }
             : { transferGroupId: target.transferGroupId },
         data: { transferGroupId: groupId },
-      }),
-    );
-    if (target.transferGroupId != null) {
-      writes.push(db.transferGroup.delete({ where: { id: target.transferGroupId } }));
+      });
+      if (target.transferGroupId != null) {
+        await tx.transferGroup.delete({ where: { id: target.transferGroupId } });
+      }
     }
-  }
-  await db.$transaction(writes);
+  });
   return true;
 }
 

@@ -1,0 +1,12 @@
+-- Phase 7: a SyncRun can now be *enqueued* by the web app and executed later by
+-- the money_sync worker. Two additions:
+--
+--   * `full` remembers whether the queued run is a `--full` history re-fetch or an
+--     incremental sync, because the worker reproduces the mode in another process.
+--   * the `status` column gains a `queued` value. It is a plain text column with no
+--     DB-level enum, so this needs no DDL — it is documented here and in the schema.
+--     queued → running → success | failed.
+--
+-- No backfill: existing rows are already terminal (success/failed) or were mid-run
+-- when this shipped, and default to full=false, which is the safe incremental mode.
+ALTER TABLE "SyncRun" ADD COLUMN "full" BOOLEAN NOT NULL DEFAULT false;

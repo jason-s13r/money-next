@@ -21,8 +21,11 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { after, before, describe, test } from "node:test";
 
+import { PrismaPg } from "@prisma/adapter-pg";
+
 import { catalogDb } from "../lib/server/db";
 import { CONTROL_PLANE_MODELS, scopedDb, TENANT_MODELS } from "../lib/server/db/scoped";
+import { PrismaClient } from "../lib/generated/prisma/client";
 
 const A = "ws_test_a";
 const B = "ws_test_b";
@@ -31,6 +34,40 @@ const LINK_B = "link_test_b";
 const CONN = "conn_test_isolation";
 
 const dbA = scopedDb(A);
+
+/**
+ * A second client that connects as `money_app` — the non-owner runtime role RLS
+ * actually applies to — rather than through the app's extension. It exists to
+ * prove the phase-6 backstop *at the database*: the same `set_config` the scoped
+ * client issues, but the reads here are raw SQL, so they bypass the app-layer
+ * `where` injection entirely. If a row still doesn't come back, it is Postgres
+ * refusing it, not `scoped.ts`.
+ *
+ * Built from `DATABASE_URL` (the owner) by swapping in money_app's credentials —
+ * the same shape compose uses. `next dev` connects as the owner (which bypasses
+ * RLS), so without this the test could only ever exercise the app-layer filter.
+ */
+const rlsAppUrl = (() => {
+  const url = process.env.DATABASE_URL;
+  const password = process.env.APP_DB_PASSWORD;
+  if (!url || !password) {
+    throw new Error(
+      "The RLS tests need DATABASE_URL and APP_DB_PASSWORD. Run `pnpm db:setup` " +
+        "first (it creates money_app and sets its password from APP_DB_PASSWORD).",
+    );
+  }
+  return url.replace(/\/\/[^@]+@/, `//money_app:${encodeURIComponent(password)}@`);
+})();
+const rlsApp = new PrismaClient({ adapter: new PrismaPg({ connectionString: rlsAppUrl }) });
+
+/** Read tenant rows as money_app with the workspace variable set to `ws` (or, when
+ *  omitted, left unset) — a raw query, so only RLS decides what returns. */
+async function asWorkspace<T>(ws: string | null, sql: string, ...params: unknown[]): Promise<T[]> {
+  return rlsApp.$transaction(async (tx) => {
+    if (ws !== null) await tx.$executeRawUnsafe(`SELECT set_config('app.workspace_id', $1, true)`, ws);
+    return tx.$queryRawUnsafe<T[]>(sql, ...params);
+  });
+}
 
 /** A whole tenant's worth of rows, so every scoped model has something to leak. */
 async function seed(ws: string, link: string, tag: string) {
@@ -134,6 +171,7 @@ after(async () => {
   await catalogDb.merchant.deleteMany({ where: { id: "merchant_test_global" } });
   await catalogDb.connection.deleteMany({ where: { id: CONN } });
   await catalogDb.$disconnect();
+  await rlsApp.$disconnect();
 });
 
 describe("scopedDb refuses to build without a scope", () => {
@@ -372,6 +410,70 @@ describe("a client scoped to A cannot see B", () => {
     assert.equal(await dbA.pendingTransaction.count(), 0);
     const survivors = await catalogDb.pendingTransaction.findMany({ where: { workspaceId: B } });
     assert.equal(survivors.length, 1, "workspace B's pending rows were wiped by workspace A's sync");
+  });
+});
+
+describe("Row-Level Security enforces isolation at the database, not just the app", () => {
+  // These run as money_app (a non-owner role RLS applies to) and read with raw
+  // SQL, so the app-layer `where` injection is out of the picture entirely. What
+  // they prove is the backstop: even a query the scoped client never wrote — a
+  // bug, an injection, a future unscoped path — cannot cross the workspace line.
+
+  test("with no workspace variable set, a tenant table returns nothing (fail closed)", async () => {
+    // The whole database of transactions, asked for with no scope. The app owner
+    // would get everything; money_app gets zero, because the policy compares
+    // against a NULL current_setting and nothing equals NULL. This is the state a
+    // session-handling bug would land in, and it leaks nothing rather than all.
+    const rows = await asWorkspace<{ count: bigint }>(null, `SELECT count(*)::int AS count FROM "Transaction"`);
+    assert.equal(Number(rows[0].count), 0);
+  });
+
+  test("scoped to A, a raw read sees only A — even bypassing the app filter", async () => {
+    const rows = await asWorkspace<{ id: string }>(A, `SELECT id FROM "Transaction"`);
+    assert.deepEqual(rows.map((r) => r.id), ["trans_a"]);
+  });
+
+  test("scoped to A, B's transaction id is invisible at the database", async () => {
+    // The IDOR case again, but proven one layer down: not "the scoped client
+    // filtered it" — the database refused to return the row to this role at all.
+    const rows = await asWorkspace<{ id: string }>(A, `SELECT id FROM "Transaction" WHERE id = $1`, "trans_b");
+    assert.deepEqual(rows, []);
+  });
+
+  test("scoped to A, an INSERT of a row owned by B is rejected by WITH CHECK", async () => {
+    // The write-side of the policy: money_app cannot plant a row in another
+    // workspace even with a hand-written INSERT that names B directly.
+    await assert.rejects(
+      () =>
+        asWorkspace(
+          A,
+          `INSERT INTO "TransferGroup" (id, "workspaceId") VALUES ($1, $2)`,
+          "tg_rls_attack",
+          B,
+        ),
+      /row-level security|violates|check/i,
+    );
+    const planted = await catalogDb.transferGroup.findMany({ where: { id: "tg_rls_attack" } });
+    assert.equal(planted.length, 0);
+  });
+
+  test("Merchant's shared half stays visible, its private half stays scoped", async () => {
+    // The one mixed table: scoped to A, RLS must still surface the global catalog
+    // (workspaceId IS NULL) while hiding B's private merchant.
+    const rows = await asWorkspace<{ id: string }>(A, `SELECT id FROM "Merchant"`);
+    const ids = rows.map((r) => r.id);
+    assert.ok(ids.includes("merchant_test_global"), "the shared catalog is not reaching money_app");
+    assert.ok(ids.includes("user_a"), "workspace A's own merchant is hidden from it");
+    assert.ok(!ids.includes("user_b"), "workspace B's private merchant leaked to A");
+  });
+
+  test("the owner still bypasses RLS — which is what keeps migrations and seeding working", async () => {
+    // Not a hole: RLS is deliberately unforced. The owner (catalogDb here) must
+    // keep seeing across workspaces, or this very test could not have seeded B,
+    // and `prisma migrate deploy` could not run. The isolation that matters is
+    // the app and cron connecting as the non-owner roles above.
+    const all = await catalogDb.transaction.findMany({ where: { id: { in: ["trans_a", "trans_b"] } } });
+    assert.equal(all.length, 2);
   });
 });
 
