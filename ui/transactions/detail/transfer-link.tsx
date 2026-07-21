@@ -192,7 +192,8 @@ export function TransferLink({
         </summary>
 
         {candidates.length > 0 ? (
-          <table className="mt-3 w-full border-collapse text-sm">
+          <div className="mt-3 overflow-x-auto">
+          <table className="w-full min-w-lg border-collapse text-sm">
             <thead>
               <tr className="border-b border-current/20 text-left">
                 <th className="py-2 pr-4 font-medium">Date</th>
@@ -226,6 +227,7 @@ export function TransferLink({
               ))}
             </tbody>
           </table>
+          </div>
         ) : null}
 
         <ManualLink sourceId={sourceId} onLink={linkAction} disabled={pending} />
@@ -282,13 +284,15 @@ function ManualLink({
       </div>
 
       {results.length > 0 ? (
-        <table className="mt-3 w-full border-collapse text-sm">
+        <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-lg border-collapse text-sm">
           <tbody>
             {results.map((r) => (
               <CandidateRow key={r.id} tx={r} disabled={disabled} onLink={onLink} />
             ))}
           </tbody>
         </table>
+        </div>
       ) : searched && !searching ? (
         <p className="mt-3 text-xs text-muted">No unlinked transactions match.</p>
       ) : null}

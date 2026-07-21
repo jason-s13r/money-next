@@ -4,7 +4,7 @@ import { firstParam } from "@/lib/search-params";
 import { ComparisonSection } from "@/ui/dashboard/comparison";
 import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
 
-export const metadata = { title: "Income and spending breakdown" };
+export const metadata = { title: "Income and spending" };
 
 const DEFAULT_PERIOD: Period = "month";
 const WINDOW = 6;
@@ -45,9 +45,7 @@ export default async function BreakdownPage(props: PageProps<"/w/[workspace]/bre
 
   return (
     <main className="mx-auto mb-10 w-full max-w-5xl p-2">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold">Income and spending</h1>
-      </header>
+      <h1 className="sr-only">Income and spending</h1>
 
       <PeriodSelector period={period} href="/breakdown" />
       <ComparisonSection

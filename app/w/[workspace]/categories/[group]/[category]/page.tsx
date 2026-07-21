@@ -4,6 +4,7 @@ import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { groupFromSlug, isIncomeGroup } from "@/lib/categories";
 import { getCategoryNames, getCategoryTransactions } from "@/lib/server/queries/transactions";
+import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 import { fromSlug, slugify } from "@/lib/slug";
 
@@ -31,11 +32,13 @@ export default async function CategoryPage(props: PageProps<"/w/[workspace]/cate
   if (!found) notFound();
   const { group, category } = found;
 
-  const page = parsePage((await props.searchParams).page);
-  const { items, total, net } = await getCategoryTransactions(group, category, page);
+  const searchParams = await props.searchParams;
+  const page = parsePage(searchParams.page);
+  const sort = parseSort(searchParams.sort);
+  const { items, total, net } = await getCategoryTransactions(group, category, page, sort);
 
   const basePath = `/categories/${slugify(group)}/${slugify(category)}`;
-  const totalPages = await paginate(total, page, pageHref(basePath));
+  const totalPages = await paginate(total, page, pageHref(withSort(basePath, sort)));
 
   return (
     <Listing
@@ -47,13 +50,13 @@ export default async function CategoryPage(props: PageProps<"/w/[workspace]/cate
           : { label: "Spent", value: formatMoney(-net, null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },
       ]}
-      basePath={basePath}
+      basePath={withSort(basePath, sort)}
       page={page}
       totalPages={totalPages}
       empty={isIncomeGroup(group) ? "No income in this category." : "No spending in this category."}
     >
-      {/* The Group and Category columns would read the same on every row. */}
-      <TransactionTable items={items} showGroup={false} showCategory={false} />
+      {/* Every row shares this group, so the category cell drops its group subtitle. */}
+      <TransactionTable items={items} showGroup={false} sort={sort} sortBase={basePath} />
     </Listing>
   );
 }

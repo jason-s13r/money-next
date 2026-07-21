@@ -14,8 +14,16 @@ export type Runway = {
   months: number | null;
   /** Monthly burn that produced the runway, in display currency. */
   monthlyBurn: number | null;
-  /** Pre-built status line — callers don't build strings in JSX. */
-  note: string;
+  /** Pre-built runway phrase, e.g. "12.5 months runway". */
+  runwayText: string;
+  /** Pre-formatted burn figure the runway ran at, e.g. "$3,400/mo" or "—". */
+  burnText: string;
+  /**
+   * The forecast income and expenses that net to {@link burnText}, each
+   * pre-formatted, so the tile can show the arithmetic behind the net burn in a
+   * tooltip. Null when there is no forecast (no spending history).
+   */
+  burnBreakdown: { expenses: string; income: string; net: string } | null;
   /** Status derived from the conventional 6/3-month runway thresholds. */
   status: "good" | "warning" | "critical" | null;
 };
@@ -59,21 +67,39 @@ export function getRunways(
     color: string,
     months: number | null,
     monthlyBurn: number | null,
+    breakdown: { expenses: number; income: number } | null,
   ): Runway => {
     const formatted = formatMonths(months);
-    const burnText = monthlyBurn !== null ? formatMoney(monthlyBurn) : "—";
+    const burnText = monthlyBurn !== null ? `${formatMoney(monthlyBurn)}/mo` : "—";
     return {
       label,
       color,
       months,
       monthlyBurn,
       status: formatted.status,
-      note: `${formatted.text} runway, burn rate ${burnText}/mo`,
+      runwayText: `${formatted.text} runway`,
+      burnText,
+      burnBreakdown:
+        breakdown === null
+          ? null
+          : {
+              expenses: `${formatMoney(breakdown.expenses)}/mo`,
+              income: `${formatMoney(breakdown.income)}/mo`,
+              net: burnText,
+            },
     };
   };
 
   return [
-    make("Forecast", "var(--viz-1)", forecastMonths, forecastMonthly),
+    make(
+      "Forecast",
+      "var(--viz-1)",
+      forecastMonths,
+      forecastMonthly,
+      spend.forecastBurn === null
+        ? null
+        : { expenses: spend.forecastBurn, income: spend.forecastIncome },
+    ),
   ];
 }
 

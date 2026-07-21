@@ -54,7 +54,8 @@ export function AccountsTable({
   const link = "underline underline-offset-2";
 
   return (
-    <table className="w-full border-collapse text-sm">
+    <div className="overflow-x-auto">
+    <table className="w-full min-w-2xl border-collapse text-sm">
       <thead>
         <tr className="border-b border-current/20 text-left">
           <th className={th}>Bank</th>
@@ -145,5 +146,6 @@ export function AccountsTable({
         ))}
       </tbody>
     </table>
+    </div>
   );
 }

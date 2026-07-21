@@ -2,12 +2,22 @@ import { Link } from "@/ui/chrome/workspace-context";
 import type { PendingTransactionItem } from "@/lib/server/queries/pending";
 import { DEFAULT_CURRENCY as DISPLAY_CURRENCY, formatDate, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 // Pending (authorised but unsettled) holds, shown atop the first page of a
 // listing. Deliberately leaner than TransactionTable: pending rows have no stable
 // id (so no detail link), no running balance, and no merchant/category — Akahu
 // attaches only `meta` to them (see the PendingTransaction model). The whole block
-// is muted and badged so it never reads as settled, spent money.
+// is muted and badged so it never reads as settled, spent money. It stays static
+// (no sort/filter/selection), so it renders the shared <Table> primitives directly
+// rather than going through the interactive DataTable.
 
 export function PendingTable({
   items,
@@ -17,14 +27,10 @@ export function PendingTable({
   /** Off on an account's own page, where every row is that same account. */
   showAccount?: boolean;
 }) {
-  const th = "py-2 pr-4 font-medium";
-  const thRight = "py-2 pl-4 text-right font-medium";
-  const td = "py-2 pr-4";
-  const tdNum = "py-2 pl-4 text-right font-mono tabular-nums";
   const link = "underline underline-offset-2";
 
   return (
-    <section className="mb-6">
+    <section className="mb-6 opacity-80">
       <h2 className="mb-2 flex items-center gap-2 text-sm font-medium opacity-80">
         Pending
         <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-xs font-normal text-amber-700 dark:text-amber-400">
@@ -32,26 +38,26 @@ export function PendingTable({
         </span>
       </h2>
 
-      <table className="w-full border-collapse text-sm opacity-80">
-        <thead>
-          <tr className="border-b border-current/20 text-left">
-            <th className={th}>Date</th>
-            <th className={th}>Description</th>
-            {showAccount ? <th className={th}>Account</th> : null}
-            <th className={th}>Card</th>
-            <th className={th}>Type</th>
-            <th className={thRight}>Amount</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Date</TableHead>
+            <TableHead>Description</TableHead>
+            {showAccount ? <TableHead>Account</TableHead> : null}
+            <TableHead>Card</TableHead>
+            <TableHead>Type</TableHead>
+            <TableHead className="text-right">Amount</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {items.map((tx) => (
-            <tr key={tx.id} className="border-b border-current/10">
-              <td className={`${td} whitespace-nowrap opacity-60`}>{formatDate(tx.date)}</td>
+            <TableRow key={tx.id}>
+              <TableCell className="opacity-60">{formatDate(tx.date)}</TableCell>
 
-              <td className={td}>{tx.description}</td>
+              <TableCell>{tx.description}</TableCell>
 
               {showAccount ? (
-                <td className={`${td} opacity-60`}>
+                <TableCell className="opacity-60">
                   <div className="flex items-center gap-2">
                     {tx.account.connection?.logo ? (
                       <img
@@ -64,10 +70,10 @@ export function PendingTable({
                       {tx.account.name}
                     </Link>
                   </div>
-                </td>
+                </TableCell>
               ) : null}
 
-              <td className={`${td} opacity-60`}>
+              <TableCell className="opacity-60">
                 {tx.cardSuffix ? (
                   <Link href={`/card/${tx.cardSuffix}`} className={link}>
                     ····{tx.cardSuffix}
@@ -75,11 +81,11 @@ export function PendingTable({
                 ) : (
                   "—"
                 )}
-              </td>
+              </TableCell>
 
-              <td className={`${td} opacity-60`}>{tx.type}</td>
+              <TableCell className="opacity-60">{tx.type}</TableCell>
 
-              <td className={`${tdNum} ${positiveAmountClass(tx.amount)}`}>
+              <TableCell className={`text-right font-mono tabular-nums ${positiveAmountClass(tx.amount)}`}>
                 {formatMoney(tx.amount, tx.account.currency)}
                 {tx.account.currency &&
                 tx.account.currency !== DISPLAY_CURRENCY &&
@@ -88,11 +94,11 @@ export function PendingTable({
                     ≈ {formatMoney(tx.amountBase, DISPLAY_CURRENCY)}
                   </div>
                 ) : null}
-              </td>
-            </tr>
+              </TableCell>
+            </TableRow>
           ))}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </section>
   );
 }

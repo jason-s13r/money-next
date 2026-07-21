@@ -2,7 +2,12 @@
 
 import { useState } from "react";
 import type { SankeyData } from "@/lib/sankey";
+import { Card, CardContent } from "@/components/ui/card";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { SankeyDiagram } from "./sankey";
+
+// Active segment matches the app-wide inverted-pill selection (see balance-chart-legend).
+const ACTIVE_SEGMENT = "aria-pressed:bg-foreground aria-pressed:text-background";
 
 /**
  * One period's diagram, already built. The adapter reads a whole Comparison —
@@ -26,27 +31,32 @@ export function SankeySection({
 
   return (
     <section>
-      <div className="rounded-lg border border-current/10 p-3">
+      <Card size="sm">
+        <CardContent>
         {periods.length > 1 && (
-          <div className="mb-3 flex flex-wrap gap-1 text-sm">
-            {periods.map((p, i) => (
-              <button
-                key={p.key}
-                type="button"
-                onClick={() => setPeriodIndex(i)}
-                className={`rounded-md px-2.5 py-1 ${
-                  i === periodIndex ? "bg-foreground text-background" : "text-secondary hover:bg-current/5"
-                }`}
-              >
-                {p.label}
-              </button>
-            ))}
+          <div className="-mx-1 mb-3 overflow-x-auto px-1">
+            <ToggleGroup
+              value={[String(periodIndex)]}
+              onValueChange={(value) => {
+                if (value[0]) setPeriodIndex(Number(value[0]));
+              }}
+              variant="outline"
+              spacing={0}
+              aria-label="Period"
+            >
+              {periods.map((p, i) => (
+                <ToggleGroupItem key={p.key} value={String(i)} className={ACTIVE_SEGMENT}>
+                  {p.label}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
           </div>
         )}
         {current ? (
           <SankeyDiagram data={current.data} displayCurrency={displayCurrency} title={current.label} />
         ) : null}
-      </div>
+        </CardContent>
+      </Card>
     </section>
   );
 }

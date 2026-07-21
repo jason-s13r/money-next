@@ -3,6 +3,8 @@ import { netOf } from "@/lib/server/metrics/comparison";
 import { formatMoneyWhole } from "@/lib/format";
 import { formatPeriodKey } from "@/lib/periods";
 import { slotColor } from "@/lib/server/metrics/comparison-nodes";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 /** Net colour: green for a surplus period, red for a deficit. */
 const netClass = (net: number) => (net >= 0 ? "text-status-good" : "text-status-critical");
@@ -65,23 +67,23 @@ export function PeriodCard({
   );
 
   return (
-    <div className="rounded-lg border border-current/10 p-4">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <p className="flex items-baseline gap-2 text-sm font-medium">
+    <Card size="sm">
+      <CardHeader>
+        <CardTitle className="flex items-baseline gap-2">
           {formatPeriodKey(breakdown.key, period)}
           {breakdown.partial ? (
-            <span className="rounded-sm bg-current/10 px-1.5 py-0.5 text-xs font-normal text-secondary">
+            <Badge variant="outline" className="font-normal text-secondary">
               partial
-            </span>
+            </Badge>
           ) : null}
-        </p>
-        <p className="text-sm">
+        </CardTitle>
+        <CardAction className="text-sm">
           <span className="text-muted">net </span>
           <span className={`font-mono tabular-nums ${netClass(net)}`}>{signedWhole(net)}</span>
-        </p>
-      </div>
+        </CardAction>
+      </CardHeader>
 
-      <div className="mt-3 space-y-2">
+      <CardContent className="flex flex-col gap-2">
         {(
           [
             ["Income", incomeBySubcategory, incomeSubcategories, breakdown.incomeTotal],
@@ -100,7 +102,7 @@ export function PeriodCard({
             </span>
           </div>
         ))}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 }

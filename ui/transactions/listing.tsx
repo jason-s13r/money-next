@@ -31,11 +31,14 @@ export function Listing({
 }) {
   const isEmpty = totalPages === 0;
 
+  // The title now shows in the header breadcrumb (ui/chrome/breadcrumbs.tsx). It
+  // stays here as an sr-only heading so the page keeps one h1 for assistive tech,
+  // while the visible frame carries only the subtitle context and bucket stats.
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
       <header className="mb-6">
-        <h1 className="text-2xl font-semibold">{title}</h1>
-        {subtitle ? <p className="mt-1 text-sm opacity-60">{subtitle}</p> : null}
+        <h1 className="sr-only">{title}</h1>
+        {subtitle ? <p className="text-sm opacity-60">{subtitle}</p> : null}
 
         <StatList stats={stats} className="mt-4" />
       </header>

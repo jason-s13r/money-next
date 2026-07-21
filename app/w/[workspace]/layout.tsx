@@ -1,6 +1,16 @@
-import { SiteNav } from "@/ui/chrome/site-nav";
+import { AppSidebar } from "@/ui/chrome/app-sidebar";
+import { Breadcrumbs } from "@/ui/chrome/breadcrumbs";
+import { DataActions } from "./data-actions";
 import { WorkspaceProvider } from "@/ui/chrome/workspace-context";
 import { requireWorkspace } from "@/lib/server/auth/session";
+import { listWorkspaces } from "@/lib/server/auth/workspaces";
+import { Separator } from "@/components/ui/separator";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  SidebarInset,
+  SidebarProvider,
+  SidebarTrigger,
+} from "@/components/ui/sidebar";
 
 /**
  * Everything inside a workspace.
@@ -24,12 +34,41 @@ export default async function WorkspaceLayout({
   // they come from the same path.
   await params;
 
-  const { workspace, role } = await requireWorkspace();
+  const [{ user, workspace, role }, workspaces] = await Promise.all([
+    requireWorkspace(),
+    listWorkspaces(),
+  ]);
 
   return (
     <WorkspaceProvider slug={workspace.slug} role={role}>
-      <SiteNav />
-      {children}
+      <TooltipProvider>
+        <SidebarProvider>
+          <AppSidebar
+            user={{ name: user.name, email: user.email }}
+            current={workspace}
+            role={role}
+            workspaces={workspaces}
+          />
+          <SidebarInset>
+            {/* Sticky page header: the collapse/drawer toggle and breadcrumbs on
+                the left, the global data actions (sync / apply rules) on the
+                right. The trigger opens the off-canvas drawer on mobile; search
+                lives at the top of the sidebar. */}
+            <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
+              <SidebarTrigger className="-ml-1" />
+              <Separator
+                orientation="vertical"
+                className="h-6 data-[orientation=vertical]:self-center"
+              />
+              <Breadcrumbs />
+              <div className="ml-auto">
+                <DataActions />
+              </div>
+            </header>
+            {children}
+          </SidebarInset>
+        </SidebarProvider>
+      </TooltipProvider>
     </WorkspaceProvider>
   );
 }

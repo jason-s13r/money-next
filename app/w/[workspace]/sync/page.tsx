@@ -2,8 +2,7 @@ import { getSyncRuns, SYNC_RUNS_PER_PAGE } from "@/lib/server/queries/runs";
 import { formatDateTime } from "@/lib/format";
 import { StatList } from "@/ui/primitives/stat-list";
 import { Pagination, paginate, parsePage } from "@/ui/primitives/pagination";
-import { FullSyncButton } from "./full-sync-button";
-import { SyncAutoRefresh } from "./auto-refresh";
+import { AutoRefresh } from "@/ui/primitives/auto-refresh";
 
 export const metadata = { title: "Sync history" };
 
@@ -26,21 +25,17 @@ export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/s
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
-      <SyncAutoRefresh active={inFlight > 0} />
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold">Sync history</h1>
-          <StatList
-            className="mt-4"
-            stats={[
-              { label: "Total runs", value: total.toLocaleString("en-NZ") },
-              { label: "Succeeded", value: succeeded.toLocaleString("en-NZ") },
-              { label: "Failed", value: failed.toLocaleString("en-NZ") },
-              { label: "In flight", value: inFlight.toLocaleString("en-NZ") },
-            ]}
-          />
-        </div>
-        <FullSyncButton />
+      <AutoRefresh active={inFlight > 0} />
+      <header className="mb-6">
+        <h1 className="sr-only">Sync history</h1>
+        <StatList
+          stats={[
+            { label: "Total runs", value: total.toLocaleString("en-NZ") },
+            { label: "Succeeded", value: succeeded.toLocaleString("en-NZ") },
+            { label: "Failed", value: failed.toLocaleString("en-NZ") },
+            { label: "In flight", value: inFlight.toLocaleString("en-NZ") },
+          ]}
+        />
       </header>
 
       {items.length === 0 ? (
@@ -49,7 +44,8 @@ export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/s
         </p>
       ) : (
         <>
-          <table className="w-full border-collapse text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-3xl border-collapse text-sm">
             <thead>
               <tr className="border-b border-current/20 text-left">
                 <th className="py-2 pr-4 font-medium">Started</th>
@@ -88,6 +84,7 @@ export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/s
               ))}
             </tbody>
           </table>
+          </div>
 
           <Pagination basePath="/sync" page={page} totalPages={totalPages} />
         </>

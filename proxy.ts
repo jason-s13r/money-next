@@ -101,6 +101,15 @@ function csp(nonce: string) {
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'${dev ? " 'unsafe-eval'" : ""}`,
     // Dev injects inline styles for HMR that carry no nonce.
     `style-src 'self' ${dev ? "'unsafe-inline'" : `'nonce-${nonce}'`}`,
+    // Inline `style=""` *attributes* — set dynamically by React and shadcn: the
+    // chart SVGs' `fill`/`stroke`, stat-tile/meter/legend colors, the sidebar's
+    // `--sidebar-width`. A nonce can only ever whitelist a `<style>` *element*,
+    // never a style *attribute*, so those answer to `style-src-attr` instead and
+    // were all being blocked. This is a deliberately narrow relaxation: it opens
+    // style *attributes* only, leaving `<style>`/`<link>` stylesheets nonce-bound
+    // via `style-src` above. A URL inside a style (e.g. `background:url()`) still
+    // has to clear img-src, so this does not reopen a CSS-exfiltration path.
+    "style-src-attr 'unsafe-inline'",
     "img-src 'self' data: https://cdn.akahu.nz",
     "font-src 'self'",
     "object-src 'none'",
@@ -167,5 +176,12 @@ export const config = {
   // `/w/<slug>/…` that skipped it would resolve no workspace and 404. The nonce
   // on a prefetched RSC payload is unused, which is harmless; a prefetch that
   // 404s is not.
-  matcher: ["/((?!api/auth|_next/static|_next/image|favicon.ico).*)"],
+  // The app-icon and manifest file conventions (app/favicon.ico, app/icon.png,
+  // app/apple-icon.png, app/manifest.ts) plus the manifest's own referenced icons
+  // (the android-chrome PNGs in public/) are public static assets — a browser
+  // requests them for the tab and home screen without a session, so they skip the
+  // proxy exactly as `favicon.ico` does rather than redirect to /login.
+  matcher: [
+    "/((?!api/auth|_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|manifest.webmanifest|android-chrome-).*)",
+  ],
 };

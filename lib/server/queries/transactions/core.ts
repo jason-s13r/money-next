@@ -166,7 +166,7 @@ export async function netInDisplay(where: Prisma.TransactionWhereInput): Promise
  * ordering the uncategorised queue wants is handled in
  * `getUncategorisedTransactions`, which Prisma can't express as an `orderBy`.
  */
-function orderByForSort(sort: Sort): Prisma.TransactionOrderByWithRelationInput[] {
+export function orderByForSort(sort: Sort): Prisma.TransactionOrderByWithRelationInput[] {
   const { dir } = sort;
   const tiebreak = { id: "desc" } as const;
   switch (sort.field) {

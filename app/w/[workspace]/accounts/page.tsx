@@ -1,17 +1,15 @@
 import { getAccounts } from "@/lib/server/queries/accounts";
-import { getLastSync } from "@/lib/server/queries/runs";
 import { convert, getDisplayCurrency, loadRates } from "@/lib/server/currency";
 import { formatMoney } from "@/lib/format";
 import { AccountsTable } from "@/ui/accounts/accounts-table";
 import { StatList } from "@/ui/primitives/stat-list";
-import { SyncStatus } from "@/ui/chrome/sync-status";
 
 export const metadata = {
   title: "Accounts",
 };
 
 export default async function AccountsPage() {
-  const [accounts, lastSync] = await Promise.all([getAccounts(), getLastSync()]);
+  const accounts = await getAccounts();
 
   const activeAccounts = accounts.filter((a) => a.status === "ACTIVE");
   const displayCurrency = await getDisplayCurrency();
@@ -47,11 +45,7 @@ export default async function AccountsPage() {
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
-      <header className="flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl font-semibold">Accounts</h1>
-        <SyncStatus lastSync={lastSync} />
-      </header>
-
+      <h1 className="sr-only">Accounts</h1>
 
       <StatList
         className="mt-4 mb-4"

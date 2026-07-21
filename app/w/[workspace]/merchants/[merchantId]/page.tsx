@@ -4,6 +4,7 @@ import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { getMerchant } from "@/lib/server/queries/lookups";
 import { getMerchantTransactions } from "@/lib/server/queries/transactions";
+import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 
 // Keyed by Akahu's `merchantId`, so the url is stable and unambiguous. One
@@ -21,11 +22,13 @@ export default async function MerchantPage(props: PageProps<"/w/[workspace]/merc
   const merchant = await getMerchant(merchantId);
   if (!merchant) notFound();
 
-  const page = parsePage((await props.searchParams).page);
-  const { items, total, net } = await getMerchantTransactions(merchantId, page);
+  const searchParams = await props.searchParams;
+  const page = parsePage(searchParams.page);
+  const sort = parseSort(searchParams.sort);
+  const { items, total, net } = await getMerchantTransactions(merchantId, page, sort);
 
   const basePath = `/merchants/${merchantId}`;
-  const totalPages = await paginate(total, page, pageHref(basePath));
+  const totalPages = await paginate(total, page, pageHref(withSort(basePath, sort)));
 
   // Refunds are inflows, so a merchant that paid back more than it took nets
   // positive. Say "Net" rather than "Spent", which would be a lie with a sign.
@@ -49,13 +52,13 @@ export default async function MerchantPage(props: PageProps<"/w/[workspace]/merc
         { label: spent >= 0 ? "Spent" : "Refunded", value: formatMoney(Math.abs(spent), null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },
       ]}
-      basePath={basePath}
+      basePath={withSort(basePath, sort)}
       page={page}
       totalPages={totalPages}
       empty="No transactions for this merchant."
     >
       {/* Every row names this merchant already. */}
-      <TransactionTable items={items} linkMerchant={false} />
+      <TransactionTable items={items} linkMerchant={false} sort={sort} sortBase={basePath} />
     </Listing>
   );
 }

@@ -802,13 +802,29 @@ model SyncRun {
   /// writes (phase 7): it can enqueue a run — a tenant INSERT it already holds —
   /// but no longer runs the ingest itself, so `money_app` needs no catalog DML and
   /// never calls Akahu. The `money_sync` worker claims the row (queued → running)
-  /// and finalises it. The cron script still creates its rows as `running`.
+  /// and finalises it. The cron script still creates its rows as `running`. A run
+  /// that fails transiently goes back to `queued` (see `attempts`) rather than
+  /// straight to `failed`, so the two are not strictly terminal-once.
   status     String    @default("running")
 
   /// Whether this run re-fetches the whole history window (`--full`) or syncs
   /// incrementally from the high-water mark. Persisted because the worker runs the
   /// job later, in another process, and must reproduce the mode the button chose.
   full Boolean @default(false)
+
+  /// How many times the worker has claimed this run (queued → running). Bumped on
+  /// every claim, so a run that keeps failing counts up until it hits the worker's
+  /// `WORKER_MAX_ATTEMPTS` cap and is failed for good. A transient failure below
+  /// the cap re-queues the row with backoff (`nextAttemptAt`) instead. Also how the
+  /// stale-claim reaper decides whether a run abandoned by a dead worker is worth
+  /// retrying or should be failed.
+  attempts Int @default(0)
+
+  /// Earliest time a `queued` row may be claimed, or null for "now". The worker
+  /// sets this in the future when it re-queues a failed run, spacing retries out
+  /// with exponential backoff; the claim query skips rows whose backoff has not
+  /// elapsed. Irrelevant once a row is `running`/terminal.
+  nextAttemptAt DateTime? @db.Timestamptz(3)
 
   accountsSynced     Int @default(0)
   transactionsSynced Int @default(0)
@@ -873,7 +889,11 @@ model RuleRun {
   finishedAt DateTime? @db.Timestamptz(3)
   /// What triggered the run: `sync` (during ingest) | `manual` (Apply now).
   trigger    String
-  /// success | failed
+  /// queued | running | success | failed. A `manual` run is now enqueued the same
+  /// way a sync is (phase 7): the web app writes a `queued` row — a tenant INSERT
+  /// `money_app` holds — and the `money_sync` worker claims it (queued → running)
+  /// and finalises it, so the whole-history backfill no longer runs in the request.
+  /// A `sync`-triggered run is still created terminal by the ingest itself.
   status     String    @default("success")
 
   /// Tallies for the whole run, mirroring the in-memory summary.
@@ -882,6 +902,13 @@ model RuleRun {
   merchantsSet    Int @default(0)
   transfersLinked Int @default(0)
   errors          Int @default(0)
+
+  /// Retry bookkeeping for the queued (`manual`) path, identical to SyncRun:
+  /// `attempts` counts claims and caps retries; `nextAttemptAt` gates a re-queued
+  /// row until its backoff elapses. Both irrelevant to a `sync`-triggered run,
+  /// which is never queued.
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? @db.Timestamptz(3)
 
   error String?
 

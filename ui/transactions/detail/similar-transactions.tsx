@@ -113,7 +113,8 @@ export function SimilarTransactions({
         </p>
       )}
 
-      <table className="w-full border-collapse text-sm">
+      <div className="overflow-x-auto">
+      <table className="w-full min-w-2xl border-collapse text-sm">
         <thead>
           <tr className="border-b border-current/20 text-left">
             {canEdit ? (
@@ -162,6 +163,7 @@ export function SimilarTransactions({
           ))}
         </tbody>
       </table>
+      </div>
         </div>
       </details>
     </section>

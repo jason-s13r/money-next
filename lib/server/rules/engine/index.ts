@@ -58,13 +58,21 @@ export async function runRules(
     transactionIds?: string[];
     /** What triggered the run, for the log. Defaults to `manual`. */
     trigger?: "sync" | "manual";
+    /**
+     * A pre-created, worker-claimed RuleRun (`queued` → `running`) to finalise in
+     * place, used by the queued manual backfill (phase 7). When set, this call
+     * updates that row rather than creating its own, and on failure throws without
+     * writing a terminal state — the worker owns retry-or-fail, exactly as the sync
+     * queue works. Omit it and the call owns its row (the per-sync pass).
+     */
+    runId?: string;
   },
 ): Promise<RulesRunSummary> {
   const trigger = opts?.trigger ?? "manual";
-  const doc = await db.ruleDocument.findFirst({
-    where: { active: true },
-    orderBy: { updatedAt: "desc" },
-  });
+  const runId = opts?.runId;
+  const startedAt = new Date();
+  // Every edit made this run, recorded against the RuleRun at the end.
+  const changes: FieldChangeEntry[] = [];
   const summary: RulesRunSummary = {
     ran: false,
     evaluated: 0,
@@ -73,14 +81,59 @@ export async function runRules(
     transfersLinked: 0,
     errors: 0,
   };
-  if (!doc) return summary;
+
+  // Write the run's *success* outcome. With `runId` the row already exists (the
+  // worker claimed it): update it in place, and always — a queued run must resolve
+  // even when it changed nothing, or `/rules` would poll it forever. Without a
+  // runId this is the per-sync pass, which logs only when it actually did
+  // something, so the log stays a record of changes rather than a heartbeat.
+  //
+  // Only the success path lives here. A failure throws; for a queued run the worker
+  // records it (with backoff), so the row is never written by both.
+  const finalizeSuccess = async () => {
+    const data = {
+      status: "success" as const,
+      finishedAt: new Date(),
+      evaluated: summary.evaluated,
+      categorised: summary.categorised,
+      merchantsSet: summary.merchantsSet,
+      transfersLinked: summary.transfersLinked,
+      errors: summary.errors,
+      // The run's edits go straight into the field change log, nested so they
+      // commit with the run and inherit its id as `ruleRunId` — which is what
+      // `/rules/runs/<id>` reads back. `source` says which of the three writers
+      // this was; no `actorUserId`, even on a manual run: the person asked for the
+      // rules to run, they did not choose this edit. `RuleRun.trigger` records that
+      // they asked. Nested creates are outside what the scoped client rewrites — it
+      // only stamps the top-level `data` — so these carry the workspace themselves.
+      changes: {
+        create: changes.map((c) => ({ ...c, workspaceId: db.$workspaceId, source: RULE_SOURCE })),
+      },
+    };
+    if (runId) {
+      await db.ruleRun.update({ where: { id: runId }, data });
+    } else if (changes.length > 0 || summary.errors > 0) {
+      await db.ruleRun.create({ data: { workspaceId: db.$workspaceId, startedAt, trigger, ...data } });
+    }
+  };
+
+  const doc = await db.ruleDocument.findFirst({
+    where: { active: true },
+    orderBy: { updatedAt: "desc" },
+  });
+  if (!doc) {
+    // No active graph (e.g. every rule was deleted between enqueue and pickup).
+    // Nothing to apply — resolve a queued row as an empty success.
+    if (runId) await finalizeSuccess();
+    return summary;
+  }
   if (opts?.transactionIds && opts.transactionIds.length === 0) {
     summary.ran = true;
+    if (runId) await finalizeSuccess();
     return summary;
   }
   summary.ran = true;
 
-  const startedAt = new Date();
   const engine = new ZenEngine();
   let decision: ZenDecision;
   try {
@@ -88,22 +141,23 @@ export async function runRules(
   } catch (error) {
     engine.dispose();
     const message = error instanceof Error ? error.message : String(error);
-    // Record the failure so a persistently-broken graph is visible in the log.
-    await db.ruleRun.create({
-      data: {
-        workspaceId: db.$workspaceId,
-        startedAt,
-        finishedAt: new Date(),
-        trigger,
-        status: "failed",
-        error: message,
-      },
-    });
+    // A queued run's failure is the worker's to record (with retry/backoff); only
+    // the self-owned per-sync path writes its own failed row here, so a broken
+    // graph is still visible in the log.
+    if (!runId) {
+      await db.ruleRun.create({
+        data: {
+          workspaceId: db.$workspaceId,
+          startedAt,
+          finishedAt: new Date(),
+          trigger,
+          status: "failed",
+          error: message,
+        },
+      });
+    }
     throw new Error(`Active rule document "${doc.name}" is not a valid decision graph: ${message}`);
   }
-
-  // Every edit made this run, recorded against the RuleRun at the end.
-  const changes: FieldChangeEntry[] = [];
 
   try {
     // A sync can hand us thousands of freshly-upserted ids; splatting them all
@@ -154,40 +208,6 @@ export async function runRules(
     engine.dispose();
   }
 
-  // Log the run only when it actually did something (or hit errors), so the report
-  // stays a record of changes rather than a heartbeat of every no-op sync.
-  if (changes.length > 0 || summary.errors > 0) {
-    await db.ruleRun.create({
-      data: {
-        workspaceId: db.$workspaceId,
-        startedAt,
-        finishedAt: new Date(),
-        trigger,
-        status: "success",
-        evaluated: summary.evaluated,
-        categorised: summary.categorised,
-        merchantsSet: summary.merchantsSet,
-        transfersLinked: summary.transfersLinked,
-        errors: summary.errors,
-        // The run's edits go straight into the field change log, nested so they
-        // commit with the run and inherit its id as `ruleRunId` — which is what
-        // `/rules/runs/<id>` reads back. `source` says which of the three writers
-        // this was; no `actorUserId`, even on a manual run: the person asked for
-        // the rules to run, they did not choose this edit. `RuleRun.trigger`
-        // already records that they asked.
-        //
-        // Nested creates are outside what the scoped client rewrites — it only
-        // stamps the top-level `data` — so these carry the workspace themselves.
-        changes: {
-          create: changes.map((c) => ({
-            ...c,
-            workspaceId: db.$workspaceId,
-            source: RULE_SOURCE,
-          })),
-        },
-      },
-    });
-  }
-
+  await finalizeSuccess();
   return summary;
 }

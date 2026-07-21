@@ -3,7 +3,7 @@
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
-import { runRules, defaultDecisionGraph } from "@/lib/server/rules/engine";
+import { defaultDecisionGraph } from "@/lib/server/rules/engine";
 import {
   deriveMatch,
   upsertLearnedRule,
@@ -70,20 +70,40 @@ async function editActiveGraph(mutate: (graph: Graph) => void) {
 }
 
 /**
- * Backfill: evaluate the active document against *every* transaction and apply
- * the results — the manual counterpart to the automatic per-sync pass. Returns
- * the summary so the button can report what changed.
+ * Backfill: evaluate the active document against *every* transaction and apply the
+ * results — the manual counterpart to the automatic per-sync pass.
+ *
+ * Enqueued, not run (phase 7): a whole-history pass is unbounded work, so running
+ * it inside this request is the T14 rule-graph DoS seam. The button now writes a
+ * `queued` RuleRun — a tenant INSERT `money_app` already holds — and the
+ * `money_sync` worker (scripts/worker.ts) claims it, runs the pass, and finalises
+ * the row. `/rules` polls it from queued → running → success like `/sync` does.
+ *
+ * Coalesced: a backfill already waiting is reused rather than stacked, so mashing
+ * the button doesn't pile up identical jobs. If that waiting run is a failed one
+ * sitting out its retry backoff, a click is an explicit override — clear the
+ * backoff so the worker takes it on the next poll instead of making them wait.
  */
 export async function applyRulesNow() {
   await requireRole({ enrichment: ["update"] });
 
   const db = await getDb();
-  const summary = await runRules(db, { trigger: "manual" });
+  const waiting = await db.ruleRun.findFirst({
+    where: { status: "queued" },
+    orderBy: { startedAt: "asc" },
+  });
+  if (waiting) {
+    if (waiting.nextAttemptAt && waiting.nextAttemptAt > new Date()) {
+      await db.ruleRun.update({ where: { id: waiting.id }, data: { nextAttemptAt: null } });
+    }
+  } else {
+    await db.ruleRun.create({
+      data: { workspaceId: db.$workspaceId, trigger: "manual", status: "queued" },
+    });
+  }
+
   await revalidateWorkspacePath("/rules");
   await revalidateWorkspacePath("/rules/runs");
-  await revalidateWorkspacePath("/transactions/recent");
-  await revalidateWorkspacePath("/");
-  return summary;
 }
 
 /** Delete a learned rule (a row in the decision table) by its id. */

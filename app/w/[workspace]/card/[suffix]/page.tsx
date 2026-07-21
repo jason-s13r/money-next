@@ -3,6 +3,7 @@ import { Listing } from "@/ui/transactions/listing";
 import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { getCardSuffixes, getCardTransactions } from "@/lib/server/queries/transactions";
+import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 
 /** Matched exactly, not slugged: a suffix is already url-safe digits. */
@@ -23,11 +24,13 @@ export default async function CardPage(props: PageProps<"/w/[workspace]/card/[su
   const suffix = await resolve(props.params);
   if (!suffix) notFound();
 
-  const page = parsePage((await props.searchParams).page);
-  const { items, total, net } = await getCardTransactions(suffix, page);
+  const searchParams = await props.searchParams;
+  const page = parsePage(searchParams.page);
+  const sort = parseSort(searchParams.sort);
+  const { items, total, net } = await getCardTransactions(suffix, page, sort);
 
   const basePath = `/card/${suffix}`;
-  const totalPages = await paginate(total, page, pageHref(basePath));
+  const totalPages = await paginate(total, page, pageHref(withSort(basePath, sort)));
 
   const spent = -net;
 
@@ -41,13 +44,12 @@ export default async function CardPage(props: PageProps<"/w/[workspace]/card/[su
         { label: spent >= 0 ? "Spent" : "Received", value: formatMoney(Math.abs(spent), null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },
       ]}
-      basePath={basePath}
+      basePath={withSort(basePath, sort)}
       page={page}
       totalPages={totalPages}
       empty="No transactions on this card."
     >
-      {/* Every row is this card already. */}
-      <TransactionTable items={items} showCard={false} />
+      <TransactionTable items={items} sort={sort} sortBase={basePath} />
     </Listing>
   );
 }

@@ -1,6 +1,4 @@
-import { getLastSync } from "@/lib/server/queries/runs";
 import { formatMoneyWhole } from "@/lib/format";
-import { SyncStatus } from "@/ui/chrome/sync-status";
 import { getBalanceSummary } from "@/lib/server/metrics/balance";
 import { getReviewQueue, getSpendSummary } from "@/lib/server/metrics/spend";
 import { getRunways } from "@/lib/server/metrics/runway";
@@ -15,8 +13,9 @@ import { ReviewBanner } from "@/ui/dashboard/review-banner";
 import { BalanceChart } from "@/ui/dashboard/balance-chart";
 import { Hero } from "@/ui/primitives/stat-tile";
 import { Link } from "@/ui/chrome/workspace-context";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
-export const metadata = { title: "Financial health" };
+export const metadata = { title: "Dashboard" };
 
 const DEFAULT_PERIOD: Period = "month";
 const WINDOW = 3;
@@ -40,12 +39,11 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
   const now = new Date();
   const { period, offset } = parseWindow(await props.searchParams, now);
 
-  const [balances, spend, comparison, review, lastSync] = await Promise.all([
+  const [balances, spend, comparison, review] = await Promise.all([
     getBalanceSummary(),
     getSpendSummary(),
     getComparison(period, WINDOW, offset, now),
     getReviewQueue(),
-    getLastSync(),
   ]);
 
   const base = `/breakdown?period=${period}`;
@@ -66,24 +64,23 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
   const runways = getRunways(balances, spend, money);
 
   return (
-    <main className="mx-auto w-full max-w-5xl p-2 flex gap-6 flex-col">
-      <header className="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-        <h1 className="text-2xl font-semibold">Financial health</h1>
-        <SyncStatus lastSync={lastSync} />
-      </header>
+    <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-3 py-5 sm:px-6 sm:py-8">
+      <h1 className="sr-only">Dashboard</h1>
 
-      <section className="flex items-start justify-between gap-4">
-        <Hero
-          label="Available Balance"
-          value={formatMoneyWhole(balances.accessible, balances.displayCurrency)}
-          note={`Excludes ${formatMoneyWhole(
-            balances.locked,
-            balances.displayCurrency,
-          )} locked in KiwiSaver and investments.`}
-          runways={runways}
-        />
-        <CurrencyBreakdown byCurrency={balances.byCurrency} displayCurrency={balances.displayCurrency} />
-      </section>
+      <Card>
+        <CardContent className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <Hero
+            label="Available Balance"
+            value={formatMoneyWhole(balances.accessible, balances.displayCurrency)}
+            note={`Excludes ${formatMoneyWhole(
+              balances.locked,
+              balances.displayCurrency,
+            )} locked in KiwiSaver and investments.`}
+            runways={runways}
+          />
+          <CurrencyBreakdown byCurrency={balances.byCurrency} displayCurrency={balances.displayCurrency} />
+        </CardContent>
+      </Card>
 
       {/* Spending Akahu left without a category. Surfacing the count is the point:
           a total that admits how much of itself is still unaccounted for is more
@@ -100,7 +97,14 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
           are each day's net flow — the line's own deltas — and the two dashed
           lines project the emergency and forecast burns named in the tiles above
           out to where the money runs out. */}
-      <BalanceChart series={series} />
+      <Card>
+        <CardHeader>
+          <CardTitle>Balance over time</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <BalanceChart series={series} />
+        </CardContent>
+      </Card>
 
       <section>
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-3">

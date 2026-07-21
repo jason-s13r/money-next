@@ -4,6 +4,7 @@ import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { isEssential, isIncomeGroup, groupFromSlug } from "@/lib/categories";
 import { getGroupTransactions } from "@/lib/server/queries/transactions";
+import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 
@@ -18,11 +19,13 @@ export default async function GroupPage(props: PageProps<"/w/[workspace]/categor
   const group = groupFromSlug((await props.params).group);
   if (!group) notFound();
 
-  const page = parsePage((await props.searchParams).page);
-  const { items, total, net } = await getGroupTransactions(group, page);
+  const searchParams = await props.searchParams;
+  const page = parsePage(searchParams.page);
+  const sort = parseSort(searchParams.sort);
+  const { items, total, net } = await getGroupTransactions(group, page, sort);
 
   const basePath = `/categories/${slugify(group)}`;
-  const totalPages = await paginate(total, page, pageHref(basePath));
+  const totalPages = await paginate(total, page, pageHref(withSort(basePath, sort)));
 
   return (
     <Listing
@@ -34,13 +37,13 @@ export default async function GroupPage(props: PageProps<"/w/[workspace]/categor
           : { label: "Spent", value: formatMoney(-net, null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },
       ]}
-      basePath={basePath}
+      basePath={withSort(basePath, sort)}
       page={page}
       totalPages={totalPages}
       empty={isIncomeGroup(group) ? "No income in this period." : "No spending in this category group."}
     >
       {/* Every row is in this group already. */}
-      <TransactionTable items={items} showGroup={false} />
+      <TransactionTable items={items} showGroup={false} sort={sort} sortBase={basePath} />
     </Listing>
   );
 }

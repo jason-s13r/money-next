@@ -2,6 +2,7 @@ import { Link } from "@/ui/chrome/workspace-context";
 import { getRuleRuns, RULE_RUNS_PER_PAGE } from "@/lib/server/queries/runs";
 import { formatDateTime } from "@/lib/format";
 import { Pagination, paginate, parsePage } from "@/ui/primitives/pagination";
+import { AutoRefresh } from "@/ui/primitives/auto-refresh";
 
 export const metadata = { title: "Rules log" };
 
@@ -17,26 +18,27 @@ export default async function RuleRunsPage(props: PageProps<"/w/[workspace]/rule
     RULE_RUNS_PER_PAGE,
   );
 
+  const inFlight = items.some((r) => r.status === "queued" || r.status === "running");
+
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
+      <AutoRefresh active={inFlight} />
       <header className="mb-6">
-        <Link href="/rules" className="text-sm text-muted hover:underline">
-          ← Rules
-        </Link>
-        <h1 className="mt-2 text-2xl font-semibold">Rules log</h1>
-        <p className="mt-1 text-sm text-muted">
-          Every rule run that changed something — automatically during a sync, or
-          when you pressed Apply now.
+        <h1 className="sr-only">Rules log</h1>
+        <p className="text-sm text-muted">
+          Every time you pressed Apply now, and every automatic sync that changed
+          something.
         </p>
       </header>
 
       {items.length === 0 ? (
         <p className="py-8 text-center text-sm opacity-60">
-          No rule runs yet. Runs that don’t change anything aren’t logged.
+          No rule runs yet. Press Apply now, or wait for a sync to match something.
         </p>
       ) : (
         <>
-          <table className="w-full border-collapse text-sm">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-3xl border-collapse text-sm">
             <thead>
               <tr className="border-b border-current/20 text-left">
                 <th className="py-2 pr-4 font-medium">When</th>
@@ -73,7 +75,11 @@ export default async function RuleRunsPage(props: PageProps<"/w/[workspace]/rule
                     {run.transfersLinked.toLocaleString("en-NZ")}
                   </td>
                   <td className="py-2 pr-4">
-                    {run.status === "failed" ? (
+                    {run.status === "queued" ? (
+                      <span className="italic opacity-50">queued</span>
+                    ) : run.status === "running" ? (
+                      <span className="opacity-60">running…</span>
+                    ) : run.status === "failed" ? (
                       <span className="font-medium text-status-critical">failed</span>
                     ) : run.errors > 0 ? (
                       <span className="text-status-critical">{run.errors} errored</span>
@@ -85,6 +91,7 @@ export default async function RuleRunsPage(props: PageProps<"/w/[workspace]/rule
               ))}
             </tbody>
           </table>
+          </div>
 
           <Pagination basePath="/rules/runs" page={page} totalPages={totalPages} />
         </>

@@ -23,6 +23,12 @@ const MIN_LINK_HEIGHT = 2;
  */
 const LABEL_SPACE = 110;
 const LABEL_INSET = 6;
+/**
+ * Below this the five columns crush together and inner labels truncate to a few
+ * characters. Rather than degrade, the diagram holds this width and the container
+ * scrolls it horizontally — the same trade the balance chart makes on a phone.
+ */
+const MIN_DIAGRAM_W = 560;
 const LABEL_FONT = 11;
 const VALUE_FONT = 10;
 /** Rough advance width per character, as a fraction of font size. */
@@ -369,7 +375,9 @@ export function SankeyDiagram({
     if (!el) return;
     const update = () => {
       const rect = el.getBoundingClientRect();
-      const measured = Math.max(320, rect.width > 0 ? rect.width : el.clientWidth);
+      const available = rect.width > 0 ? rect.width : el.clientWidth;
+      // Hold a readable minimum and let the container scroll when it's narrower.
+      const measured = Math.max(MIN_DIAGRAM_W, available);
       // Height is derived from width, so width is the only real input. Bail when it
       // hasn't moved: the observer fires for changes this layout doesn't care about,
       // and every accepted measurement re-sorts every column.
@@ -400,10 +408,9 @@ export function SankeyDiagram({
     <div ref={containerRef} className="w-full">
       {title ? <p className="mb-2 text-sm font-medium">{title}</p> : null}
       {empty ? (
-        <div className="rounded-lg border border-current/10 p-4 text-sm text-muted">
-          <p>No money flows to display for this period.</p>
-        </div>
+        <p className="py-8 text-center text-sm text-muted">No money flows to display for this period.</p>
       ) : (
+        <div className="overflow-x-auto">
         <svg
           width={size.width}
           height={Math.max(size.height, contentHeight)}
@@ -452,6 +459,7 @@ export function SankeyDiagram({
           </g>
         ))}
         </svg>
+        </div>
       )}
     </div>
   );

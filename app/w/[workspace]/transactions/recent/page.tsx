@@ -4,6 +4,7 @@ import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { PendingTable } from "@/ui/transactions/pending-table";
 import { getPendingTransactions } from "@/lib/server/queries/pending";
 import { getRecentTransactions } from "@/lib/server/queries/transactions";
+import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 
 // The unfiltered listing: every transaction across every account, newest first,
@@ -12,14 +13,16 @@ import { formatMoney } from "@/lib/format";
 export const metadata = { title: "Recent transactions" };
 
 export default async function RecentPage(props: PageProps<"/w/[workspace]/transactions/recent">) {
-  const page = parsePage((await props.searchParams).page);
-  const { items, total, net } = await getRecentTransactions(page);
+  const searchParams = await props.searchParams;
+  const page = parsePage(searchParams.page);
+  const sort = parseSort(searchParams.sort);
+  const { items, total, net } = await getRecentTransactions(page, sort);
   // Pending holds sit atop the first page only, so they aren't repeated on every
   // paginated page of the settled ledger below.
   const pending = page === 1 ? await getPendingTransactions() : [];
 
   const basePath = "/transactions/recent";
-  const totalPages = await paginate(total, page, pageHref(basePath));
+  const totalPages = await paginate(total, page, pageHref(withSort(basePath, sort)));
 
   return (
     <Listing
@@ -31,13 +34,13 @@ export default async function RecentPage(props: PageProps<"/w/[workspace]/transa
         { label: "Net", value: formatMoney(net, null) },
         { label: "Transactions", value: total.toLocaleString("en-NZ") },
       ]}
-      basePath={basePath}
+      basePath={withSort(basePath, sort)}
       page={page}
       totalPages={totalPages}
       empty="No transactions yet."
     >
       {pending.length > 0 ? <PendingTable items={pending} /> : null}
-      <TransactionTable items={items} />
+      <TransactionTable items={items} sort={sort} sortBase={basePath} />
     </Listing>
   );
 }

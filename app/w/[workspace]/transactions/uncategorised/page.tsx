@@ -5,14 +5,15 @@ import { getUncategorisedTransactions } from "@/lib/server/queries/transactions"
 import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 
-// A static sibling of `[group]`, which wins the match: "uncategorised" is not one
-// of the ten NZFCC groups, and the absence of a category is not a category.
+// A transactions listing, sibling of `recent`: the transactions with no category
+// yet. The absence of a category is not a category, so this lives under
+// transactions rather than under a category group.
 
-const BASE_PATH = "/categories/uncategorised";
+const BASE_PATH = "/transactions/uncategorised";
 
 export const metadata = { title: "Uncategorised" };
 
-export default async function UncategorisedPage(props: PageProps<"/w/[workspace]/categories/uncategorised">) {
+export default async function UncategorisedPage(props: PageProps<"/w/[workspace]/transactions/uncategorised">) {
   const searchParams = await props.searchParams;
   const page = parsePage(searchParams.page);
   const sort = parseSort(searchParams.sort);
@@ -34,14 +35,7 @@ export default async function UncategorisedPage(props: PageProps<"/w/[workspace]
       totalPages={totalPages}
       empty="Every transaction is categorised."
     >
-      {/* Every row's group and category are, by definition, nothing. */}
-      <TransactionTable
-        items={items}
-        showGroup={false}
-        showCategory={false}
-        sort={sort}
-        sortBase={BASE_PATH}
-      />
+      <TransactionTable items={items} sort={sort} sortBase={BASE_PATH} />
     </Listing>
   );
 }

@@ -1,0 +1,23 @@
+-- Phase 7, finishing the two items the queued-sync work left deferred:
+-- retries/backoff and stale-claim recovery.
+--
+-- Two additions to SyncRun, both driven by the money_sync worker:
+--
+--   * `attempts` counts how many times the worker has claimed this run
+--     (queued → running). It is bumped on every claim, so a run that keeps dying
+--     climbs toward the worker's WORKER_MAX_ATTEMPTS cap; below the cap a failure
+--     re-queues the row, at the cap it is failed for good. The stale-claim reaper
+--     reads the same counter to decide whether a run abandoned by a dead worker is
+--     worth retrying.
+--
+--   * `nextAttemptAt` is the earliest a `queued` row may be claimed (null = now).
+--     The worker sets it in the future when it re-queues a failed run, so retries
+--     are spaced out with exponential backoff; the claim query skips rows whose
+--     backoff has not yet elapsed.
+--
+-- No grant changes: SyncRun's DML is granted table-level to both runtime roles
+-- (rls_backstop), so the new columns are already covered. No backfill: existing
+-- rows are terminal or in-flight and default to attempts=0 / nextAttemptAt=NULL,
+-- which is exactly a fresh, immediately-eligible run.
+ALTER TABLE "SyncRun" ADD COLUMN "attempts" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "SyncRun" ADD COLUMN "nextAttemptAt" TIMESTAMPTZ(3);

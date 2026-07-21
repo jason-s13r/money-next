@@ -14,7 +14,7 @@ import { SankeySection } from "@/ui/dashboard/sankey-section";
 import { getBalanceSummary } from "@/lib/server/metrics/balance";
 import { WindowPager } from "@/ui/dashboard/comparison/pager";
 
-export const metadata = { title: "Income and spending breakdown" };
+export const metadata = { title: "Money Flow" };
 
 const DEFAULT_PERIOD: Period = "month";
 const WINDOW = 1;
@@ -56,9 +56,7 @@ export default async function BreakdownFlowPage(props: PageProps<"/w/[workspace]
 
   return (
     <main className="mx-auto mb-10 w-full flex flex-col gap-4 max-w-5xl p-2">
-      <header>
-        <h1 className="text-2xl font-semibold">Money Flow</h1>
-      </header>
+      <h1 className="sr-only">Money Flow</h1>
 
       <PeriodSelector period={period} href="/breakdown/flow" />
       

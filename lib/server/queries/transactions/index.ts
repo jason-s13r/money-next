@@ -9,6 +9,7 @@ import {
   listInclude,
   listTransactions,
   netInDisplay,
+  orderByForSort,
   TRANSACTIONS_PER_PAGE,
 } from "./core";
 
@@ -34,6 +35,7 @@ export { getCardSuffixes, getCategoryNames, getTransactionTypes } from "./slugs"
 export async function getAccountTransactions(
   accountId: string,
   page: number,
+  sort: Sort = DEFAULT_SORT,
   perPage = TRANSACTIONS_PER_PAGE,
 ) {
   await connection();
@@ -41,7 +43,7 @@ export async function getAccountTransactions(
   const [rows, total] = await Promise.all([
     db.transaction.findMany({
       where: { accountId },
-      orderBy: [{ date: "desc" }, { id: "desc" }],
+      orderBy: orderByForSort(sort),
       skip: (page - 1) * perPage,
       take: perPage,
       include: listInclude,
@@ -56,8 +58,8 @@ export async function getAccountTransactions(
  * Every transaction across every account, newest first — the unfiltered listing.
  * No `where` key, so it spans all accounts and all types (transfers included).
  */
-export function getRecentTransactions(page: number) {
-  return listTransactions({}, page);
+export function getRecentTransactions(page: number, sort: Sort = DEFAULT_SORT) {
+  return listTransactions({}, page, sort);
 }
 
 /**
@@ -73,14 +75,20 @@ export const UNCATEGORISED_WHERE: Prisma.TransactionWhereInput = {
   type: { notIn: ["TRANSFER"] },
 };
 
-export function getGroupTransactions(group: string, page: number) {
-  return listTransactions({ categoryGroup: { is: { name: group } } }, page);
+export function getGroupTransactions(group: string, page: number, sort: Sort = DEFAULT_SORT) {
+  return listTransactions({ categoryGroup: { is: { name: group } } }, page, sort);
 }
 
-export function getCategoryTransactions(group: string, category: string, page: number) {
+export function getCategoryTransactions(
+  group: string,
+  category: string,
+  page: number,
+  sort: Sort = DEFAULT_SORT,
+) {
   return listTransactions(
     { categoryGroup: { is: { name: group } }, category: { is: { name: category } } },
     page,
+    sort,
   );
 }
 
@@ -109,7 +117,12 @@ const searchableScalarFields = [
  * for an account number or a payment reference should surface the transfer that
  * carries it, which is often the whole point of searching.
  */
-export async function searchTransactions(query: string, page: number, perPage = TRANSACTIONS_PER_PAGE) {
+export async function searchTransactions(
+  query: string,
+  page: number,
+  sort: Sort = DEFAULT_SORT,
+  perPage = TRANSACTIONS_PER_PAGE,
+) {
   return listTransactions(
     {
       OR: [
@@ -123,7 +136,7 @@ export async function searchTransactions(query: string, page: number, perPage = 
       ],
     },
     page,
-    DEFAULT_SORT,
+    sort,
     perPage,
   );
 }
@@ -186,8 +199,8 @@ async function listUncategorisedByMagnitude(
  * business can hold more than one id (Akahu has two for "Kamo Vets"), so this
  * lists exactly the id the reader clicked rather than every id sharing a name.
  */
-export function getMerchantTransactions(merchantId: string, page: number) {
-  return listTransactions({ merchantId }, page);
+export function getMerchantTransactions(merchantId: string, page: number, sort: Sort = DEFAULT_SORT) {
+  return listTransactions({ merchantId }, page, sort);
 }
 
 /**
@@ -198,14 +211,14 @@ export function getMerchantTransactions(merchantId: string, page: number) {
  * end in the same four digits. This lists whatever carries the suffix, which is
  * what the reader clicked, and shows the account on every row.
  */
-export function getCardTransactions(suffix: string, page: number) {
-  return listTransactions({ cardSuffix: suffix }, page);
+export function getCardTransactions(suffix: string, page: number, sort: Sort = DEFAULT_SORT) {
+  return listTransactions({ cardSuffix: suffix }, page, sort);
 }
 
 /**
  * Every transaction carrying a `type` (DEBIT, CREDIT, TRANSFER, EFTPOS, FEE, …),
  * in every direction — the type page is keyed only by that Akahu type.
  */
-export function getTypeTransactions(type: string, page: number) {
-  return listTransactions({ type }, page);
+export function getTypeTransactions(type: string, page: number, sort: Sort = DEFAULT_SORT) {
+  return listTransactions({ type }, page, sort);
 }

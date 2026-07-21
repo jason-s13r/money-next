@@ -16,7 +16,7 @@ export function CurrencyBreakdown({
   if (!hasForeign) return null;
 
   return (
-    <ul className="shrink-0 space-y-0.5 text-right text-xs font-mono tabular-nums">
+    <ul className="shrink-0 space-y-0.5 text-left text-xs font-mono tabular-nums sm:text-right">
       <li>Current Balances</li>
       {byCurrency.map((b) => (
         <li key={b.currency}>

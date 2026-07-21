@@ -39,10 +39,12 @@ async function syncLink(db: ScopedDb) {
  * can neither rewrite the catalogs nor spend the Akahu limit.
  *
  * Coalesced: a run already waiting to be claimed is reused rather than stacked, so
- * mashing the button doesn't pile up identical jobs. A queued incremental is
- * upgraded to a full sync if `full` asks for one — the stronger request wins.
+ * mashing the button doesn't pile up identical jobs. If that waiting run is a
+ * failed one sitting out its retry backoff (`nextAttemptAt` in the future), a
+ * person clicking "sync now" is an explicit override — clear the backoff so the
+ * worker takes it on the next poll instead of making them wait it out.
  */
-async function enqueueSync(db: ScopedDb, { full }: { full: boolean }) {
+async function enqueueSync(db: ScopedDb) {
   const link = await syncLink(db);
 
   const waiting = await db.syncRun.findFirst({
@@ -50,14 +52,14 @@ async function enqueueSync(db: ScopedDb, { full }: { full: boolean }) {
     orderBy: { startedAt: "asc" },
   });
   if (waiting) {
-    if (full && !waiting.full) {
-      await db.syncRun.update({ where: { id: waiting.id }, data: { full: true } });
+    if (waiting.nextAttemptAt && waiting.nextAttemptAt > new Date()) {
+      await db.syncRun.update({ where: { id: waiting.id }, data: { nextAttemptAt: null } });
     }
     return;
   }
 
   await db.syncRun.create({
-    data: { workspaceId: db.$workspaceId, bankLinkId: link.id, status: "queued", full },
+    data: { workspaceId: db.$workspaceId, bankLinkId: link.id, status: "queued", full: false },
   });
 }
 
@@ -78,20 +80,7 @@ export async function refreshAndSync() {
   await requireRole({ sync: ["run"] });
 
   const db = await getDb();
-  await enqueueSync(db, { full: false });
-
-  await revalidateWorkspacePath("/sync");
-}
-
-/**
- * Queue a full historical sync — re-fetches the whole history window rather than
- * syncing incrementally. Same enqueue path as `refreshAndSync`, `full: true`.
- */
-export async function fullSync() {
-  await requireRole({ sync: ["run"] });
-
-  const db = await getDb();
-  await enqueueSync(db, { full: true });
+  await enqueueSync(db);
 
   await revalidateWorkspacePath("/sync");
 }

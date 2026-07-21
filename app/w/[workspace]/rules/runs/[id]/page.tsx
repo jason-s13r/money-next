@@ -24,12 +24,9 @@ export default async function RuleRunPage(props: PageProps<"/w/[workspace]/rules
   const { run, applications } = data;
 
   return (
-    <main className="mx-auto w-full max-w-4xl p-2">
+    <main className="mx-auto w-full max-w-5xl p-2">
       <header className="mb-6">
-        <Link href="/rules/runs" className="text-sm text-muted hover:underline">
-          ← Rules log
-        </Link>
-        <h1 className="mt-2 text-2xl font-semibold">
+        <h1 className="text-2xl font-semibold">
           Rule run · <span className="capitalize">{run.trigger}</span>
         </h1>
         <p className="mt-1 text-sm text-muted">{formatDateTime(run.startedAt)}</p>
@@ -54,7 +51,8 @@ export default async function RuleRunPage(props: PageProps<"/w/[workspace]/rules
       {applications.length === 0 ? (
         <p className="py-8 text-center text-sm opacity-60">This run made no edits.</p>
       ) : (
-        <table className="w-full border-collapse text-sm">
+        <div className="overflow-x-auto">
+        <table className="w-full min-w-xl border-collapse text-sm">
           <thead>
             <tr className="border-b border-current/20 text-left">
               <th className="py-2 pr-4 font-medium">Date</th>
@@ -110,6 +108,7 @@ export default async function RuleRunPage(props: PageProps<"/w/[workspace]/rules
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </main>
   );

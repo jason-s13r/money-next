@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
 import { pageHref, paginate, Pagination, parsePage } from "@/ui/primitives/pagination";
 import { StatList } from "@/ui/primitives/stat-list";
-import { TransactionTable } from "@/ui/transactions/transaction-table";
+import { ACCOUNT_COLUMNS, TransactionTable } from "@/ui/transactions/transaction-table";
 import { PendingTable } from "@/ui/transactions/pending-table";
 import { getAccount } from "@/lib/server/queries/accounts";
 import { getAccountPendingTransactions } from "@/lib/server/queries/pending";
 import { getAccountTransactions } from "@/lib/server/queries/transactions";
+import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 
 export async function generateMetadata(props: PageProps<"/w/[workspace]/accounts/[accountId]">) {
@@ -16,17 +17,19 @@ export async function generateMetadata(props: PageProps<"/w/[workspace]/accounts
 
 export default async function AccountPage(props: PageProps<"/w/[workspace]/accounts/[accountId]">) {
   const { accountId } = await props.params;
-  const page = parsePage((await props.searchParams).page);
+  const searchParams = await props.searchParams;
+  const page = parsePage(searchParams.page);
+  const sort = parseSort(searchParams.sort);
 
   const account = await getAccount(accountId);
   if (!account) notFound();
 
-  const { items, total } = await getAccountTransactions(accountId, page);
+  const { items, total } = await getAccountTransactions(accountId, page, sort);
   // Pending holds sit atop the first page only, so they aren't repeated on every
   // paginated page of this account's settled ledger below.
   const pending = page === 1 ? await getAccountPendingTransactions(accountId) : [];
   const basePath = `/accounts/${accountId}`;
-  const totalPages = await paginate(total, page, pageHref(basePath));
+  const totalPages = await paginate(total, page, pageHref(withSort(basePath, sort)));
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
@@ -73,10 +76,10 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
         ) : null
       ) : (
         <>
-          {/* Every row is this one account, so the Account column is dropped and
-              the running Balance — meaningful only within a single account — added. */}
-          <TransactionTable items={items} showAccount={false} showBalance />
-          <Pagination basePath={basePath} page={page} totalPages={totalPages} />
+          {/* A single account's ledger defaults to showing its running Balance —
+              a column meaningless once rows from different accounts interleave. */}
+          <TransactionTable items={items} defaultColumns={ACCOUNT_COLUMNS} sort={sort} sortBase={basePath} />
+          <Pagination basePath={withSort(basePath, sort)} page={page} totalPages={totalPages} />
         </>
       )}
     </main>

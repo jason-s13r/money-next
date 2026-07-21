@@ -24,7 +24,7 @@ export function slotColor(categories: string[], category: string): string {
  * absence of a category, which gets its own list.
  */
 function rowHref(category: string): string | null {
-  if (category === UNCATEGORISED) return "/categories/uncategorised";
+  if (category === UNCATEGORISED) return "/transactions/uncategorised";
   return isKnownGroup(category) ? `/categories/${slugify(category)}` : null;
 }
 
@@ -49,7 +49,7 @@ function merchantHref(comparison: Comparison, merchant: string): string | null {
  * list holds, so it leads there instead.
  */
 function incomeDetailHref(group: string | null, label: string): string | null {
-  if (label === UNCATEGORISED) return "/categories/uncategorised";
+  if (label === UNCATEGORISED) return "/transactions/uncategorised";
   return group ? detailHref(group, label) : null;
 }
 

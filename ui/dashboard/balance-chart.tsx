@@ -5,7 +5,7 @@ import { formatMoneyWhole } from "@/lib/format";
 import { formatPeriodKey } from "@/lib/periods";
 import type { BalanceSeries } from "@/lib/server/metrics/balance-series";
 import { BalanceChartSvg } from "./balance-chart-svg";
-import { BalanceChartLegend } from "./balance-chart-legend";
+import { BalanceChartLegend, type LegendItem } from "./balance-chart-legend";
 import {
   AXIS_W,
   C_DOWN,
@@ -286,15 +286,48 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     money,
   ]);
 
-  const legend: { color: string; dashed?: boolean; label: string }[] = [
-    { color: C_WORTH, label: "Available balance" },
-  ];
+  // The gross forecast burn (Pessimistic) less the net one (Forecast) is exactly
+  // the periodic income assumed to offset it — so the same expenses/income/net
+  // breakdown the runway tile shows can be reconstructed here without threading
+  // the raw figures through the series.
+  const forecastIncome =
+    pessimisticMonthly != null && forecastMonthly != null ? pessimisticMonthly - forecastMonthly : null;
+
+  const legend: LegendItem[] = [{ color: C_WORTH, label: "Available balance" }];
   if (futureForecast > 0)
-    legend.push({ color: C_FORECAST, dashed: true, label: `Forecast · ${compact.format(forecastMonthly!)}/mo` });
+    legend.push({
+      color: C_FORECAST,
+      dashed: true,
+      label: `Forecast · ${compact.format(forecastMonthly!)}/mo`,
+      popover: {
+        note: "Spend if life carries on unchanged, less the periodic income that keeps covering part of it.",
+        rows: [
+          { label: "Forecast expenses", value: `${money(pessimisticMonthly!)}/mo` },
+          { label: "Less periodic income", value: `−${money(forecastIncome!)}/mo` },
+          { label: "Net burn", value: `${money(forecastMonthly!)}/mo`, emphasis: true },
+        ],
+      },
+    });
   if (futureEmergency > 0)
-    legend.push({ color: C_EMERGENCY, dashed: true, label: `Reduced Spending · ${compact.format(emergencyMonthly!)}/mo` });
+    legend.push({
+      color: C_EMERGENCY,
+      dashed: true,
+      label: `Reduced Spending · ${compact.format(emergencyMonthly!)}/mo`,
+      popover: {
+        note: "Essentials only — the floor if discretionary spending stops. Assumes no income arrives to offset it.",
+        rows: [{ label: "Essential spend", value: `${money(emergencyMonthly!)}/mo`, emphasis: true }],
+      },
+    });
   if (futurePessimistic > 0)
-    legend.push({ color: C_PESSIMISTIC, dashed: true, label: `Pessimistic · ${compact.format(pessimisticMonthly!)}/mo` });
+    legend.push({
+      color: C_PESSIMISTIC,
+      dashed: true,
+      label: `Pessimistic · ${compact.format(pessimisticMonthly!)}/mo`,
+      popover: {
+        note: "Spending carries on unchanged and assumes no income arrives to offset it — the harshest case.",
+        rows: [{ label: "Forecast expenses", value: `${money(pessimisticMonthly!)}/mo`, emphasis: true }],
+      },
+    });
 
   return (
     <figure className="m-0">

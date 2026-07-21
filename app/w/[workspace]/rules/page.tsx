@@ -6,9 +6,9 @@ import { getRuleRuns } from "@/lib/server/queries/runs";
 import { readLearnedRules, readTransferAutoLink, type Graph } from "@/lib/server/rules/learning";
 import { formatDateTime } from "@/lib/format";
 import { removeRule } from "./actions";
-import { ApplyRulesButton } from "./apply-rules-button";
 import { TransfersToggle } from "./transfers-toggle";
 import { RuleOutputs } from "@/ui/rules/rule-output";
+import { AutoRefresh } from "@/ui/primitives/auto-refresh";
 
 export const metadata = { title: "Rules" };
 
@@ -35,6 +35,9 @@ export default async function RulesPage() {
   const transfersOn = graph ? readTransferAutoLink(graph) : false;
 
   const recentRuns = runList.items.slice(0, RECENT_RUNS);
+  // A queued/running backfill is finished by the worker out-of-band; poll while one
+  // is in flight so it moves to success/failed on its own (same as /sync).
+  const inFlight = runList.items.some((r) => r.status === "queued" || r.status === "running");
 
   // Resolve output ids to names for display.
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
@@ -42,12 +45,8 @@ export default async function RulesPage() {
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
-      <header className="mb-6 flex flex-wrap items-start justify-between gap-4">
-        <div className="max-w-xl">
-          <h1 className="text-2xl font-semibold">Rules</h1>
-        </div>
-        <ApplyRulesButton disabled={rules.length === 0 && !transfersOn} />
-      </header>
+      <AutoRefresh active={inFlight} />
+      <h1 className="sr-only">Rules</h1>
 
       <section className="mb-8 flex items-center justify-between gap-4 rounded border border-current/15 px-4 py-3">
         <div>
@@ -144,8 +143,10 @@ export default async function RulesPage() {
 
         {recentRuns.length === 0 ? (
           <p className="py-6 text-center text-xs text-muted">
-            No rule runs yet. A run is logged whenever the rules change something —
-            during a sync{canEdit ? ", or when you press Apply now" : ""}.
+            No rule runs yet.{" "}
+            {canEdit
+              ? "Press Apply now, or wait for a sync to match something."
+              : "A run appears when a sync matches something."}
           </p>
         ) : (
           <ul className="divide-y divide-current/10">
@@ -158,7 +159,11 @@ export default async function RulesPage() {
                   {formatDateTime(run.startedAt)}
                 </Link>
                 <span className="text-xs capitalize text-muted">{run.trigger}</span>
-                {run.status === "failed" ? (
+                {run.status === "queued" ? (
+                  <span className="text-xs italic text-muted">queued</span>
+                ) : run.status === "running" ? (
+                  <span className="text-xs text-muted">running…</span>
+                ) : run.status === "failed" ? (
                   <span className="text-xs text-status-critical">failed</span>
                 ) : run.errors > 0 ? (
                   <span className="text-xs text-status-critical">{run.errors} errored</span>
