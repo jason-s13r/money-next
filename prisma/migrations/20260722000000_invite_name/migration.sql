@@ -1,0 +1,14 @@
+-- Let an owner name the invitee when they send an invite, so the signup form can
+-- pre-fill it instead of asking for a name the owner already knew.
+--
+-- Nullable, and no backfill: existing pending invites simply have no name, and
+-- the signup form falls back to an empty field for them. Better Auth's
+-- `createInvitation` doesn't know this column exists — the `invite` action writes
+-- it in a second `UPDATE` after the row is created — so an invite made by any
+-- other path also just leaves it NULL.
+--
+-- No grant change. `Invite` is a control-plane table whose DML is granted
+-- table-level to money_app (rls_backstop migration), and a table-level grant
+-- covers columns added later, so the new column is already writable by the web
+-- role. No RLS policy either: tenant_isolation is only on the tenant tables.
+ALTER TABLE "Invite" ADD COLUMN "name" TEXT;

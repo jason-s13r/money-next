@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { confirm, start, type EnrolState } from "./actions";
 
 const EMPTY: EnrolState = { error: null, started: null };
@@ -23,14 +25,7 @@ export function EnrolForm() {
       <form action={formAction} className="mt-6 flex flex-col gap-3">
         <label className="flex flex-col gap-1 text-sm">
           Confirm your password
-          <input
-            name="password"
-            type="password"
-            required
-            autoFocus
-            autoComplete="current-password"
-            className="rounded border border-current/20 bg-transparent px-2 py-1"
-          />
+          <Input name="password" type="password" required autoFocus autoComplete="current-password" />
         </label>
 
         {state.error ? (
@@ -84,13 +79,13 @@ function Confirm({ started }: { started: NonNullable<EnrolState["started"]> }) {
 
         <label className="flex flex-col gap-1 text-sm">
           Enter a code from the app to finish
-          <input
+          <Input
             name="code"
             required
             autoFocus
             inputMode="numeric"
             autoComplete="one-time-code"
-            className="rounded border border-current/20 bg-transparent px-2 py-1 font-mono"
+            className="font-mono"
           />
         </label>
 
@@ -110,12 +105,8 @@ function Confirm({ started }: { started: NonNullable<EnrolState["started"]> }) {
 function Submit({ idle, busy }: { idle: string; busy: string }) {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded bg-foreground px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-    >
+    <Button type="submit" disabled={pending} className="self-start">
       {pending ? busy : idle}
-    </button>
+    </Button>
   );
 }

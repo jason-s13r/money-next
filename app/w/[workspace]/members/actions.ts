@@ -4,10 +4,12 @@ import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 
 import { auth } from "@/lib/server/auth";
+import { authDb } from "@/lib/server/db";
 import { requireRole } from "@/lib/server/auth/session";
 import { isRole } from "@/lib/server/auth/roles";
+import { withResetTokenCapture } from "@/lib/server/auth/reset-capture";
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
-import { NO_ERROR, type MemberActionState } from "./types";
+import { NO_ERROR, type MemberActionState, type ResetLinkState } from "./types";
 
 /**
  * Member management: the owner-facing surface T12 asked for and phase 3 didn't
@@ -62,6 +64,7 @@ export async function invite(
 
   const email = String(formData.get("email") ?? "").trim();
   const role = String(formData.get("role") ?? "");
+  const name = String(formData.get("name") ?? "").trim();
 
   // A select renders three options; a POST can carry any string. Better Auth
   // rejects an unknown role too, but this app's own vocabulary is the thing
@@ -69,14 +72,21 @@ export async function invite(
   if (!isRole(role)) return { error: "Pick a role." };
   if (!email) return { error: "An email address is required." };
 
-  return run(async () =>
-    auth.api.createInvitation({
+  return run(async () => {
+    const invitation = await auth.api.createInvitation({
       headers: await headers(),
       // Explicit, never the session's active organization: this app's active
       // workspace is the URL, and `ctx` is what proved the caller is in it.
       body: { email, role, organizationId: ctx.workspace.id },
-    }),
-  );
+    });
+
+    // The name isn't part of Better Auth's invitation schema, so it goes on in a
+    // second write against the row it just created. Only when one was typed —
+    // an empty name would overwrite nothing and means the same as never set.
+    if (name) {
+      await authDb.invite.update({ where: { id: invitation.id }, data: { name } });
+    }
+  });
 }
 
 /** Withdraw a pending invite, so the link stops working. */
@@ -142,4 +152,68 @@ export async function changeRole(
       body: { memberId, role, organizationId: ctx.workspace.id },
     }),
   );
+}
+
+/**
+ * Generate a password-reset link for a member who's locked out.
+ *
+ * Gated on `member: ["update"]` — owner-only, the same power that already lets
+ * an owner change roles and remove people. This one is heavier than it looks:
+ * the link is a bearer credential (see app/reset-password and the invite page's
+ * honest note), so an owner who generates it can set that member's password
+ * before ever sending it. That is a real account-takeover capability, and it is
+ * deliberately reserved to the role that can already end a member's access
+ * entirely. Nothing an editor or viewer can reach.
+ *
+ * **The target is resolved by id against this workspace, and the email is read
+ * from the row — never from the form.** A `userId` field can name anyone; the
+ * membership lookup is what proves the id belongs to a member *here*, so an
+ * owner of one workspace cannot mint a reset link for a stranger, or for a
+ * member of a workspace they don't own. Same rule as `removeMember` and the
+ * invite flow: the id is an identifier, the database is the authority.
+ *
+ * Returns the token rather than revalidating: nothing on the page changed (no
+ * reset row is listed anywhere), and the client needs the token to build the
+ * link. Better Auth still owns the token's generation, expiry, and single-use
+ * redemption — `requestPasswordReset` mints it and `captureResetToken` is the
+ * only reason we ever see it (lib/server/auth/reset-capture).
+ */
+export async function generateResetLink(
+  _prev: ResetLinkState,
+  formData: FormData,
+): Promise<ResetLinkState> {
+  const ctx = await requireRole({ member: ["update"] });
+
+  const userId = String(formData.get("userId") ?? "");
+
+  const membership = await authDb.membership.findFirst({
+    where: { workspaceId: ctx.workspace.id, userId },
+    select: { user: { select: { email: true } } },
+  });
+  if (!membership) return { error: "That person isn't a member of this workspace.", token: null };
+
+  try {
+    const requestHeaders = await headers();
+    const token = await withResetTokenCapture(() =>
+      auth.api.requestPasswordReset({
+        headers: requestHeaders,
+        // The member's own address, from the row above. A reset link is only
+        // ever for the account it names.
+        body: { email: membership.user.email },
+      }),
+    );
+
+    // `requestPasswordReset` is enumeration-resistant and swallows failures, so a
+    // null token means it produced none — here, only if reset were misconfigured
+    // (it isn't) or the row vanished between the two queries. Say so plainly
+    // rather than hand back a link that goes nowhere.
+    if (!token) return { error: "Couldn't generate a link. Try again.", token: null };
+
+    return { error: null, token };
+  } catch (error) {
+    if (error instanceof APIError) {
+      return { error: error.body?.message ?? "Couldn't generate a link.", token: null };
+    }
+    throw error;
+  }
 }

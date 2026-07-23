@@ -48,6 +48,21 @@ const EXEMPT: Record<string, string> = {
     "enrolling your own authenticator; gated on your password, not a workspace",
   "app/enrol-mfa/actions.ts:confirm":
     "same — and it must work before you have any membership at all",
+  "app/account/actions.ts:changePassword":
+    "changing your own password; gated on your current password, not a workspace",
+  "app/account/actions.ts:updateProfile":
+    "editing your own name and email; gated on your session, and your details " +
+      "belong to you, not to any one workspace",
+  "app/account/actions.ts:revokeSession":
+    "signing out one of your own devices; the session is resolved against your " +
+      "own user id, which is both the scope and the authorization",
+  "app/account/actions.ts:revokeOtherSessions":
+    "signing out your own other devices; Better Auth scopes it to your sessions",
+
+  // ── A reset link: the token is the authority, and the holder may be signed out ─
+  "app/reset-password/actions.ts:resetPassword":
+    "completes a reset from a link; the single-use, time-limited token is the " +
+      "authority, and the caller may not have a session to check a role against",
 
   // ── The invite flow: you are not in a workspace, that is the point ───────
   "app/invite/[id]/actions.ts:signUpFromInvite":

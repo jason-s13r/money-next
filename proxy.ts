@@ -47,8 +47,14 @@ const WORKSPACE_SLUG_HEADER = "x-workspace-slug";
  * owner typed, once, inside three days. app/invite/[id]/page.tsx accounts for
  * that honestly, and T12 has been corrected to match. Being public costs nothing
  * extra — every check that matters is in the page and the action, not here.
+ *
+ * `/reset-password` is public for the same reason and carries the same bearer
+ * property, narrower still: the person following a reset link is the one who
+ * *cannot* sign in, so bouncing them to /login would be the invite bug again.
+ * The token in the link is the authority, it is single-use and expires in an
+ * hour, and Better Auth validates it in the action — not here.
  */
-const PUBLIC_PATHS = ["/login", "/enrol-mfa", "/invite"];
+const PUBLIC_PATHS = ["/login", "/enrol-mfa", "/invite", "/reset-password"];
 
 /**
  * The Content-Security-Policy, with a fresh nonce per request.

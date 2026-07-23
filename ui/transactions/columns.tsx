@@ -60,7 +60,11 @@ export function buildTransactionColumns({
 
     {
       id: "description",
-      meta: { label: "Description", sortField: "description" },
+      meta: {
+        label: "Description",
+        sortField: "description",
+        cellClassName: "whitespace-normal break-words",
+      },
       header: "Description",
       cell: ({ row }) => {
         const tx = row.original;
@@ -108,7 +112,11 @@ export function buildTransactionColumns({
 
     {
       id: "account",
-      meta: { label: "Account", sortField: "account", cellClassName: "opacity-60" },
+      meta: {
+        label: "Account",
+        sortField: "account",
+        cellClassName: "whitespace-normal opacity-60",
+      },
       header: "Account",
       cell: ({ row }) => {
         const tx = row.original;
@@ -131,7 +139,11 @@ export function buildTransactionColumns({
 
     {
       id: "category",
-      meta: { label: "Category", sortField: "category", cellClassName: "opacity-60" },
+      meta: {
+        label: "Category",
+        sortField: "category",
+        cellClassName: "whitespace-normal opacity-60",
+      },
       header: "Category",
       cell: ({ row }) => {
         const tx = row.original;
@@ -182,7 +194,11 @@ export function buildTransactionColumns({
 
     {
       id: "type",
-      meta: { label: "Type", sortField: "type", cellClassName: "opacity-60" },
+      meta: {
+        label: "Type",
+        sortField: "type",
+        cellClassName: "whitespace-normal opacity-60",
+      },
       header: "Type",
       cell: ({ row }) => {
         const tx = row.original;

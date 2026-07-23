@@ -4,6 +4,8 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
 import type { Role } from "@/lib/server/auth/roles";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { invite } from "./actions";
 import { NO_ERROR, type MemberActionState } from "./types";
 
@@ -22,21 +24,25 @@ export function InviteForm({ roles }: { roles: readonly Role[] }) {
     <form action={formAction} className="mt-4 flex flex-wrap items-end gap-3">
       <label className="flex flex-1 flex-col gap-1 text-sm">
         Email address
-        <input
-          name="email"
-          type="email"
-          required
-          autoComplete="off"
-          className="rounded border border-current/20 bg-transparent px-2 py-1"
-        />
+        <Input name="email" type="email" required autoComplete="off" />
+      </label>
+
+      <label className="flex flex-1 flex-col gap-1 text-sm">
+        Name <span className="opacity-60">(optional)</span>
+        {/* Just a convenience: it pre-fills the name on the signup form so the
+            invitee doesn't restate what the owner already knew. They can change
+            it, so it is never required here. */}
+        <Input name="name" autoComplete="off" />
       </label>
 
       <label className="flex flex-col gap-1 text-sm">
         Role
+        {/* Native select — no shadcn Select is installed — styled to match the
+            Input beside it (h-8, rounded-lg, border-input). */}
         <select
           name="role"
           defaultValue="viewer"
-          className="rounded border border-current/20 bg-transparent px-2 py-1.5"
+          className="h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
         >
           {roles.map((role) => (
             <option key={role} value={role}>
@@ -66,12 +72,8 @@ export function InviteForm({ roles }: { roles: readonly Role[] }) {
 function Submit() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="rounded bg-foreground px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-    >
+    <Button type="submit" disabled={pending}>
       {pending ? "Inviting…" : "Invite"}
-    </button>
+    </Button>
   );
 }

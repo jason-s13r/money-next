@@ -14,9 +14,9 @@ afterEach(() => {
 
 describe("mintId", () => {
   test("is namespaced, typed, and opaque", () => {
-    process.env.ID_NAMESPACE = "1jnz";
+    process.env.ID_NAMESPACE = "test";
     const id = mintId("merchant");
-    assert.match(id, /^1jnz_merchant_[0-9a-f]{32}$/);
+    assert.match(id, /^test_merchant_[0-9a-f]{32}$/);
   });
 
   test("defaults to a namespace, so nothing has to be configured", () => {
@@ -27,7 +27,7 @@ describe("mintId", () => {
   test("cannot be confused with an id we mirror rather than mint", () => {
     // NZFCC's ids are cuid-shaped, so an unprefixed random id would be
     // indistinguishable from an imported one. That is the whole point.
-    process.env.ID_NAMESPACE = "1jnz";
+    process.env.ID_NAMESPACE = "test";
     for (const id of [mintId("merchant"), mintId("category"), mintId("group")]) {
       assert.ok(!id.startsWith("nzfcc_"));
       assert.ok(!id.startsWith("merchant_"));

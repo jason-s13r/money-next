@@ -17,7 +17,7 @@ import {
   CircleDollarSignIcon,
   ChevronsUpDownIcon,
   LogOutIcon,
-  ShieldCheckIcon,
+  UserRoundIcon,
   MonitorIcon,
   SunIcon,
   MoonIcon,
@@ -131,7 +131,7 @@ function useMounted() {
  * avoid a hydration mismatch — the items are fully usable before then.
  * `closeOnClick={false}` keeps the menu open so you can see the theme change.
  */
-function ThemeItems() {
+export function ThemeItems() {
   const { theme, setTheme } = useTheme();
   const mounted = useMounted();
 
@@ -155,7 +155,7 @@ function ThemeItems() {
 }
 
 /** Up to two initials for the little square/round badges. */
-function initials(name: string) {
+export function initials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   if (parts.length === 0) return "?";
   return (parts[0][0] + (parts[1]?.[0] ?? "")).toUpperCase();
@@ -320,6 +320,16 @@ function NavUser({
               </p>
             </div>
             <DropdownMenuSeparator />
+            {/* Top-level, not workspace-scoped: your account belongs to the
+                person, so plain next/link. Sits above the workspace section
+                because it is about *you*, not whichever workspace you're in. Its
+                own area (details, password, sessions, two-factor) has its own
+                sidebar once you're there. */}
+            <DropdownMenuItem render={<NextLink href="/account" />}>
+              <UserRoundIcon />
+              Account Settings
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
             <DropdownMenuGroup>
               <DropdownMenuLabel className="text-xs text-muted-foreground">
                 Workspace
@@ -351,10 +361,6 @@ function NavUser({
             <DropdownMenuItem render={<Link href="/members" />}>
               <UsersIcon />
               Members
-            </DropdownMenuItem>
-            <DropdownMenuItem render={<NextLink href="/enrol-mfa" />}>
-              <ShieldCheckIcon />
-              Two-factor
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>

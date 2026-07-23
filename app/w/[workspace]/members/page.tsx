@@ -5,6 +5,7 @@ import { formatDate } from "@/lib/format";
 import { InviteForm } from "./invite-form";
 import { InviteLink } from "./invite-link";
 import { CancelInviteButton, RemoveMemberButton, RoleSelect } from "./member-controls";
+import { ResetLinkButton } from "./reset-link";
 
 export const metadata = { title: "Members" };
 
@@ -75,6 +76,13 @@ export default async function MembersPage() {
               {isOwner && !isLastOwner ? (
                 <RemoveMemberButton memberId={member.id} name={member.name} self={isSelf} />
               ) : null}
+
+              {/* Available for every member, including the last owner and
+                  yourself: a reset changes a password, not a role, so the
+                  last-owner invariant that gates the controls above has nothing
+                  to protect here. The person just needs the link (see
+                  ./reset-link and app/reset-password). */}
+              {isOwner ? <ResetLinkButton userId={member.userId} name={member.name} /> : null}
             </li>
           );
         })}

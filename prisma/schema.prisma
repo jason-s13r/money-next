@@ -277,6 +277,14 @@ model Invite {
   email String
   role  String
 
+  /// The invitee's name, if the owner typed one when sending the invite. Purely
+  /// a convenience: it pre-fills the signup form so the person doesn't have to
+  /// state a name the owner already knew. Nullable and never a control — the
+  /// invitee can change it, and Better Auth's `createInvitation` doesn't set it
+  /// (the `invite` action writes it in a second step), so an invite made any
+  /// other way simply has none.
+  name String?
+
   /// pending | accepted | rejected | canceled. Better Auth transitions it from
   /// `pending` exactly once, which is what makes an invite single-use.
   status String @default("pending")

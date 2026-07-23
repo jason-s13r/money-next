@@ -3,6 +3,8 @@
 import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { verify, type TwoFactorState } from "./actions";
 
 export function TwoFactorForm({ next }: { next?: string }) {
@@ -18,13 +20,13 @@ export function TwoFactorForm({ next }: { next?: string }) {
 
       <label className="flex flex-col gap-1 text-sm">
         {backup ? "Backup code" : "Code"}
-        <input
+        <Input
           name="code"
           required
           autoFocus
           autoComplete="one-time-code"
           inputMode={backup ? "text" : "numeric"}
-          className="rounded border border-current/20 bg-transparent px-2 py-1 font-mono"
+          className="font-mono"
         />
       </label>
 
@@ -36,13 +38,15 @@ export function TwoFactorForm({ next }: { next?: string }) {
 
       <Submit />
 
-      <button
+      <Button
         type="button"
+        variant="link"
+        size="sm"
         onClick={() => setBackup((b) => !b)}
-        className="text-xs underline opacity-60 hover:opacity-100"
+        className="self-start px-0 text-xs text-muted-foreground"
       >
         {backup ? "Use your authenticator app instead" : "Lost your phone? Use a backup code"}
-      </button>
+      </Button>
     </form>
   );
 }
@@ -50,12 +54,8 @@ export function TwoFactorForm({ next }: { next?: string }) {
 function Submit() {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="mt-2 rounded bg-foreground px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-    >
+    <Button type="submit" disabled={pending} className="mt-2">
       {pending ? "Checking…" : "Verify"}
-    </button>
+    </Button>
   );
 }

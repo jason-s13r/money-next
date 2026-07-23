@@ -20,7 +20,8 @@
     "db:studio": "prisma studio",
     "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts",
     "db:worker": "tsx --env-file-if-exists=.env scripts/worker.ts",
-    "user:create": "tsx --env-file-if-exists=.env scripts/create-user.ts"
+    "user:create": "tsx --env-file-if-exists=.env scripts/create-user.ts",
+    "user:password": "tsx --env-file-if-exists=.env scripts/set-password.ts"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"

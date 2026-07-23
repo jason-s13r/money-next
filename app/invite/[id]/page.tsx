@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 
 import { authDb } from "@/lib/server/db";
 import { getSession } from "@/lib/server/auth/session";
+import { Button } from "@/components/ui/button";
 import { AcceptForm, SignUpForm } from "./forms";
 
 export const metadata: Metadata = { title: "Invitation" };
@@ -53,6 +54,7 @@ export default async function InvitePage({ params }: { params: Promise<{ id: str
       id: true,
       email: true,
       role: true,
+      name: true,
       status: true,
       expiresAt: true,
       workspace: { select: { name: true, slug: true } },
@@ -96,12 +98,12 @@ export default async function InvitePage({ params }: { params: Promise<{ id: str
             <strong className="font-medium">{invite.email}</strong> and this page will let
             you in.
           </p>
-          <a
-            href={`/login?next=${encodeURIComponent(`/invite/${invite.id}`)}`}
-            className="mt-4 inline-block rounded bg-foreground px-3 py-1.5 text-sm font-medium text-background"
-          >
-            Sign in
-          </a>
+          <Button
+            className="mt-4"
+            render={
+              <a href={`/login?next=${encodeURIComponent(`/invite/${invite.id}`)}`}>Sign in</a>
+            }
+          />
         </Shell>
       );
     }
@@ -113,7 +115,7 @@ export default async function InvitePage({ params }: { params: Promise<{ id: str
           <strong className="font-medium">{invite.role}</strong>. Create your account to
           accept.
         </p>
-        <SignUpForm inviteId={invite.id} email={invite.email} />
+        <SignUpForm inviteId={invite.id} email={invite.email} name={invite.name} />
       </Shell>
     );
   }

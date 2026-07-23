@@ -310,15 +310,33 @@ describe("the unscoped client stays unreachable", () => {
       // them and why there is no scoped client that could read them. Both files
       // filter by a `workspaceId` that `requireWorkspace()` already proved.
       "lib/server/auth/members.ts",
+      // Generating a password-reset link: resolves the target member's email by
+      // reading `Membership`/`User`, the control plane, filtered by a
+      // `workspaceId` that `requireRole` already proved. The read decides *who*
+      // the reset is for; it is not financial data being scoped. Same shape as
+      // members.ts next door.
+      "app/w/[workspace]/members/actions.ts",
       // The invite pages, where the caller is not in a workspace and may not
       // have an account: `scopedDb` needs a workspace id to exist at all, and
       // the whole question here is which workspace — if any — this person is
       // being let into. Both read `Invite` by its own id and nothing else.
       "app/invite/[id]/page.tsx",
       "app/invite/[id]/actions.ts",
+      // Your own account, which has no workspace in its URL by design (see
+      // app/account/layout): the sessions page lists *your* live sessions and the
+      // action revokes one, both filtered by your own user id, and editing your
+      // name touches the `User` control-plane row. Session and User are auth
+      // tables, not financial data — there is no workspace to scope them to, and
+      // no scoped client that could reach them.
+      "app/account/sessions/page.tsx",
+      "app/account/actions.ts",
       // The bootstrap: creates the first user, who by definition has no session
       // and no membership yet.
       "scripts/create-user.ts",
+      // The other bootstrap: sets a locked-out user's password from the shell,
+      // looking them up by email. No session, no workspace — the whole point is
+      // that the in-app paths are unreachable (see the file's header).
+      "scripts/set-password.ts",
       // This file.
       "tests/isolation.test.ts",
     ]);

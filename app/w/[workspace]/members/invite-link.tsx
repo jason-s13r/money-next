@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 
+import { Button } from "@/components/ui/button";
+
 /**
  * The invite link, to copy and send.
  *
@@ -29,12 +31,8 @@ export function InviteLink({ id }: { id: string }) {
   }
 
   return (
-    <button
-      type="button"
-      onClick={copy}
-      className="rounded border border-current/20 px-2 py-0.5 text-xs opacity-70 transition-opacity hover:opacity-100"
-    >
+    <Button type="button" variant="outline" size="sm" onClick={copy}>
       {copied ? "Copied" : "Copy link"}
-    </button>
+    </Button>
   );
 }

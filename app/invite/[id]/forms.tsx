@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { acceptInvite, signUpFromInvite } from "./actions";
 import { NO_ERROR, type InviteState } from "./types";
 
@@ -15,7 +17,16 @@ import { NO_ERROR, type InviteState } from "./types";
  * to state, and it isn't. The only thing this form contributes is a name and a
  * password; who the account is for was decided when the invite was sent.
  */
-export function SignUpForm({ inviteId, email }: { inviteId: string; email: string }) {
+export function SignUpForm({
+  inviteId,
+  email,
+  name,
+}: {
+  inviteId: string;
+  email: string;
+  /** Pre-filled from the invite when the owner typed one; still the invitee's to change. */
+  name?: string | null;
+}) {
   const [state, formAction] = useActionState<InviteState, FormData>(signUpFromInvite, NO_ERROR);
 
   return (
@@ -29,25 +40,15 @@ export function SignUpForm({ inviteId, email }: { inviteId: string; email: strin
 
       <label className="flex flex-col gap-1 text-sm">
         Your name
-        <input
-          name="name"
-          required
-          autoFocus
-          autoComplete="name"
-          className="rounded border border-current/20 bg-transparent px-2 py-1"
-        />
+        {/* `defaultValue`, not `value`: the owner's guess is a starting point the
+            invitee edits, not a controlled field. `autoFocus` still lands here so
+            they can correct it immediately. */}
+        <Input name="name" required autoFocus autoComplete="name" defaultValue={name ?? ""} />
       </label>
 
       <label className="flex flex-col gap-1 text-sm">
         Choose a password
-        <input
-          name="password"
-          type="password"
-          required
-          minLength={12}
-          autoComplete="new-password"
-          className="rounded border border-current/20 bg-transparent px-2 py-1"
-        />
+        <Input name="password" type="password" required minLength={12} autoComplete="new-password" />
         {/* The server enforces this; saying it here saves a round trip to learn it. */}
         <span className="text-xs opacity-70">At least 12 characters.</span>
       </label>
@@ -87,12 +88,8 @@ function Error({ message }: { message: string | null }) {
 function Submit({ idle, busy }: { idle: string; busy: string }) {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="self-start rounded bg-foreground px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-    >
+    <Button type="submit" disabled={pending} className="self-start">
       {pending ? busy : idle}
-    </button>
+    </Button>
   );
 }

@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import type { Role } from "@/lib/server/auth/roles";
+import { Button } from "@/components/ui/button";
 import { cancelInvite, changeRole, removeMember } from "./actions";
 import { NO_ERROR, type MemberActionState } from "./types";
 
@@ -88,7 +89,9 @@ export function RoleSelect({
           setChosen(event.target.value as Role);
           event.currentTarget.form?.requestSubmit();
         }}
-        className="rounded border border-current/20 bg-transparent px-1.5 py-0.5 text-xs"
+        // Native select — no shadcn Select is installed — sized to sit inline
+        // with the destructive Button beside it (h-7, like size="sm").
+        className="h-7 rounded-md border border-input bg-transparent px-1.5 text-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30"
       >
         {roles.map((option) => (
           <option key={option} value={option}>
@@ -156,15 +159,16 @@ function Error({ message }: { message: string | null }) {
 function Submit({ idle, busy, confirm }: { idle: string; busy: string; confirm: string }) {
   const { pending } = useFormStatus();
   return (
-    <button
+    <Button
       type="submit"
+      variant="destructive"
+      size="sm"
       disabled={pending}
       onClick={(event) => {
         if (!window.confirm(confirm)) event.preventDefault();
       }}
-      className="text-xs text-status-critical opacity-70 transition-opacity hover:opacity-100 disabled:opacity-40"
     >
       {pending ? busy : idle}
-    </button>
+    </Button>
   );
 }

@@ -3,6 +3,8 @@
 import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { signIn, type LoginState } from "./actions";
 
 /**
@@ -23,24 +25,11 @@ export function LoginForm({ next }: { next?: string }) {
 
       <label className="flex flex-col gap-1 text-sm">
         Email
-        <input
-          name="email"
-          type="email"
-          required
-          autoComplete="username"
-          autoFocus
-          className="rounded border border-current/20 bg-transparent px-2 py-1"
-        />
+        <Input name="email" type="email" required autoComplete="username" autoFocus />
       </label>
       <label className="flex flex-col gap-1 text-sm">
         Password
-        <input
-          name="password"
-          type="password"
-          required
-          autoComplete="current-password"
-          className="rounded border border-current/20 bg-transparent px-2 py-1"
-        />
+        <Input name="password" type="password" required autoComplete="current-password" />
       </label>
 
       {state.error ? (
@@ -61,12 +50,8 @@ export function LoginForm({ next }: { next?: string }) {
 function Submit({ idle, busy }: { idle: string; busy: string }) {
   const { pending } = useFormStatus();
   return (
-    <button
-      type="submit"
-      disabled={pending}
-      className="mt-2 rounded bg-foreground px-3 py-1.5 text-sm font-medium text-background disabled:opacity-50"
-    >
+    <Button type="submit" disabled={pending} className="mt-2">
       {pending ? busy : idle}
-    </button>
+    </Button>
   );
 }

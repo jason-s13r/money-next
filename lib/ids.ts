@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
  * Ids for the rows this app mints itself, as opposed to the ones it mirrors.
  *
  * The shape is `<namespace>_<type>_<random>`, e.g.
- * `1jnz_merchant_9f2c4e1a7b3d4f6a8c0e2b4d6f8a0c2e`.
+ * `app_merchant_9f2c4e1a7b3d4f6a8c0e2b4d6f8a0c2e`.
  *
  * Why a namespace at all: most rows here carry an id somebody else chose —
  * Akahu's `acc_`/`trans_`/`merchant_`, NZFCC's `nzfcc_`. When a user types a
@@ -64,7 +64,7 @@ export type MintedType = "merchant" | "category" | "group";
 /**
  * A fresh id for a row this app is creating.
  *
- * @example mintId("merchant") // "1jnz_merchant_9f2c4e1a7b3d4f6a8c0e2b4d6f8a0c2e"
+ * @example mintId("merchant") // "app_merchant_9f2c4e1a7b3d4f6a8c0e2b4d6f8a0c2e"
  */
 export function mintId(type: MintedType): string {
   return `${namespace()}_${type}_${randomUUID().replace(/-/g, "")}`;
