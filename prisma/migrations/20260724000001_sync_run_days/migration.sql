@@ -1,0 +1,14 @@
+-- `pnpm db:sync` now enqueues instead of syncing: it writes a `queued` SyncRun per
+-- active bank link and the money_sync worker does the Akahu fetch, so the scheduled
+-- sync and the app's "sync now" button travel the same path and only one process
+-- ever holds a decrypted Akahu token.
+--
+-- That splits the enqueuer from the runner, and an argument the enqueuer parsed but
+-- never stored would be an argument silently dropped. `full` was already persisted
+-- for exactly this reason; `--days` was not, because until now the script that
+-- parsed it was the script that used it. This column closes that gap.
+--
+-- Null means "the pipeline's own default window", which is what every existing row
+-- did, so no backfill. No grant changes: SyncRun's DML is granted table-level to
+-- both runtime roles (rls_backstop).
+ALTER TABLE "SyncRun" ADD COLUMN "days" INTEGER;

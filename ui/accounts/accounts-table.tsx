@@ -41,7 +41,7 @@ export function AccountsTable({
   if (accounts.length === 0) {
     return (
       <p className="py-8 text-center text-sm opacity-60">
-        No accounts yet. Run `pnpm db:sync`.
+        No accounts yet. Run `pnpm worker:sync`.
       </p>
     );
   }

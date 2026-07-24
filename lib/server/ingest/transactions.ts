@@ -1,4 +1,5 @@
 import type { Account as AkahuAccount, Transaction as AkahuTransaction } from "akahu";
+import type { AkahuContext } from "../akahu";
 import { changeRows, type FieldChangeEntry } from "../changes";
 import { scopedBatch, type ScopedDb } from "../db";
 import { reconcileConflict } from "./conflicts";
@@ -47,11 +48,10 @@ export async function syncTransactions(
   link: { id: string; workspaceId: string },
   args: SyncArgs,
   accounts: AkahuAccount[],
+  akahu: AkahuContext,
 ): Promise<string[]> {
   const knownAccountIds = new Set(accounts.map((a) => a._id));
-  const { akahuClient, akahuUserToken } = await import("../akahu");
-  const akahu = akahuClient();
-  const token = akahuUserToken();
+  const token = akahu.userToken;
 
   // Per-link high-water mark: two links refresh at different times and reach
   // back to different dates, so there is no such thing as a global one.
@@ -75,7 +75,7 @@ export async function syncTransactions(
   let newest: Date | undefined = state?.lastTransactionDate ?? undefined;
 
   do {
-    const page = await akahu.transactions.list(token, {
+    const page = await akahu.client.transactions.list(token, {
       start: start.toISOString(),
       cursor,
     });

@@ -3,6 +3,7 @@ import { Breadcrumbs } from "@/ui/chrome/breadcrumbs";
 import { DataActions } from "./data-actions";
 import { WorkspaceProvider } from "@/ui/chrome/workspace-context";
 import { requireWorkspace } from "@/lib/server/auth/session";
+import { buildInfo } from "@/lib/server/build-info";
 import { listWorkspaces } from "@/lib/server/auth/workspaces";
 import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -48,6 +49,7 @@ export default async function WorkspaceLayout({
             current={workspace}
             role={role}
             workspaces={workspaces}
+            build={buildInfo()}
           />
           <SidebarInset>
             {/* Sticky page header: the collapse/drawer toggle and breadcrumbs on

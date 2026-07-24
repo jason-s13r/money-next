@@ -1,12 +1,11 @@
 import type { Account as AkahuAccount, ConnectionInfo as AkahuConnection } from "akahu";
+import type { AkahuContext } from "../akahu";
 import { catalogDb, type ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
 import { parseDate } from "./shared";
 
-export async function fetchAccounts(): Promise<AkahuAccount[]> {
-  const { akahuClient, akahuUserToken } = await import("../akahu");
-  const akahu = akahuClient();
-  return akahu.accounts.list(akahuUserToken());
+export async function fetchAccounts(akahu: AkahuContext): Promise<AkahuAccount[]> {
+  return akahu.client.accounts.list(akahu.userToken);
 }
 
 function connectionRow(connection: AkahuConnection): Prisma.ConnectionCreateInput {

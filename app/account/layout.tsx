@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/server/auth/session";
+import { buildInfo } from "@/lib/server/build-info";
 import { AccountSidebar } from "@/ui/chrome/account-sidebar";
 import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -22,7 +23,10 @@ export default async function AccountLayout({ children }: { children: React.Reac
   return (
     <TooltipProvider>
       <SidebarProvider>
-        <AccountSidebar user={{ name: user.name, email: user.email }} />
+        <AccountSidebar
+          user={{ name: user.name, email: user.email }}
+          build={buildInfo()}
+        />
         <SidebarInset>
           <header className="sticky top-0 z-40 flex items-center gap-2 border-b border-border bg-background/80 px-4 py-2 backdrop-blur">
             <SidebarTrigger className="-ml-1" />

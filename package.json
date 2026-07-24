@@ -18,10 +18,23 @@
     "db:roles": "tsx --env-file-if-exists=.env scripts/db-roles.ts",
     "db:setup": "prisma migrate deploy && tsx --env-file-if-exists=.env scripts/db-roles.ts",
     "db:studio": "prisma studio",
-    "db:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts",
-    "db:worker": "tsx --env-file-if-exists=.env scripts/worker.ts",
+    "worker:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts",
+    "worker:start": "tsx --env-file-if-exists=.env scripts/worker.ts",
+    "db:sync": "echo 'DEPRECATED: db:sync is now worker:sync — please update your command' >&2 && pnpm worker:sync",
+    "db:worker": "echo 'DEPRECATED: db:worker is now worker:start — please update your command' >&2 && pnpm worker:start",
     "user:create": "tsx --env-file-if-exists=.env scripts/create-user.ts",
-    "user:password": "tsx --env-file-if-exists=.env scripts/set-password.ts"
+    "user:list": "tsx --env-file-if-exists=.env scripts/list-users.ts",
+    "user:delete": "tsx --env-file-if-exists=.env scripts/delete-user.ts",
+    "user:rename": "tsx --env-file-if-exists=.env scripts/rename-user.ts",
+    "user:password": "tsx --env-file-if-exists=.env scripts/set-password.ts",
+    "workspace:create": "tsx --env-file-if-exists=.env scripts/create-workspace.ts",
+    "workspace:list": "tsx --env-file-if-exists=.env scripts/list-workspaces.ts",
+    "workspace:member": "tsx --env-file-if-exists=.env scripts/add-member.ts",
+    "workspace:delete": "tsx --env-file-if-exists=.env scripts/delete-workspace.ts",
+    "unhook-bootstrap-ids": "tsx --env-file-if-exists=.env scripts/unhook-bootstrap-ids.ts",
+    "link:token": "tsx --env-file-if-exists=.env scripts/link-token.ts",
+    "link:keypair": "tsx scripts/link-keypair.ts",
+    "link:upgrade": "tsx --env-file-if-exists=.env scripts/link-upgrade.ts"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"

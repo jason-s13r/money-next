@@ -67,6 +67,22 @@ services:
       # `money_app` role (RLS applies to it). Set BETTER_AUTH_URL in .env to the
       # real origin.
       DATABASE_URL: postgresql://money_app:${APP_DB_PASSWORD:?set APP_DB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-money}?schema=public
+      # Blanked on purpose (phase 8). `env_file` above hands every service the
+      # whole .env, and this one variable is the key to every stored Akahu token.
+      # The app has no use for it: since phase 7 the web role does not call Akahu
+      # at all — it enqueues a SyncRun and the worker does the fetch — so the key
+      # is set only on `cron` and `worker` below. The app holds ciphertext it
+      # cannot open, which turns a compromise of the internet-facing service into
+      # something short of a live banking-read.
+      #
+      # That decision came due with the connect form (app/w/[workspace]/sync), which
+      # needs the app to *store* a token — and it was made the other way: the app
+      # gets TOKEN_PUBLIC_KEY from .env and seals, the worker holds the private half
+      # and opens. So this stays blank rather than being granted back, and the line
+      # below is the same rule applied to the new key. Blanking one and not the other
+      # would leave the property looking intact and being gone.
+      TOKEN_ENCRYPTION_KEY: ""
+      TOKEN_PRIVATE_KEY: ""
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:
@@ -75,19 +91,29 @@ services:
       postgres:
         condition: service_healthy
 
-  # Same tooling image as migrate. `scripts/ingest.ts` (pnpm db:sync) needs tsx
-  # and the TS source, which the app image doesn't carry — so the incremental
-  # sync runs here, on a plain sleep loop. It enumerates workspaces and syncs each
-  # ACTIVE bank link through a workspace-scoped client, connecting as `money_sync`.
+  # The clock. Same tooling image as migrate, because `scripts/ingest.ts` (pnpm
+  # worker:sync) needs tsx and the TS source, which the app image doesn't carry.
+  #
+  # It enqueues and stops: one `queued` SyncRun per ACTIVE bank link in every
+  # workspace, written through a workspace-scoped client as `money_sync`, and
+  # `worker` below does the fetching. It used to run the ingest itself, which made
+  # two containers that called Akahu, held decrypted tokens and implemented the
+  # same bookkeeping differently. **This service does nothing on its own** — with
+  # `worker` stopped, syncs queue up and never run.
   cron:
     build:
       context: .
       target: build
-    command: ["sh", "-c", "while true; do pnpm db:sync || echo 'sync failed'; sleep \"${SYNC_INTERVAL_SECONDS:-21600}\"; done"]
+    command: ["sh", "-c", "while true; do pnpm worker:sync || echo 'sync failed'; sleep \"${SYNC_INTERVAL_SECONDS:-21600}\"; done"]
     restart: unless-stopped
     env_file: .env
     environment:
       DATABASE_URL: postgresql://money_sync:${SYNC_DB_PASSWORD:?set SYNC_DB_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-money}?schema=public
+      # Blanked for the same reason as `app`, and newly true here: an enqueuer never
+      # opens a token, so `worker` is now the only container in the stack that can.
+      # Both keys, since a stored token may be under either scheme.
+      TOKEN_ENCRYPTION_KEY: ""
+      TOKEN_PRIVATE_KEY: ""
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -96,16 +122,17 @@ services:
 
   # The queue drainer (phase 7). Same tooling image and same `money_sync` identity
   # as `cron`, but event-driven rather than time-driven: it short-polls for the
-  # `SyncRun` rows the web app enqueues (the /sync and nav sync buttons) and runs
-  # the Akahu fetch + ingest the web role no longer performs itself. Splitting it
-  # from `cron` keeps each loop to one job — `cron` is the scheduled sync, `worker`
-  # is the on-demand one — and the poll interval (WORKER_POLL_SECONDS, default 5s)
-  # independent of the 6-hourly cron cadence.
+  # `SyncRun` and `RuleRun` rows everything else enqueues — the /sync and nav
+  # buttons, "apply now", `cron` above, and the rules pass an ingest queues behind
+  # itself — and runs the Akahu fetch + ingest the web role no longer performs.
+  # Splitting it from `cron` keeps each loop to one job — `cron` decides *when*,
+  # `worker` does the work — and the poll interval (WORKER_POLL_SECONDS, default
+  # 5s) independent of the 6-hourly cron cadence.
   worker:
     build:
       context: .
       target: build
-    command: ["pnpm", "db:worker"]
+    command: ["pnpm", "worker:start"]
     restart: unless-stopped
     env_file: .env
     environment:

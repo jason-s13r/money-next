@@ -36,8 +36,22 @@ for var in POSTGRES_USER POSTGRES_PASSWORD POSTGRES_DB APP_DB_PASSWORD SYNC_DB_P
 done
 
 if [[ "$build" == 1 ]]; then
-  echo "==> Building images from $repo_root"
-  podman build --target runner -t localhost/money-app:latest "$repo_root"
+  # Stamp the app image with the commit and build time. The app reads these back
+  # at runtime and prints them at the foot of the sidebar (lib/server/build-info),
+  # which is how you tell whether a restart actually picked up the rebuild. Both
+  # ARGs sit in the last Dockerfile stage, so a new sha costs no cache. `+dirty`
+  # marks a build made from an uncommitted tree — the sha alone would be a lie.
+  git_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+  if [[ -n "$git_sha" && -n "$(git -C "$repo_root" status --porcelain 2>/dev/null)" ]]; then
+    git_sha="$git_sha+dirty"
+  fi
+  built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+  echo "==> Building images from $repo_root (${git_sha:-no git}, $built_at)"
+  podman build --target runner \
+    --build-arg "GIT_SHA=$git_sha" \
+    --build-arg "BUILT_AT=$built_at" \
+    -t localhost/money-app:latest "$repo_root"
   podman build --target build  -t localhost/money-tooling:latest "$repo_root"
 fi
 
@@ -104,6 +118,21 @@ Done. Next steps:
   # watch it come up:
   systemctl --user status money-migrate.service
   journalctl --user -u money-app.service -f
+
+The operator CLIs (user:*, workspace:*, link:token, unhook-bootstrap-ids) live in
+the tooling image, not the app image, so they run inside money-worker. Several
+prompt for a secret, hence -it. Worth an alias in ~/.bashrc:
+
+  alias moneycli='podman exec -it --env-file ~/.config/money/db-owner.env money-worker pnpm'
+
+  moneycli user:create --email you@example.com --name "Your Name" --owner
+  moneycli link:token --list
+
+The owner connection is what makes one alias cover every script: money-worker runs
+as money_sync, which has SELECT on Workspace and no access to User or Session at
+all, so anything touching the control plane needs the env-file override. link:token
+is the exception that would rather have the container's own money_sync identity —
+drop the --env-file for that one if you care to.
 
 To reinstall after a `git pull` or an image rebuild:
   ./install.sh && systemctl --user restart money-app.service

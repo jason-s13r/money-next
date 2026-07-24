@@ -1,10 +1,15 @@
-# Scheduled full sync loop. Connects as the money_sync role. SYNC_INTERVAL_SECONDS
+# Scheduled sync loop. Connects as the money_sync role. SYNC_INTERVAL_SECONDS
 # comes from money.env (default 6h); it IS expanded here because the shell in the
 # container evaluates ${...}, not systemd.
+#
+# It only *queues* — one SyncRun per active bank link — and money-worker does the
+# Akahu fetch. So this unit is worth nothing without money-worker running, which
+# is why `Requires=` now names it: a scheduled sync into a queue nobody drains is
+# a no-op that looks exactly like a working one.
 [Unit]
 Description=money scheduled sync
-Requires=money-migrate.service
-After=money-migrate.service money-postgres.service
+Requires=money-migrate.service money-worker.service
+After=money-migrate.service money-postgres.service money-worker.service
 
 [Container]
 ContainerName=money-cron
@@ -12,7 +17,15 @@ Image=localhost/money-tooling:latest
 Pod=money.pod
 EnvironmentFile=%h/.config/money/money.env
 EnvironmentFile=%h/.config/money/db-sync.env
-Exec=sh -c "while true; do pnpm db:sync || echo 'sync failed'; sleep ${SYNC_INTERVAL_SECONDS:-21600}; done"
+# Blanked for the same reason as money-app, and newly true here: an enqueuer never
+# opens a token. Since `pnpm worker:sync` stopped doing the ingest itself, money-worker
+# is the only container that decrypts one. `Environment=` is applied after
+# `EnvironmentFile=`, so this wins.
+Environment=TOKEN_ENCRYPTION_KEY=
+# The sealed scheme's private half, withheld on the same grounds: whichever key a
+# token is under, an enqueuer has no business opening it.
+Environment=TOKEN_PRIVATE_KEY=
+Exec=sh -c "while true; do pnpm worker:sync || echo 'sync failed'; sleep ${SYNC_INTERVAL_SECONDS:-21600}; done"
 
 [Service]
 Restart=always

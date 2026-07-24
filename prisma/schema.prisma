@@ -1,5 +1,5 @@
 // Personal finance dashboard, backed by Postgres.
-// Data is ingested from the Akahu API by `pnpm db:sync` (scripts/ingest.ts).
+// Data is ingested from the Akahu API by `pnpm worker:sync` (scripts/ingest.ts).
 //
 // Akahu ids are used as primary keys so that re-running a sync is idempotent.
 //
@@ -328,6 +328,38 @@ model BankLink {
   /// the workspace is deleted.
   revokedAt DateTime? @db.Timestamptz(3)
 
+  /// Where this link's Akahu credentials come from.
+  ///
+  /// `env`    — the single bootstrap pair in AKAHU_APP_ID_TOKEN /
+  ///            AKAHU_USER_ACCESS_TOKEN. One instance-wide pair, so at most one
+  ///            link can meaningfully use it. The v1 arrangement.
+  /// `stored` — the encrypted columns below, set by `pnpm link:token`. A personal
+  ///            token from my.akahu.nz, held per link, so a second workspace can
+  ///            sync a second person's accounts without sharing a token.
+  ///
+  /// Phase 10's OAuth flow adds `oauth`: the same two columns, obtained by a code
+  /// exchange rather than pasted. That is why this is a source *name* and not a
+  /// boolean — how a credential arrived decides what may be done with it
+  /// (`auth.revoke()` applies to an OAuth grant, not to a personal token).
+  tokenSource String @default("env")
+
+  /// AES-256-GCM ciphertext, never the token itself. Encrypted and decrypted only
+  /// by `lib/server/secrets.ts`, whose key lives in TOKEN_ENCRYPTION_KEY — in the
+  /// environment of the sync worker and the CLI, and deliberately *not* in the web
+  /// app's (see docs/multi-user.md, phase 8). The key is never in this database:
+  /// that is the whole point, and what makes a stolen dump inert.
+  ///
+  /// Each blob is bound to this row and this field as additional authenticated
+  /// data, so a ciphertext moved to another link — or from the app slot to the
+  /// user slot — fails to decrypt rather than silently authenticating as someone
+  /// else's connection.
+  appTokenCipher  String?
+  userTokenCipher String?
+
+  /// When the stored pair was last set. The credential's own age, not the row's:
+  /// `updatedAt` moves whenever anything here changes.
+  tokenUpdatedAt DateTime? @db.Timestamptz(3)
+
   /// Who connected it. Null for the bootstrap link, which predates users.
   connectedByUserId String?
   connectedBy       User?   @relation(fields: [connectedByUserId], references: [id], onDelete: SetNull)
@@ -600,7 +632,7 @@ model TransferGroup {
 }
 
 /// Historical daily FX reference rates from the ECB, fetched via frankfurter.dev
-/// during `db:sync` and cached so cross-currency transfer matching runs offline
+/// during `worker:sync` and cached so cross-currency transfer matching runs offline
 /// like every other read here. `rate` is units of `currency` per 1 unit of `base`
 /// on `date` (the base is stored as 1); convert A→B with `amount * rateB / rateA`,
 /// which is base-agnostic. We quote against NZD (see lib/server/fx.ts) so the
@@ -717,7 +749,7 @@ model CategoryGroup {
 
 /// The NZFCC category catalog, mirrored from nzfcc.org so an `nzfcc_...` id can
 /// be resolved to its name and spending group locally. Refreshed on every
-/// `db:sync`, so a category the standard adds appears the next run.
+/// `worker:sync`, so a category the standard adds appears the next run.
 model Category {
   /// NZFCC category id, e.g. `nzfcc_...`
   id        String @id
@@ -806,19 +838,26 @@ model SyncRun {
   /// the queue.
   startedAt  DateTime  @default(now()) @db.Timestamptz(3)
   finishedAt DateTime? @db.Timestamptz(3)
-  /// queued | running | success | failed. `queued` is the state the web app
-  /// writes (phase 7): it can enqueue a run — a tenant INSERT it already holds —
-  /// but no longer runs the ingest itself, so `money_app` needs no catalog DML and
-  /// never calls Akahu. The `money_sync` worker claims the row (queued → running)
-  /// and finalises it. The cron script still creates its rows as `running`. A run
-  /// that fails transiently goes back to `queued` (see `attempts`) rather than
-  /// straight to `failed`, so the two are not strictly terminal-once.
+  /// queued | running | success | failed. `queued` is the state every enqueuer
+  /// writes (phase 7): the web app can enqueue a run — a tenant INSERT it already
+  /// holds — but no longer runs the ingest itself, so `money_app` needs no catalog
+  /// DML and never calls Akahu. The `money_sync` worker claims the row (queued →
+  /// running) and finalises it. The cron script (`pnpm worker:sync`) writes `queued`
+  /// too now, so scheduled and on-demand syncs go down one path. A run that fails
+  /// transiently goes back to `queued` (see `attempts`) rather than straight to
+  /// `failed`, so the two are not strictly terminal-once.
   status     String    @default("running")
 
   /// Whether this run re-fetches the whole history window (`--full`) or syncs
   /// incrementally from the high-water mark. Persisted because the worker runs the
   /// job later, in another process, and must reproduce the mode the button chose.
   full Boolean @default(false)
+
+  /// An explicit lookback window in days (`pnpm worker:sync --days 90`), or null for
+  /// the pipeline's own default. Persisted for the same reason as `full`: the
+  /// enqueuer and the process that runs the job are no longer the same one, so an
+  /// argument that isn't stored is an argument that is silently dropped.
+  days Int?
 
   /// How many times the worker has claimed this run (queued → running). Bumped on
   /// every claim, so a run that keeps failing counts up until it hits the worker's

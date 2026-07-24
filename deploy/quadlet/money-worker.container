@@ -10,7 +10,7 @@ Image=localhost/money-tooling:latest
 Pod=money.pod
 EnvironmentFile=%h/.config/money/money.env
 EnvironmentFile=%h/.config/money/db-sync.env
-Exec=pnpm db:worker
+Exec=pnpm worker:start
 
 [Service]
 Restart=always

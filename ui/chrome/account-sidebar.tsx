@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 
 import { authClient } from "@/lib/auth-client";
+import type { BuildInfo } from "@/lib/server/build-info";
+import { BuildStamp } from "@/ui/chrome/build-stamp";
 import { ThemeItems, initials } from "@/ui/chrome/app-sidebar";
 import {
   Sidebar,
@@ -56,8 +58,9 @@ import {
 type NavItem = { href: string; label: string; icon: typeof LayoutDashboardIcon };
 
 // "Return to the app" sits on its own above the account destinations — it is the
-// way out of settings, not another settings page. `/` is a signpost that
-// redirects into the first workspace (app/page), i.e. the dashboard.
+// way out of settings, not another settings page. `/` is a signpost that redirects
+// into the workspace you were last in (app/page reads the cookie proxy.ts sets),
+// which is what makes this a way *back* rather than a way somewhere else.
 const backToApp: NavItem = { href: "/", label: "Dashboard", icon: LayoutDashboardIcon };
 
 const accountNav: NavItem[] = [
@@ -67,7 +70,13 @@ const accountNav: NavItem[] = [
   { href: "/enrol-mfa", label: "Two-factor", icon: ShieldCheckIcon },
 ];
 
-export function AccountSidebar({ user }: { user: { name: string; email: string } }) {
+export function AccountSidebar({
+  user,
+  build,
+}: {
+  user: { name: string; email: string };
+  build: BuildInfo;
+}) {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
@@ -89,6 +98,7 @@ export function AccountSidebar({ user }: { user: { name: string; email: string }
         </SidebarGroup>
       </SidebarContent>
       <SidebarFooter>
+        <BuildStamp build={build} />
         <NavUser user={user} />
       </SidebarFooter>
       <SidebarRail />

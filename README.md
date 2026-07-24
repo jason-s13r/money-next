@@ -49,35 +49,114 @@ cp .env.example .env
 # 3. Start Postgres (Docker or Podman)
 pnpm db:up
 
-# 4. Create the schema
-pnpm db:migrate
+# 4. Create the schema, then give the RLS runtime roles their passwords
+pnpm db:setup          # = db:deploy + db:roles; in dev, `pnpm db:migrate` first
 
-# 5. Pull your accounts and transactions from Akahu
-pnpm db:sync
+# 5. Create the first account and its workspace
+#    Registration is invite-only, so the first user cannot come from the app.
+pnpm user:create --email you@example.com --name "Sam"
+pnpm workspace:create --owner you@example.com --name "Personal"
 
-# 6. Start the dev server
+# 6. Pull your accounts and transactions from Akahu
+#    (--drain does the work here; without it the sync is queued for `pnpm worker:start`)
+pnpm worker:sync --drain
+
+# 7. Start the dev server
 pnpm dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000) and sign in.
 
-## Everyday commands
+Everyone after the first user arrives through an invite link from
+`/w/<slug>/members`. A workspace that wants its own bank connection (rather than
+the instance-wide `AKAHU_*` pair) connects one from the app, or from the shell
+with `pnpm link:token`.
+
+## Commands
+
+Every script below takes `--help` and answers it without a database or any
+environment variables set — the machine whose operator is reading `--help` is
+usually the one that isn't configured yet.
+
+### Development
 
 | Command | Purpose |
 | --- | --- |
 | `pnpm dev` | Start the Next.js dev server. |
 | `pnpm build` | Production build. |
-| `pnpm typecheck` | Run `tsc --noEmit`. |
+| `pnpm start` | Serve the production build. |
 | `pnpm lint` | Run ESLint. |
-| `pnpm db:sync` | Incremental sync from Akahu (safe to re-run, cron-friendly). |
-| `pnpm db:sync --full` | Re-fetch the whole history window. |
-| `pnpm db:sync --days 90` | Sync an explicit lookback window. |
+| `pnpm typecheck` | Run `tsc --noEmit`. |
+| `pnpm test` | Run the `tests/*.test.ts` suite (`node --test`, needs a database — RLS isolation connects as `money_app`). |
+
+### Database
+
+| Command | Purpose |
+| --- | --- |
 | `pnpm db:up` | Start the local Postgres from `compose.yaml`. |
 | `pnpm db:down` | Stop it. |
 | `pnpm db:migrate` | Run Prisma migrations in dev. |
 | `pnpm db:deploy` | Deploy migrations in production. |
+| `pnpm db:roles` | Give the RLS runtime roles (`money_app`, `money_sync`) LOGIN and the passwords from `APP_DB_PASSWORD` / `SYNC_DB_PASSWORD`. Idempotent; re-run whenever they rotate. |
+| `pnpm db:setup` | `db:deploy` then `db:roles`, in one step. |
 | `pnpm db:studio` | Open Prisma Studio. |
-| `pnpm db:generate` | Regenerate the Prisma client. |
+| `pnpm db:generate` | Regenerate the Prisma client (also runs on `pnpm install`). |
+
+### Sync
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm worker:sync` | Queue an incremental sync for every active bank link (safe to re-run, cron-friendly). |
+| `pnpm worker:sync --full` | Queue a re-fetch of the whole history window. |
+| `pnpm worker:sync --days 90` | Queue an explicit lookback window. |
+| `pnpm worker:sync --workspace <slug\|id>` | Queue for one workspace instead of all of them. |
+| `pnpm worker:sync --watch` | Queue, then stay attached and report until the runs finish. |
+| `pnpm worker:sync --drain` | Queue, then run the queue down in this process (no worker needed). Mutually exclusive with `--watch`. |
+| `pnpm worker:start` | Drain the queues forever — the process that actually calls Akahu. |
+| `pnpm worker:start --once` | Drain what's queued now, then exit. |
+
+`worker:sync` only enqueues: nothing syncs unless a worker is draining somewhere,
+so a stack with no `worker:start` wants `--drain`. `db:sync` and `db:worker` are
+deprecated aliases that print a warning and forward to these two.
+
+### Users
+
+Registration is invite-only and there is no site-admin surface, so these live in
+the shell. Passwords are always prompted for, never passed as a flag.
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm user:create --email <email> --name "<name>"` | Create an account. `--workspace <slug\|id>` places them straight away, `--role <owner\|editor\|viewer>` (default `viewer`) sets how. Only needed for the first account; everyone else arrives by invite. |
+| `pnpm user:list` | Every account with its memberships and roles, flagging those with no membership and no second factor. |
+| `pnpm user:rename --email <email> --name "<new name>"` | Change a display name, for an operator who can't sign in as them. |
+| `pnpm user:password --email <email>` | Set a password directly — the first owner, or when the reset-link flow itself is broken. Minimum 12 characters. |
+| `pnpm user:delete --email <email>` | Delete an account, its memberships and its sessions. Refused if they are the only owner of a workspace. Prompts first. |
+
+### Workspaces
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm workspace:create --owner <email>` | Create a workspace owned by an existing user. `--name "<name>"` (default `"<their first name>'s Personal"`) and `--slug <slug>` are optional; a taken slug gets a short suffix. |
+| `pnpm workspace:list` | Every workspace with its members, roles and bank links — and where each link's Akahu credentials come from. Prints no secrets. |
+| `pnpm workspace:member --workspace <slug\|id> --email <email> --role <role>` | Add an existing user to an existing workspace. Adds only — change a role or remove someone at `/w/<slug>/members`. |
+| `pnpm workspace:delete --workspace <slug\|id>` | Delete a workspace and every row in it, cascading and irreversible. Requires the slug typed back. |
+
+### Bank links and tokens
+
+| Command | Purpose |
+| --- | --- |
+| `pnpm link:token --list` | List bank links and where each one's Akahu credentials come from (`env`, `stored`, and which encryption scheme). |
+| `pnpm link:token --workspace <slug\|id> --name "<name>"` | Create a bank link with its own stored Akahu token pair. |
+| `pnpm link:token --link <id>` | Replace a link's stored token pair. |
+| `pnpm link:token --link <id> --source env` | Revert a link to the instance-wide `AKAHU_*` pair. |
+| `pnpm link:keypair` | Print a fresh `TOKEN_PUBLIC_KEY` / `TOKEN_PRIVATE_KEY` pair for the app's connect-a-bank form. Writes nothing — where each half goes is a deployment decision. Run once per instance. |
+| `pnpm link:upgrade` | Report which stored tokens still use the symmetric scheme. |
+| `pnpm link:upgrade --apply` | Re-seal those to `TOKEN_PUBLIC_KEY`. Once no link reports `[symmetric]`, `TOKEN_ENCRYPTION_KEY` can come out of the worker and cron. |
+| `pnpm unhook-bootstrap-ids` | Give the bootstrap workspace and link generated ids (retires the `ws_bootstrap` / `link_bootstrap` placeholders). Run once; idempotent. |
+
+A token is verified against Akahu before `link:token` stores it — it calls
+`/accounts` and prints what it can see, which is a better check than typing the
+token twice.
 
 ## Project structure
 
@@ -110,7 +189,10 @@ lib/
       comparison.ts   Period-over-period income/spending breakdown
 ui/                   React components (server and client)
 prisma/               Schema and migrations
-scripts/ingest.ts     Cron-friendly sync entry point
+scripts/              Every `pnpm` command above (see the Commands section)
+  ingest.ts           worker:sync — enqueues a sync run per active link
+  worker.ts           worker:start — drains the queue and calls Akahu
+  drain.ts            the queue machinery both share
 ```
 
 ## Key design notes
@@ -128,10 +210,27 @@ Copy `.env.example` to `.env` and fill in:
 
 ```env
 DATABASE_URL="postgresql://money:money@127.0.0.1:5432/money?schema=public"
+BETTER_AUTH_SECRET=        # openssl rand -base64 32; signs session tokens
+BETTER_AUTH_URL=           # this app's own origin, e.g. http://localhost:3000
+REQUIRE_MFA=               # optional; "true" forces TOTP enrolment before any data
+APP_DB_PASSWORD=           # the `money_app` role, set by `pnpm db:roles`
+SYNC_DB_PASSWORD=          # the `money_sync` role, likewise
 AKAHU_APP_ID_TOKEN=        # from Akahu app settings
 AKAHU_USER_ACCESS_TOKEN=   # from https://my.akahu.nz
+TOKEN_ENCRYPTION_KEY=      # optional; the older symmetric scheme for stored tokens
+TOKEN_PUBLIC_KEY=          # optional; from `pnpm link:keypair` — app included
+TOKEN_PRIVATE_KEY=         # optional; worker and CLI only, never the app
 ID_NAMESPACE=              # optional; labels ids this app mints. Defaults to "app"
 ```
+
+The `AKAHU_*` pair is instance-wide, so it really serves one person's accounts. A
+second workspace that wants its own bank connection connects one from the app, or
+uses `pnpm link:token`; either way the token pair is stored on the bank link
+itself. The app's connect form seals with `TOKEN_PUBLIC_KEY` and cannot read back
+what it stored — only `TOKEN_PRIVATE_KEY` opens it, and that half belongs wherever
+the sync worker and CLI run, never on the web app. `TOKEN_ENCRYPTION_KEY` is the
+older symmetric scheme for the same rows; `pnpm link:upgrade --apply` converts
+them so it can be retired. No key of either kind belongs in the database it opens.
 
 `pnpm db:up` starts the Postgres in [compose.yaml](compose.yaml), whose credentials
 match the string above. See [.env.example](.env.example) for the full annotated set.

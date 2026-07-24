@@ -61,6 +61,19 @@ COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 
+# Which build this is, surfaced in the sidebar (lib/server/build-info.ts) so you
+# can tell at a glance what's actually serving. Stamped by
+# deploy/quadlet/install.sh; an unstamped build just says "unknown".
+#
+# Deliberately the *last* thing in the file, and env vars rather than
+# NEXT_PUBLIC_ inlined at build time: these change on every commit, so anything
+# above them would bust its cache layer — here they invalidate nothing, and
+# `next build` (in the `build` stage) never sees them at all.
+ARG GIT_SHA=""
+ARG BUILT_AT=""
+ENV APP_GIT_SHA=$GIT_SHA
+ENV APP_BUILT_AT=$BUILT_AT
+
 # Run unprivileged; the `node` base image ships a `node` user. Nothing is written
 # to the filesystem at runtime, so read access to root-owned files is enough.
 USER node

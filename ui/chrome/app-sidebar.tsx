@@ -27,6 +27,8 @@ import {
 import { authClient } from "@/lib/auth-client";
 import { workspacePath } from "@/lib/workspace-path";
 import type { Role } from "@/lib/server/auth/roles";
+import type { BuildInfo } from "@/lib/server/build-info";
+import { BuildStamp } from "@/ui/chrome/build-stamp";
 import { Link, useWorkspaceSlug } from "@/ui/chrome/workspace-context";
 import { SearchForm } from "@/ui/transactions/search-form";
 import {
@@ -166,11 +168,13 @@ export function AppSidebar({
   current,
   role,
   workspaces,
+  build,
 }: {
   user: { name: string; email: string };
   current: Workspace;
   role: Role;
   workspaces: (Workspace & { role: string })[];
+  build: BuildInfo;
 }) {
   return (
     <Sidebar collapsible="icon">
@@ -189,6 +193,7 @@ export function AppSidebar({
         <NavMain />
       </SidebarContent>
       <SidebarFooter>
+        <BuildStamp build={build} />
         <NavUser user={user} current={current} role={role} workspaces={workspaces} />
       </SidebarFooter>
       <SidebarRail />

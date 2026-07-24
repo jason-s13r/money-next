@@ -2,6 +2,7 @@ import type {
   Account as AkahuAccount,
   PendingTransaction as AkahuPendingTransaction,
 } from "akahu";
+import type { AkahuContext } from "../akahu";
 import { scopedBatch, type ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
 
@@ -28,12 +29,11 @@ export async function syncPendingTransactions(
   db: ScopedDb,
   link: { id: string; workspaceId: string },
   accounts: AkahuAccount[],
+  akahu: AkahuContext,
 ): Promise<void> {
   try {
     const knownAccountIds = new Set(accounts.map((a) => a._id));
-    const { akahuClient, akahuUserToken } = await import("../akahu");
-    const akahu = akahuClient();
-    const pending = await akahu.transactions.listPending(akahuUserToken());
+    const pending = await akahu.client.transactions.listPending(akahu.userToken);
 
     const rows: Prisma.PendingTransactionCreateManyInput[] = [];
     for (const tx of pending) {

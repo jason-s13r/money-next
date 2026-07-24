@@ -2,7 +2,7 @@ import { getSessionCookie } from "better-auth/cookies";
 import { NextResponse, type NextRequest } from "next/server";
 
 /**
- * Three jobs, all deliberately dumb.
+ * Four jobs, all deliberately dumb.
  *
  * Next 16 renamed middleware to Proxy; the guidance is unchanged and worth
  * restating, because it is load-bearing: **this is not the authorization
@@ -25,10 +25,29 @@ import { NextResponse, type NextRequest } from "next/server";
  *    layout, and nothing more.
  *
  * 3. **Mint a CSP nonce and set the policy.** See `csp()` below.
+ *
+ * 4. **Remember which workspace you were last in.** See `LAST_WORKSPACE_COOKIE`.
  */
 
 /** Keep in sync with `WORKSPACE_SLUG_HEADER` in lib/server/auth/session.ts. */
 const WORKSPACE_SLUG_HEADER = "x-workspace-slug";
+
+/**
+ * Where you were, so `/` can put you back.
+ *
+ * `/` is a signpost that redirects into a workspace, and with nothing to go on it
+ * picked the first one alphabetically. For anyone in more than one workspace that
+ * made leaving the app — /account, /enrol-mfa, the wordmark in either sidebar —
+ * a way to lose your place: you came out of "Work" and went back into "Alpha".
+ *
+ * This is a preference, not a credential. `app/page.tsx` reads it and then looks
+ * it up in *your* memberships, so a forged or stale value redirects you to a
+ * workspace you already belong to or is ignored entirely — it names a workspace,
+ * it does not grant one, exactly like the slug header above. `httpOnly` anyway:
+ * nothing on the client has a use for it.
+ */
+const LAST_WORKSPACE_COOKIE = "last-workspace";
+const LAST_WORKSPACE_MAX_AGE = 60 * 60 * 24 * 180; // 180 days
 
 /**
  * Paths reachable without a session. Everything else needs one.
@@ -169,6 +188,26 @@ export function proxy(request: NextRequest) {
   // the request header is how Next learns the nonce, this is how the browser
   // learns the policy.
   response.headers.set("Content-Security-Policy", policy);
+
+  // Only when it changed: every navigation inside a workspace comes through here,
+  // prefetches included, and re-sending an identical Set-Cookie on all of them is
+  // a header on every response to say nothing new.
+  if (workspace) {
+    const slug = decodeURIComponent(workspace);
+    if (request.cookies.get(LAST_WORKSPACE_COOKIE)?.value !== slug) {
+      response.cookies.set(LAST_WORKSPACE_COOKIE, slug, {
+        httpOnly: true,
+        sameSite: "lax",
+        // Not `secure` unconditionally: dev is plain http on localhost and a LAN
+        // deployment may be too (INSECURE_HTTP=1), and a secure cookie over http
+        // is a cookie the browser drops.
+        secure: request.nextUrl.protocol === "https:",
+        path: "/",
+        maxAge: LAST_WORKSPACE_MAX_AGE,
+      });
+    }
+  }
+
   return response;
 }
 

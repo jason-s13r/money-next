@@ -1,5 +1,6 @@
+import { akahuFor, type TokenLink } from "../akahu";
 import { scopedDb } from "../db";
-import { runRules } from "../rules/engine";
+import { enqueueRules } from "../queue";
 import { syncCategories } from "./categories";
 import { syncFxRates } from "./fx";
 import { fetchAccounts, syncAccounts, syncConnections } from "./accounts";
@@ -14,8 +15,15 @@ function startOfUtcDay(date: Date): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
 }
 
-/** What a sync needs to know about the connection it is syncing. */
-export type SyncLink = { id: string; workspaceId: string };
+/**
+ * What a sync needs to know about the connection it is syncing: which workspace
+ * its rows belong to, and how to authenticate as it.
+ *
+ * The credentials are part of the *link*, not of the process, since phase 8 —
+ * which is what lets the caller stay a plain loop over links now that two of them
+ * may belong to two different people's Akahu accounts.
+ */
+export type SyncLink = TokenLink & { workspaceId: string };
 
 /**
  * What a sync did, for the `SyncRun` row the caller owns.
@@ -36,7 +44,7 @@ export type SyncCounts = {
 };
 
 /**
- * Run the same ingest pipeline used by `pnpm db:sync`, but usable from a server
+ * Run the same ingest pipeline used by `pnpm worker:sync`, but usable from a server
  * action as well as from the cron script. `args.full` re-fetches the whole
  * history window; omitting it performs an incremental sync from the stored
  * high-water mark.
@@ -56,34 +64,43 @@ export async function runSync(link: SyncLink, args: SyncArgs): Promise<SyncCount
   const db = scopedDb(link.workspaceId);
   const capturedAt = startOfUtcDay(new Date());
 
+  // Resolve this link's Akahu credentials once, here, and hand the resulting
+  // client to every step that talks to Akahu. Before phase 8 each step read the
+  // environment for itself, which was harmless while there was one instance-wide
+  // token and is not once there are several: a step that resolved its own would
+  // be a step that could resolve a *different* link's than the sync is for.
+  const akahu = akahuFor(link);
+
   await syncCategories();
-  const accounts = await fetchAccounts();
+  const accounts = await fetchAccounts(akahu);
   await syncConnections(accounts);
 
   await syncAccounts(db, link, accounts, capturedAt);
-  const syncedIds = await syncTransactions(db, link, args, accounts);
-  await syncPendingTransactions(db, link, accounts);
+  const syncedIds = await syncTransactions(db, link, args, accounts, akahu);
+  await syncPendingTransactions(db, link, accounts, akahu);
 
   await syncFxRates();
 
-  // Run the automations over just the rows this sync touched. Best-effort like
-  // the category/FX steps: a broken rule graph shouldn't fail the financial sync,
-  // which has already been committed above.
-  try {
-    const summary = await runRules(db, { transactionIds: syncedIds, trigger: "sync" });
-    if (summary.ran) {
-      console.log(
-        `rules:        ${summary.evaluated} evaluated — ` +
-          `${summary.categorised} categorised, ${summary.merchantsSet} merchants, ` +
-          `${summary.transfersLinked} transfers linked` +
-          (summary.errors ? `, ${summary.errors} errored` : ""),
-      );
-    } else {
-      console.log("rules:        skipped — no active rule document");
-    }
-  } catch (error) {
-    console.warn(`rules:        skipped — ${error instanceof Error ? error.message : String(error)}`);
-  }
+  // Queue the automations rather than run them here.
+  //
+  // This used to be an inline `runRules` over just the ids this sync touched,
+  // wrapped in a try/catch so a broken decision graph couldn't fail a sync that
+  // had already committed. Queuing gets that separation for free — the rules pass
+  // is now its own run, with its own retries, its own row in /rules/runs and its
+  // own failure — and buys two things the inline version couldn't have:
+  //
+  //   * Two links in one workspace produce **one** rules pass, not two. The
+  //     enqueue coalesces per workspace, so the second sync's pass merges into the
+  //     first's instead of walking the same rows again.
+  //   * The pass covers the workspace rather than this sync's ids. That is more
+  //     work, which is precisely why it belongs on the worker and not in the tail
+  //     of a sync — and it is what makes a rule authored between two syncs reach
+  //     the transactions that already existed, without anyone pressing "apply now".
+  //
+  // Nothing is stomped by the wider scope: `applyOutput` never overwrites a field
+  // a person owns (`categorySource`/`merchantSource` of `user`), so re-evaluating
+  // an old transaction is idempotent unless a rule genuinely changed.
+  await enqueueRules(db, { trigger: "sync" });
 
   return { accountsSynced: accounts.length, transactionsSynced: syncedIds.length };
 }

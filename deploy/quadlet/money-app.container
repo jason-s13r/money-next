@@ -11,6 +11,18 @@ Image=localhost/money-app:latest
 Pod=money.pod
 EnvironmentFile=%h/.config/money/money.env
 EnvironmentFile=%h/.config/money/db-app.env
+# Blanked on purpose (phase 8): money.env carries the key to every stored Akahu
+# token, and the app has no use for it — since phase 7 the web role does not call
+# Akahu, it enqueues a SyncRun for the worker. Only money-worker and money-cron
+# decrypt. `Environment=` is applied after `EnvironmentFile=`, so this wins.
+Environment=TOKEN_ENCRYPTION_KEY=
+# And the asymmetric half that opens what the connect form seals. The app keeps
+# TOKEN_PUBLIC_KEY from money.env — sealing is the one thing it may do — but this
+# is the key that reads a bank token, so it is withheld here for exactly the same
+# reason as the line above. Leaving it through would make the form's guarantee
+# ("the app can store a token but never read one back") false with nothing in the
+# code to show it.
+Environment=TOKEN_PRIVATE_KEY=
 
 [Service]
 Restart=always

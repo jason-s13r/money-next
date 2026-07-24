@@ -17,21 +17,40 @@
  * system has. The new password is read from the terminal, never a flag, so it
  * stays out of shell history and the process list (same as create-user.ts).
  */
-import { auth } from "../lib/server/auth";
-import { authDb } from "../lib/server/db";
-import { readPasswordTwice } from "./read-password";
+import { readPasswordTwice } from "./read-secret";
+
+/** Set once the database is actually imported, so `--help` never opens a client. */
+let disconnect: (() => Promise<void>) | null = null;
+
+const USAGE = `Usage:
+  pnpm user:password --email <email>
+
+Sets a password directly, for someone with no session and nobody above them to
+ask — the first owner, or when the reset-link flow itself is broken. The
+password is prompted for, never passed as a flag. Minimum 12 characters.`;
 
 function parseArgs(argv: string[]): { email: string } {
   const i = argv.indexOf("--email");
   const email = i === -1 ? undefined : argv[i + 1];
-  if (!email) {
-    throw new Error("Usage: pnpm user:password --email <email>");
-  }
+  if (!email) throw new Error(USAGE);
   return { email };
 }
 
 async function main() {
+  // Before the imports below, deliberately. `lib/server/auth` builds its client
+  // at module scope and throws if BETTER_AUTH_SECRET is unset, so a static
+  // import would make `--help` fail on exactly the machine whose operator most
+  // needs to read it.
+  if (process.argv.includes("--help")) {
+    console.log(USAGE);
+    return;
+  }
+
   const { email } = parseArgs(process.argv.slice(2));
+
+  const { auth } = await import("../lib/server/auth");
+  const { authDb } = await import("../lib/server/db");
+  disconnect = () => authDb.$disconnect();
 
   const user = await authDb.user.findUnique({ where: { email }, select: { id: true, email: true } });
   if (!user) {
@@ -78,7 +97,8 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    // This script owns its process, so it owns the disconnect. (A server action
-    // must never do this — see docs/multi-user.md.)
-    await authDb.$disconnect();
+    // This script owns its process, so it owns the disconnect — but only if a
+    // client was ever opened. (A server action must never do this — see
+    // docs/multi-user.md.)
+    await disconnect?.();
   });
