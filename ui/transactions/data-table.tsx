@@ -4,11 +4,16 @@ import * as React from "react";
 import {
   flexRender,
   getCoreRowModel,
+  getExpandedRowModel,
   useReactTable,
   type ColumnDef,
+  type ExpandedState,
+  type RowSelectionState,
   type VisibilityState,
 } from "@tanstack/react-table";
-import { SlidersHorizontal } from "lucide-react";
+import { ChevronDown, SlidersHorizontal } from "lucide-react";
+
+import { cn } from "@/lib/utils";
 
 import {
   Table,
@@ -19,6 +24,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
@@ -42,6 +48,10 @@ export function DataTable<TData>({
   initialColumnVisibility,
   sort,
   sortBase,
+  enableSelection = false,
+  getRowId,
+  renderBulkBar,
+  renderSubRow,
 }: {
   columns: ColumnDef<TData>[];
   data: TData[];
@@ -51,18 +61,112 @@ export function DataTable<TData>({
   sort?: Sort;
   /** The listing's base path (no query); enables sortable headers when set. */
   sortBase?: string;
+  /** Prepend a checkbox column and enable multi-row selection. */
+  enableSelection?: boolean;
+  /** Stable id for a row, so a selection is keyed by that id (e.g. a transaction id). */
+  getRowId?: (row: TData) => string;
+  /** The action bar to show while rows are selected; given the selected ids and a clear fn. */
+  renderBulkBar?: (ids: string[], clear: () => void) => React.ReactNode;
+  /**
+   * The expanded detail panel for a row. When set, each row gains a trailing
+   * chevron that opens this panel beneath it (the fields the reduced column set
+   * leaves out), spanning the full table width.
+   */
+  renderSubRow?: (row: TData) => React.ReactNode;
 }) {
   const [columnVisibility, setColumnVisibility] = React.useState<VisibilityState>(
     initialColumnVisibility ?? {},
   );
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+  const [expanded, setExpanded] = React.useState<ExpandedState>({});
+
+  // The leading selection column, built here so the caller's column set stays
+  // presentation-only and the same across selectable and plain listings.
+  const selectionColumn: ColumnDef<TData> = React.useMemo(
+    () => ({
+      id: "select",
+      enableHiding: false,
+      meta: { headerClassName: "w-8", cellClassName: "w-8" },
+      header: ({ table }) => (
+        <Checkbox
+          aria-label="Select all rows"
+          checked={table.getIsAllRowsSelected()}
+          indeterminate={table.getIsSomeRowsSelected()}
+          onCheckedChange={(checked) => table.toggleAllRowsSelected(checked)}
+        />
+      ),
+      cell: ({ row }) => (
+        <Checkbox
+          aria-label="Select row"
+          checked={row.getIsSelected()}
+          onCheckedChange={(checked) => row.toggleSelected(checked)}
+        />
+      ),
+    }),
+    [],
+  );
+
+  // The trailing expander column: a chevron that opens the row's detail panel.
+  // `aria-expanded` on the button both drives the panel and (via the table row's
+  // `has-aria-expanded` style) highlights the row while it is open.
+  const expandable = !!renderSubRow;
+  const expanderColumn: ColumnDef<TData> = React.useMemo(
+    () => ({
+      id: "expander",
+      enableHiding: false,
+      meta: { headerClassName: "w-8", cellClassName: "w-8 text-right" },
+      header: () => null,
+      cell: ({ row }) => (
+        <button
+          type="button"
+          aria-label={row.getIsExpanded() ? "Hide details" : "Show details"}
+          aria-expanded={row.getIsExpanded()}
+          onClick={row.getToggleExpandedHandler()}
+          className="rounded p-1 opacity-60 hover:bg-muted hover:opacity-100"
+        >
+          <ChevronDown
+            className={cn(
+              "size-4 transition-transform",
+              row.getIsExpanded() && "rotate-180",
+            )}
+          />
+        </button>
+      ),
+    }),
+    [],
+  );
+
+  const allColumns = React.useMemo(
+    () => [
+      ...(enableSelection ? [selectionColumn] : []),
+      ...columns,
+      ...(expandable ? [expanderColumn] : []),
+    ],
+    [enableSelection, selectionColumn, columns, expandable, expanderColumn],
+  );
 
   const table = useReactTable({
     data,
-    columns,
+    columns: allColumns,
     getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
+    // Every row can open its detail panel — there are no sub-rows to gate on, and
+    // without this TanStack treats `getCanExpand()` as false and the toggle
+    // handler becomes a no-op.
+    getRowCanExpand: () => expandable,
     onColumnVisibilityChange: setColumnVisibility,
-    state: { columnVisibility },
+    enableRowSelection: enableSelection,
+    onRowSelectionChange: setRowSelection,
+    onExpandedChange: setExpanded,
+    getRowId: getRowId ? (row) => getRowId(row) : undefined,
+    state: { columnVisibility, rowSelection, expanded },
   });
+
+  const selectedIds = table.getSelectedRowModel().rows.map((row) => row.id);
+
+  // The column picker rides in the first *content* header cell — not the selection
+  // checkbox, which owns its own narrow cell.
+  const pickerColumnId = table.getVisibleLeafColumns().find((c) => c.id !== "select")?.id;
 
   // The column picker rides in the first header cell as an icon button,
   // sitting alongside that column's own header content.
@@ -104,7 +208,7 @@ export function DataTable<TData>({
         <TableHeader>
           {table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
-              {headerGroup.headers.map((header, index) => {
+              {headerGroup.headers.map((header) => {
                 const meta = header.column.columnDef.meta;
                 const field = meta?.sortField;
                 const active = !!field && sort?.field === field;
@@ -137,7 +241,7 @@ export function DataTable<TData>({
                         : undefined
                     }
                   >
-                    {index === 0 ? (
+                    {header.column.id === pickerColumnId ? (
                       <div className="flex items-center gap-2">
                         {picker}
                         {content}
@@ -154,16 +258,28 @@ export function DataTable<TData>({
         <TableBody>
           {table.getRowModel().rows.length ? (
             table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id}>
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell
-                    key={cell.id}
-                    className={cell.column.columnDef.meta?.cellClassName}
-                  >
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
+              <React.Fragment key={row.id}>
+                <TableRow>
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell
+                      key={cell.id}
+                      className={cell.column.columnDef.meta?.cellClassName}
+                    >
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
+                {expandable && row.getIsExpanded() ? (
+                  <TableRow className="hover:bg-transparent">
+                    <TableCell
+                      colSpan={row.getVisibleCells().length}
+                      className="bg-muted/30 p-0 whitespace-normal"
+                    >
+                      {renderSubRow(row.original)}
+                    </TableCell>
+                  </TableRow>
+                ) : null}
+              </React.Fragment>
             ))
           ) : (
             <TableRow>
@@ -177,6 +293,10 @@ export function DataTable<TData>({
           )}
         </TableBody>
       </Table>
+
+      {renderBulkBar && selectedIds.length > 0
+        ? renderBulkBar(selectedIds, () => table.resetRowSelection())
+        : null}
     </div>
   );
 }

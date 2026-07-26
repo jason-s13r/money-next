@@ -41,49 +41,53 @@ export function PendingTable({
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead>Date</TableHead>
             <TableHead>Description</TableHead>
-            {showAccount ? <TableHead>Account</TableHead> : null}
             <TableHead>Card</TableHead>
-            <TableHead>Type</TableHead>
             <TableHead className="text-right">Amount</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {items.map((tx) => (
             <TableRow key={tx.id}>
-              <TableCell className="opacity-60">{formatDate(tx.date)}</TableCell>
-
-              <TableCell>{tx.description}</TableCell>
-
-              {showAccount ? (
-                <TableCell className="opacity-60">
-                  <div className="flex items-center gap-2">
-                    {tx.account.connection?.logo ? (
-                      <img
-                        src={tx.account.connection.logo}
-                        alt=""
-                        className="h-5 w-5 rounded object-contain"
-                      />
-                    ) : null}
-                    <Link href={`/accounts/${tx.account.id}`} className={link}>
-                      {tx.account.name}
-                    </Link>
-                  </div>
-                </TableCell>
-              ) : null}
-
-              <TableCell className="opacity-60">
-                {tx.cardSuffix ? (
-                  <Link href={`/card/${tx.cardSuffix}`} className={link}>
-                    ····{tx.cardSuffix}
-                  </Link>
-                ) : (
-                  "—"
-                )}
+              {/* Description over a muted second line carrying the date and, off an
+                  account page, which account the hold sits on. */}
+              <TableCell>
+                <div>{tx.description}</div>
+                <div className="text-xs opacity-60">
+                  {formatDate(tx.date)}
+                  {showAccount ? (
+                    <>
+                      {" · "}
+                      <span className="inline-flex items-center gap-1 align-middle">
+                        {tx.account.connection?.logo ? (
+                          <img
+                            src={tx.account.connection.logo}
+                            alt=""
+                            className="h-4 w-4 rounded object-contain"
+                          />
+                        ) : null}
+                        <Link href={`/accounts/${tx.account.id}`} className={link}>
+                          {tx.account.name}
+                        </Link>
+                      </span>
+                    </>
+                  ) : null}
+                </div>
               </TableCell>
 
-              <TableCell className="opacity-60">{tx.type}</TableCell>
+              {/* Card over its type — the row's raw bank descriptors, both muted. */}
+              <TableCell className="opacity-60">
+                <div>
+                  {tx.cardSuffix ? (
+                    <Link href={`/card/${tx.cardSuffix}`} className={link}>
+                      ····{tx.cardSuffix}
+                    </Link>
+                  ) : (
+                    "—"
+                  )}
+                </div>
+                <div className="text-xs">{tx.type}</div>
+              </TableCell>
 
               <TableCell className={`text-right font-mono tabular-nums ${positiveAmountClass(tx.amount)}`}>
                 {formatMoney(tx.amount, tx.account.currency)}

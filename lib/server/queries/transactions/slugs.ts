@@ -31,6 +31,14 @@ export const getCardSuffixes = cache(async () => {
   return rows.map((row) => row.cardSuffix!);
 });
 
+/** The workspace's label names, for resolving a `/labels/<slug>` back and 404ing unknowns. */
+export const getLabelNames = cache(async () => {
+  await connection();
+  const db = await getDb();
+  const rows = await db.label.findMany({ orderBy: { name: "asc" }, select: { name: true } });
+  return rows.map((row) => row.name);
+});
+
 /** The category names a group actually holds, for resolving a slug back. */
 export const getCategoryNames = cache(async (group: string) => {
   await connection();

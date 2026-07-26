@@ -2,7 +2,7 @@ import { notFound } from "next/navigation";
 import { requireWorkspace } from "@/lib/server/auth/session";
 import { SearchableSelect, type SelectOption } from "@/ui/primitives/searchable-select";
 import { positiveAmountClass } from "@/lib/ui/amount";
-import { getCategories, getMerchants, getTransaction, getRulesForTransaction } from "@/lib/server/queries/lookups";
+import { getCategories, getLabels, getMerchants, getTransaction, getRulesForTransaction } from "@/lib/server/queries/lookups";
 import { getTransactionHistory } from "@/lib/server/queries/history";
 import {
   getSimilarTransactions,
@@ -23,6 +23,7 @@ import { LearnRule } from "@/ui/transactions/detail/learn-rule";
 import { MatchingRules } from "@/ui/transactions/detail/matching-rules";
 import { TransferLink } from "@/ui/transactions/detail/transfer-link";
 import { EditableField, Field, Section } from "@/ui/transactions/detail/transaction-fields";
+import { LabelCatalogProvider, LabelsCell } from "@/ui/transactions/labels-cell";
 
 export async function generateMetadata(props: PageProps<"/w/[workspace]/transactions/[transactionId]">) {
   const { transactionId } = await props.params;
@@ -51,10 +52,11 @@ export default async function TransactionPage(
   // Options for the enrichment pickers. Loaded here so the page stays one server
   // round-trip; both are small enough to hand to the client whole (see
   // SearchableSelect). The bound actions carry this transaction's id.
-  const [categories, merchants, similar, transferLegs, transferCandidates, rulesForTx, history] =
+  const [categories, merchants, labelOptions, similar, transferLegs, transferCandidates, rulesForTx, history] =
     await Promise.all([
       getCategories(),
       getMerchants(),
+      getLabels(),
       getSimilarTransactions(tx),
       getTransferGroupLegs(tx),
       getTransferCandidates(tx, account.currency),
@@ -95,11 +97,6 @@ export default async function TransactionPage(
           href={tx.type ? `/transactions/type/${slugify(tx.type)}` : null}
         />
         <Field
-          label="Balance after"
-          value={tx.balance === null ? null : formatMoney(tx.balance, account.currency)}
-        />
-        <Field label="Account" value={account.name} href={`/accounts/${account.id}`} />
-        <Field
           label="Bank"
           value={
             account.connection?.logo ? (
@@ -112,6 +109,36 @@ export default async function TransactionPage(
             )
           }
         />
+        <Field label="Account" value={account.name} href={`/accounts/${account.id}`} />
+        <Field
+          label="Balance after"
+          value={tx.balance === null ? null : formatMoney(tx.balance, account.currency)}
+        />
+      </Section>
+
+      <Section title="Bank metadata">
+        <Field label="Particulars" value={tx.particulars} />
+        <Field label="Code" value={tx.code} />
+        <Field label="Reference" value={tx.reference} />
+        <Field label="Other account" value={tx.otherAccount} mono />
+        <Field
+          label="Card suffix"
+          value={tx.cardSuffix}
+          mono
+          href={tx.cardSuffix ? `/card/${tx.cardSuffix}` : null}
+        />
+        {/* Foreign-currency conversion from Akahu's meta: the original amount in
+            its own currency and the rate applied to reach the account's currency. */}
+        <Field
+          label="Original amount"
+          value={
+            tx.conversionAmount === null
+              ? null
+              : formatMoney(tx.conversionAmount, tx.conversionCurrency)
+          }
+          mono
+        />
+        <Field label="Exchange rate" value={tx.conversionRate} mono />
       </Section>
 
       <Section title="Enrichment">
@@ -176,6 +203,12 @@ export default async function TransactionPage(
           value={tx.categoryGroup?.name ?? null}
           href={tx.categoryGroup ? `/categories/${slugify(tx.categoryGroup.name)}` : null}
         />
+        <dt className="opacity-60">Labels</dt>
+        <dd>
+          <LabelCatalogProvider initial={labelOptions}>
+            <LabelsCell transactionId={tx.id} labels={tx.labels.map((l) => l.label)} />
+          </LabelCatalogProvider>
+        </dd>
       </Section>
 
       <TransferLink
@@ -216,19 +249,6 @@ export default async function TransactionPage(
           hasMerchant={tx.merchantId != null}
         />
       </MatchingRules>
-
-      <Section title="Bank metadata">
-        <Field label="Particulars" value={tx.particulars} />
-        <Field label="Code" value={tx.code} />
-        <Field label="Reference" value={tx.reference} />
-        <Field label="Other account" value={tx.otherAccount} mono />
-        <Field
-          label="Card suffix"
-          value={tx.cardSuffix}
-          mono
-          href={tx.cardSuffix ? `/card/${tx.cardSuffix}` : null}
-        />
-      </Section>
 
       <Section title="Record">
         <Field label="Transaction id" value={tx.id} mono />

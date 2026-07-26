@@ -14,6 +14,7 @@
 import { ZenEngine, type ZenDecision } from "@gorules/zen-engine";
 import type { FieldChangeEntry } from "../../changes";
 import type { ScopedDb } from "../../db";
+import { RULE_TAGGED_LABEL, tagTransactions } from "../../labels";
 import { money } from "../../money";
 import {
   RULE_SOURCE,
@@ -206,6 +207,22 @@ export async function runRules(
     }
   } finally {
     engine.dispose();
+  }
+
+  // Tag every transaction this run actually changed. `changes` holds only real
+  // diffs (`applyOutput` returns nothing when a rule left a field as-is), so a
+  // re-run over the whole workspace re-tags nothing it didn't touch this time,
+  // and `tagTransactions` skips any that already carry the tag from a prior run.
+  //
+  // Best-effort: the field edits are already committed and the run's own log is
+  // written by `finalizeSuccess` below, so a failed tag write must not fail the
+  // run or lose that log — it is a marker, not the record. Swallowed with a warn,
+  // the same way the per-transaction evaluate/apply is counted and stepped over.
+  const changed = [...new Set(changes.map((c) => c.transactionId))];
+  try {
+    await tagTransactions(db, RULE_TAGGED_LABEL, changed);
+  } catch (error) {
+    console.warn(`rules: failed to tag ${changed.length} changed transaction(s):`, error);
   }
 
   await finalizeSuccess();

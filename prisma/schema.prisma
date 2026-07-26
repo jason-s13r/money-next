@@ -64,6 +64,8 @@ model Workspace {
   transferGroups      TransferGroup[]
   conflicts           TransactionConflict[]
   merchants           Merchant[]
+  labels              Label[]
+  transactionLabels   TransactionLabel[]
   ruleDocuments       RuleDocument[]
   ruleRuns            RuleRun[]
   fieldChanges        FieldChange[]
@@ -534,6 +536,8 @@ model Transaction {
   // a `categoryGroup` and uncategorised otherwise. No classifier writes here.
 
   conflicts TransactionConflict[]
+  /// Free-form user tags (see `Label`), through the explicit join `TransactionLabel`.
+  labels    TransactionLabel[]
 
   // The prefix of nearly every metrics query, now that they all filter by
   // workspace before they filter by anything else.
@@ -731,6 +735,54 @@ model Merchant {
   // The search matches merchant names through a relation filter; same trigram
   // reasoning as `Transaction`.
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Merchant_name_trgm_idx")
+}
+
+/// A free-form tag a workspace attaches to its transactions — the user's own
+/// grouping ("holiday-2026", "reimburse", "tax-deductible") alongside the
+/// merchant/category the bank enrichment supplies. Purely tenant data and purely
+/// user-owned: nothing about a label is mirrored from Akahu, so unlike
+/// merchant/category it carries no `*Source`, raises no `TransactionConflict`, and
+/// a sync never touches it. Attached through the explicit `TransactionLabel` join.
+model Label {
+  /// Minted here (`app_label_...`, see `mintId`) — a name someone typed, which is
+  /// their data. Never mirrored, so it never shares an id with an Akahu row.
+  id String @id
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name String
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  transactions TransactionLabel[]
+
+  // One label per name within a workspace, so the picker's "create" can reuse an
+  // existing tag rather than minting a duplicate.
+  @@unique([workspaceId, name])
+  @@index([workspaceId])
+}
+
+/// The many-to-many join between `Transaction` and `Label`. An explicit model
+/// rather than Prisma's implicit m-n because the join row must carry its own
+/// `workspaceId` for the RLS policy to scope it (an implicit join table has no
+/// column the policy could read). Both sides cascade: deleting a transaction or a
+/// label removes the tag, never orphans it.
+model TransactionLabel {
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  transactionId String
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+
+  labelId String
+  label   Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@id([transactionId, labelId])
+  @@index([workspaceId])
+  @@index([labelId])
 }
 
 /// A `personal_finance` spending group (or an invented income group), stored once

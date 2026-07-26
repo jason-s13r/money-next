@@ -57,3 +57,4 @@ classify.rules.json
 /lib/generated/
 .claude/
 .pnpm-store/
+*.dump

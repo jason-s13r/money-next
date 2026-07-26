@@ -45,6 +45,12 @@ export const listInclude = {
   merchant: { select: { name: true, logo: true } },
   category: { select: { name: true } },
   categoryGroup: { select: { id: true, name: true } },
+  // The row's own tags, so a listing can render them (and edit them inline)
+  // without a second query. Ordered by name so the chips read stably.
+  labels: {
+    orderBy: { label: { name: "asc" } },
+    select: { label: { select: { id: true, name: true } } },
+  },
 } satisfies Prisma.TransactionInclude;
 
 /** A short human summary of the transfer a listed row is one leg of. */

@@ -55,12 +55,10 @@ export function AccountsTable({
 
   return (
     <div className="overflow-x-auto">
-    <table className="w-full min-w-2xl border-collapse text-sm">
+    <table className="w-full border-collapse text-sm">
       <thead>
         <tr className="border-b border-current/20 text-left">
-          <th className={th}>Bank</th>
           <th className={th}>Name</th>
-          <th className={`${thRight} text-right`}>Transactions</th>
           <th className={thRight}>Balance</th>
           <th className={thRight}>Available</th>
         </tr>
@@ -68,46 +66,33 @@ export function AccountsTable({
       <tbody>
         {accounts.map((account) => (
           <tr key={account.id} className="border-b border-current/10">
-            <td className={`${td} opacity-60`}>
-              <div className="flex items-center gap-2">
+            <td className={td}>
+              {/* Bank logo beside the account name (which wraps freely), then a
+                  muted line of the transaction counts. */}
+              <div className="flex items-start gap-2">
                 {account.connection?.logo ? (
                   <img
                     src={account.connection.logo}
                     alt=""
-                    className="h-5 w-5 rounded object-contain"
+                    className="mt-0.5 h-5 w-5 shrink-0 rounded object-contain"
                   />
                 ) : null}
-                {account.connection?.name ?? account.connectionId}
+                <Link href={`/accounts/${account.id}`} className={link}>
+                  {account.name}
+                </Link>
               </div>
-            </td>
-            <td className={td}>
-              <Link href={`/accounts/${account.id}`} className={link}>
-                {account.name}
-              </Link>
-              <div className="font-mono text-xs opacity-50">
-                <span
-                  className={
-                    account.status === "ACTIVE"
-                      ? "text-status-good"
-                      : "opacity-50"
-                  }
-                >
-                  {account.status}
+              <div className="mt-0.5 font-mono text-xs opacity-50">
+                <span className="tabular-nums">
+                  {account.transactionCount.toLocaleString("en-NZ")} transactions
                 </span>
-                {' '}
-                <span>{account.type}</span>
-                {' '}
-                <span className="font-mono tabular-nums">{account.formattedAccount}</span>
+                {/* Pending holds not yet in the settled count. */}
+                {account.pendingCount > 0 ? (
+                  <span className="tabular-nums text-amber-700 dark:text-amber-400">
+                    {' · '}
+                    {account.pendingCount.toLocaleString("en-NZ")} pending
+                  </span>
+                ) : null}
               </div>
-            </td>
-            <td className={`${tdNum} opacity-70`}>
-              {account.transactionCount.toLocaleString("en-NZ")}
-              {/* Pending holds not yet in the settled count above. */}
-              {account.pendingCount > 0 ? (
-                <div className="text-xs font-normal text-amber-700 dark:text-amber-400">
-                  {account.pendingCount.toLocaleString("en-NZ")} pending
-                </div>
-              ) : null}
             </td>
             <td className={`${tdNum} opacity-70`}>
               {account.overdrawn ? (

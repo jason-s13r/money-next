@@ -2,6 +2,7 @@ import type { Account as AkahuAccount, Transaction as AkahuTransaction } from "a
 import type { AkahuContext } from "../akahu";
 import { changeRows, type FieldChangeEntry } from "../changes";
 import { scopedBatch, type ScopedDb } from "../db";
+import { ensureLabelId, ingestedLabelName } from "../labels";
 import { reconcileConflict } from "./conflicts";
 import type { Prisma } from "../../generated/prisma/client";
 import { OTHER_INCOME_GROUP } from "./nzfcc";
@@ -74,6 +75,13 @@ export async function syncTransactions(
   let skipped = 0;
   let newest: Date | undefined = state?.lastTransactionDate ?? undefined;
 
+  // The dated tag every first-time arrival in this run gets (`ingested-<date>`,
+  // see `ingestedLabelName`). Its id is resolved lazily on the first page that
+  // has a new transaction, so a sync that ingests nothing new mints no empty
+  // label; after that it's reused across pages.
+  const ingestLabelName = ingestedLabelName(new Date());
+  let ingestLabelId: string | undefined;
+
   do {
     const page = await akahu.client.transactions.list(token, {
       start: start.toISOString(),
@@ -118,6 +126,10 @@ export async function syncTransactions(
 
     const txOps: Prisma.PrismaPromise<unknown>[] = [];
     const conflictOps: Prisma.PrismaPromise<unknown>[] = [];
+    // Transactions seen for the first time on this page, to date-tag as fresh
+    // arrivals. A row already in `priorById` is a re-fetch from the overlap
+    // window, not an arrival, so it is not re-tagged.
+    const newIds: string[] = [];
     // What this page actually changed, for the field change log. Only rows we
     // hold already can produce one: a transaction we are seeing for the first
     // time has no `from` to have changed from, and its arrival is already
@@ -151,14 +163,19 @@ export async function syncTransactions(
 
       // Akahu nests the group under a scheme key (`personal_finance`); the value
       // holds the *real* group id and name. An uncategorised inflow carries no
-      // group, so it falls back to the invented "Other Income" group.
+      // group, so it falls back to the invented "Other Income" group — except a
+      // transfer, which is money moving between the user's own accounts, not
+      // income, so it gets no invented group (only a real one Akahu supplies).
+      // `linkTransferLegs` clears the group on manually-linked transfers for the
+      // same reason.
       const groupEntry = enriched?.category?.groups
         ? Object.values(enriched.category.groups)[0]
         : undefined;
+      const incomeFallback = tx.amount > 0 && tx.type !== "TRANSFER";
       const categoryGroupId =
-        groupEntry?._id ?? (tx.amount > 0 ? OTHER_INCOME_GROUP._id : null);
+        groupEntry?._id ?? (incomeFallback ? OTHER_INCOME_GROUP._id : null);
       const categoryGroupName =
-        groupEntry?.name ?? (tx.amount > 0 ? OTHER_INCOME_GROUP.name : null);
+        groupEntry?.name ?? (incomeFallback ? OTHER_INCOME_GROUP.name : null);
       if (categoryGroupId && categoryGroupName) {
         categoryGroups.set(categoryGroupId, categoryGroupName);
       }
@@ -264,6 +281,7 @@ export async function syncTransactions(
 
       synced++;
       syncedIds.push(tx._id);
+      if (!prior) newIds.push(tx._id);
       txOps.push(
         db.transaction.upsert({
           where: { id: tx._id },
@@ -273,11 +291,20 @@ export async function syncTransactions(
       );
     }
 
+    // Resolve the dated ingestion label the first time a page brings new rows, so
+    // its join writes can go inside the same atomic batch below — a fresh arrival
+    // and its "ingested-<date>" tag commit together or not at all. These ids are
+    // created in this very batch (above), so they can't already carry the tag;
+    // the createMany needs no skip-existing check.
+    if (newIds.length > 0) {
+      ingestLabelId ??= await ensureLabelId(db, ingestLabelName);
+    }
+
     // One write transaction per page keeps this fast and means a crash
     // mid-page can't leave a partially-applied page behind. Groups lead, then the
     // categories that point at them, then merchants — so every transaction that
     // follows finds the rows it points at; conflict ops and log rows trail the
-    // transaction upserts they describe.
+    // transaction upserts they describe, as do the fresh-arrival tag rows.
     //
     // The log rows belong *in* this transaction rather than after it: a log that
     // records a change the crash rolled back is worse than no log, because it is
@@ -307,6 +334,17 @@ export async function syncTransactions(
         }),
       ),
       ...txOps,
+      ...(newIds.length > 0 && ingestLabelId
+        ? [
+            db.transactionLabel.createMany({
+              data: newIds.map((transactionId) => ({
+                workspaceId: db.$workspaceId,
+                transactionId,
+                labelId: ingestLabelId!,
+              })),
+            }),
+          ]
+        : []),
       ...conflictOps,
       ...(changes.length > 0
         ? [db.fieldChange.createMany({ data: changeRows(db.$workspaceId, "akahu", changes) })]

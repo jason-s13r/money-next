@@ -10,6 +10,8 @@ import {
   WaypointsIcon,
   ArrowRightLeftIcon,
   InboxIcon,
+  StoreIcon,
+  TagIcon,
   WalletIcon,
   FilterIcon,
   RefreshCwIcon,
@@ -92,6 +94,8 @@ const nav: NavSection[] = [
     items: [
       { href: "/transactions/recent", label: "Recent", icon: ArrowRightLeftIcon },
       { href: "/transactions/uncategorised", label: "Uncategorised", icon: InboxIcon },
+      { href: "/merchants", label: "Merchants", icon: StoreIcon },
+      { href: "/labels", label: "Labels", icon: TagIcon },
     ],
   },
   {

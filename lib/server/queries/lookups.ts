@@ -2,7 +2,8 @@ import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
 import { getDb } from "../db/request";
-import { accountMoney, transactionMoney } from "../money";
+import { convert, FALLBACK_DISPLAY_CURRENCY as DISPLAY_CURRENCY, loadRates } from "../currency";
+import { accountMoney, moneySum, transactionMoney } from "../money";
 import {
   readLearnedRules,
   readTransferAutoLink,
@@ -46,6 +47,127 @@ export const getMerchants = cache(async () => {
   });
 });
 
+/** The workspace's labels, for the tag picker on a transaction or bulk action. */
+export const getLabels = cache(async () => {
+  await connection();
+  const db = await getDb();
+  return db.label.findMany({
+    orderBy: { name: "asc" },
+    select: { id: true, name: true },
+  });
+});
+
+/**
+ * The workspace's labels with how many transactions each tags and their net
+ * total, for the index page. The net is folded per account currency — each
+ * account's amount converts at its own rate before being added (the same
+ * `netInDisplay` fold the merchants index uses), since a raw sum across
+ * AUD/USD/NZD would be nonsense.
+ */
+export const getLabelsWithCounts = cache(async () => {
+  await connection();
+  const db = await getDb();
+  const [labels, joins] = await Promise.all([
+    db.label.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
+    db.transactionLabel.findMany({
+      select: {
+        labelId: true,
+        transaction: { select: { amount: true, account: { select: { currency: true } } } },
+      },
+    }),
+  ]);
+
+  const currencies = new Set<string>([DISPLAY_CURRENCY]);
+  for (const j of joins) {
+    if (j.transaction.account.currency) currencies.add(j.transaction.account.currency);
+  }
+  const rates = await loadRates([...currencies]);
+
+  const counts = new Map<string, number>();
+  const nets = new Map<string, number>();
+  for (const j of joins) {
+    counts.set(j.labelId, (counts.get(j.labelId) ?? 0) + 1);
+    const raw = moneySum(j.transaction.amount);
+    const inDisplay =
+      convert(raw, j.transaction.account.currency, DISPLAY_CURRENCY, rates) ?? raw;
+    nets.set(j.labelId, (nets.get(j.labelId) ?? 0) + inDisplay);
+  }
+
+  return labels.map((l) => ({
+    id: l.id,
+    name: l.name,
+    count: counts.get(l.id) ?? 0,
+    net: nets.get(l.id) ?? 0,
+  }));
+});
+
+/**
+ * Every merchant that tags at least one of this workspace's transactions, with
+ * how many, for the merchants index. The counts come from a groupBy over the
+ * workspace's own transactions (the scoped client injects the workspace), so a
+ * merchant shared from Akahu's global catalog is counted only for the rows in
+ * *this* workspace — and merchants with no transactions here never appear.
+ *
+ * `userCreated` marks the ones a user minted (a name they typed): those carry a
+ * `workspaceId`, where the global catalog's are `null` (see the Merchant model).
+ */
+export const getMerchantsWithCounts = cache(async () => {
+  await connection();
+  const db = await getDb();
+
+  // Count and net total per merchant, over this workspace's own transactions.
+  // Grouped by account as well as merchant so each currency's subtotal converts at
+  // its own rate before being added — the per-account fold `netInDisplay` uses,
+  // since a raw sum across AUD/USD/NZD would be nonsense.
+  const grouped = await db.transaction.groupBy({
+    by: ["merchantId", "accountId"],
+    where: { merchantId: { not: null } },
+    _count: { _all: true },
+    _sum: { amount: true },
+  });
+  const merchantIds = [
+    ...new Set(grouped.map((g) => g.merchantId).filter((v): v is string => v != null)),
+  ];
+  if (merchantIds.length === 0) return [];
+
+  const accountIds = [...new Set(grouped.map((g) => g.accountId))];
+  const [merchants, accounts] = await Promise.all([
+    db.merchant.findMany({
+      where: { id: { in: merchantIds } },
+      select: { id: true, name: true, logo: true, workspaceId: true },
+    }),
+    db.account.findMany({
+      where: { id: { in: accountIds } },
+      select: { id: true, currency: true },
+    }),
+  ]);
+  const currencyById = new Map(accounts.map((a) => [a.id, a.currency]));
+  const rates = await loadRates([...accounts.map((a) => a.currency), DISPLAY_CURRENCY]);
+
+  const counts = new Map<string, number>();
+  const nets = new Map<string, number>();
+  for (const g of grouped) {
+    if (g.merchantId == null) continue;
+    counts.set(g.merchantId, (counts.get(g.merchantId) ?? 0) + g._count._all);
+    const raw = moneySum(g._sum.amount);
+    const inDisplay =
+      convert(raw, currencyById.get(g.accountId) ?? null, DISPLAY_CURRENCY, rates) ?? raw;
+    nets.set(g.merchantId, (nets.get(g.merchantId) ?? 0) + inDisplay);
+  }
+
+  return merchants
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      logo: m.logo,
+      count: counts.get(m.id) ?? 0,
+      net: nets.get(m.id) ?? 0,
+      userCreated: m.workspaceId !== null,
+    }))
+    // Busiest first, then alphabetical.
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "en-NZ"));
+});
+
 /** A merchant by id, for its page's title and to 404 an unknown id. */
 export const getMerchant = cache(async (id: string) => {
   await connection();
@@ -69,6 +191,10 @@ export const getTransaction = cache(async (id: string) => {
       merchant: { select: { name: true } },
       category: { select: { name: true } },
       categoryGroup: { select: { name: true } },
+      labels: {
+        orderBy: { label: { name: "asc" } },
+        select: { label: { select: { id: true, name: true } } },
+      },
     },
   });
   if (!tx) return null;

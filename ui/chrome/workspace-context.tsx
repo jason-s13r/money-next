@@ -1,6 +1,7 @@
 "use client";
 
 import NextLink from "next/link";
+import { usePathname } from "next/navigation";
 import { createContext, use, type ComponentProps } from "react";
 
 import { workspacePath } from "@/lib/workspace-path";
@@ -86,6 +87,18 @@ export function useRole() {
  */
 export function useCanEdit() {
   return useRole() !== "viewer";
+}
+
+/**
+ * The current path with the `/w/<slug>` prefix stripped — the workspace-relative
+ * form the server actions expect (they re-prefix it through
+ * `revalidateWorkspacePath`). `/w/<slug>` itself maps to `/`.
+ */
+export function useRelativePath() {
+  const slug = useWorkspaceSlug();
+  const pathname = usePathname();
+  const prefix = `/w/${slug}`;
+  return pathname === prefix ? "/" : pathname.slice(prefix.length) || "/";
 }
 
 export { workspacePath };

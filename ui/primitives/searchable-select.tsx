@@ -66,6 +66,10 @@ export function SearchableSelect({
   readOnly?: boolean;
 }) {
   const [open, setOpen] = useState(false);
+  // Whether the panel opens above the trigger rather than below — decided on open
+  // from the room left under the button, so a picker near the bottom of the
+  // viewport (e.g. the selection bulk bar) isn't clipped.
+  const [dropUp, setDropUp] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const [pending, startTransition] = useTransition();
@@ -124,6 +128,14 @@ export function SearchableSelect({
     if (open) {
       setOpen(false);
       return;
+    }
+    // Flip upward when the space below the trigger can't hold the panel and there
+    // is more room above. ~320px covers the search input plus the list's max
+    // height and margins.
+    const rect = rootRef.current?.getBoundingClientRect();
+    if (rect) {
+      const spaceBelow = window.innerHeight - rect.bottom;
+      setDropUp(spaceBelow < 320 && rect.top > spaceBelow);
     }
     setQuery("");
     setActive(0);
@@ -205,7 +217,11 @@ export function SearchableSelect({
       </button>
 
       {open ? (
-        <div className="absolute z-10 mt-1 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-current/20 bg-background shadow-lg">
+        <div
+          className={`absolute z-10 w-72 max-w-[calc(100vw-2rem)] rounded-md border border-current/20 bg-background shadow-lg ${
+            dropUp ? "bottom-full mb-1" : "top-full mt-1"
+          }`}
+        >
           <input
             autoFocus
             value={query}

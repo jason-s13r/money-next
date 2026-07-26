@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { pageHref, paginate, Pagination, parsePage } from "@/ui/primitives/pagination";
 import { StatList } from "@/ui/primitives/stat-list";
-import { ACCOUNT_COLUMNS, TransactionTable } from "@/ui/transactions/transaction-table";
+import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { PendingTable } from "@/ui/transactions/pending-table";
 import { getAccount } from "@/lib/server/queries/accounts";
 import { getAccountPendingTransactions } from "@/lib/server/queries/pending";
@@ -76,9 +76,9 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
         ) : null
       ) : (
         <>
-          {/* A single account's ledger defaults to showing its running Balance —
-              a column meaningless once rows from different accounts interleave. */}
-          <TransactionTable items={items} defaultColumns={ACCOUNT_COLUMNS} sort={sort} sortBase={basePath} />
+          {/* A single account's ledger shows its running Balance under each
+              amount — meaningless once rows from different accounts interleave. */}
+          <TransactionTable items={items} showBalance sort={sort} sortBase={basePath} />
           <Pagination basePath={withSort(basePath, sort)} page={page} totalPages={totalPages} />
         </>
       )}

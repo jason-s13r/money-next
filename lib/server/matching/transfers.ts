@@ -69,6 +69,17 @@ export async function linkTransferLegs(
         await tx.transferGroup.delete({ where: { id: target.transferGroupId } });
       }
     }
+
+    // A transfer's legs are money moving between the user's own accounts, not
+    // income or spending, so they carry no category group. Clear it across the
+    // whole group — including any leg linked before this existed — so a transfer
+    // never lands in an income breakdown. The ingest side suppresses the same
+    // "Other Income" fallback for TRANSFER-type rows, so a later sync won't put
+    // it back.
+    await tx.transaction.updateMany({
+      where: { transferGroupId: groupId },
+      data: { categoryGroupId: null },
+    });
   });
   return true;
 }

@@ -21,7 +21,7 @@ import {
 
 export { DISPLAY_CURRENCY, TRANSACTIONS_PER_PAGE } from "./core";
 export type { TransactionListItem, TransferSummary } from "./core";
-export { getCardSuffixes, getCategoryNames, getTransactionTypes } from "./slugs";
+export { getCardSuffixes, getCategoryNames, getLabelNames, getTransactionTypes } from "./slugs";
 
 /**
  * One page of an account's transactions, newest first, with the total row count
@@ -221,4 +221,12 @@ export function getCardTransactions(suffix: string, page: number, sort: Sort = D
  */
 export function getTypeTransactions(type: string, page: number, sort: Sort = DEFAULT_SORT) {
   return listTransactions({ type }, page, sort);
+}
+
+/**
+ * Every transaction carrying a given label (see `Label`), in every direction —
+ * the label page is keyed by the tag's name, matched through the join relation.
+ */
+export function getLabelTransactions(name: string, page: number, sort: Sort = DEFAULT_SORT) {
+  return listTransactions({ labels: { some: { label: { is: { name } } } } }, page, sort);
 }

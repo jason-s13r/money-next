@@ -61,14 +61,14 @@ function namespace(): string {
 /**
  * The kinds of row this app mints. Add a case when a feature invents rows.
  *
- * `merchant` is the only one wired up today — a name someone typed, which needs an
+ * `merchant` and `label` are wired up today — a name someone typed, which needs an
  * id that cannot be mistaken for one of Akahu's `merchant_...` catalog entries.
  * `category` and `group` are here for when a workspace can invent its own the same
  * way. Everything else this app generates either mirrors an upstream id (Akahu,
  * NZFCC) or takes a `@default(cuid())` — including `BankLink`, which was once
  * minted here and is now left to the database like any other row.
  */
-export type MintedType = "merchant" | "category" | "group";
+export type MintedType = "merchant" | "label" | "category" | "group";
 
 /**
  * A fresh id for a row this app is creating.

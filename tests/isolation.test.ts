@@ -131,6 +131,12 @@ async function seed(ws: string, link: string, tag: string) {
   await catalogDb.merchant.create({
     data: { id: `user_${tag}`, workspaceId: ws, name: `Private merchant ${tag}` },
   });
+  await catalogDb.label.create({
+    data: { id: `app_label_${tag}`, workspaceId: ws, name: `Label ${tag}` },
+  });
+  await catalogDb.transactionLabel.create({
+    data: { workspaceId: ws, transactionId: `trans_${tag}`, labelId: `app_label_${tag}` },
+  });
   await catalogDb.fieldChange.create({
     data: {
       workspaceId: ws,
@@ -398,6 +404,15 @@ describe("a client scoped to A cannot see B", () => {
 
     const links = await dbA.bankLink.findMany();
     assert.deepEqual(links.map((l) => l.id), [LINK_A]);
+
+    // A user's own tags are their data, and the join row that attaches one to a
+    // transaction leaks which transaction as surely as the tag itself — both are
+    // scoped, so A sees only A's.
+    const labels = await dbA.label.findMany();
+    assert.deepEqual(labels.map((l) => l.name), ["Label a"]);
+
+    const labelLinks = await dbA.transactionLabel.findMany();
+    assert.deepEqual(labelLinks.map((l) => l.transactionId), ["trans_a"]);
 
     // The field change log holds the labels of what a transaction used to be —
     // "salary", a merchant someone banks with — so it leaks the same financial
