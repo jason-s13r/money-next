@@ -25,6 +25,7 @@ const roles = { owner, editor, viewer };
 const matrix = [
   // capability                          owner  editor viewer
   ["enrichment", ["update"], true, true, false],
+  ["budget", ["update"], true, true, false],
   ["sync", ["run"], true, true, false],
   ["bankLink", ["create"], true, false, false],
   ["bankLink", ["revoke"], true, false, false],

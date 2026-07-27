@@ -25,6 +25,14 @@ export const statements = {
   /// a person can change about a transaction that the bank did not tell us.
   enrichment: ["update"],
 
+  /// Budgets, their items, and the forecast scenarios built from them. Its own
+  /// statement rather than part of `enrichment`, because that one is explicitly
+  /// about a *transaction* — what a person can change about a row the bank told
+  /// us about. A budget is not a claim about the past at all; it is the user's
+  /// plan, and the two can sensibly be granted apart (a bookkeeper who may
+  /// recategorise need not be able to rewrite the household's plan).
+  budget: ["update"],
+
   /// Triggering an Akahu refresh and re-ingest. Its own statement because it
   /// spends someone else's rate limit (T3) rather than writing a row.
   sync: ["run"],
@@ -42,12 +50,14 @@ export const owner = ac.newRole({
   member: ["create", "update", "delete"],
   invitation: ["create", "cancel"],
   enrichment: ["update"],
+  budget: ["update"],
   sync: ["run"],
   bankLink: ["create", "revoke"],
 });
 
 export const editor = ac.newRole({
   enrichment: ["update"],
+  budget: ["update"],
   sync: ["run"],
 });
 

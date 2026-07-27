@@ -30,6 +30,9 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
+# LLM inference transcripts (LLM_LOG_DIR) — contain raw transaction data, never commit
+budget-inference-*.log
+
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
@@ -58,3 +61,4 @@ classify.rules.json
 .claude/
 .pnpm-store/
 *.dump
+/logs/

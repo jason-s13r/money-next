@@ -6,12 +6,14 @@ import { money } from "../money";
 import { periodKey, periodStart, periodWindow } from "../../periods";
 import type { BalanceSummary } from "./balance";
 import type { SpendSummary } from "./spend";
+import { getForecastProjections, type ProjectionScenario } from "./budget/forecast";
 
 // The dashboard's balance-over-time chart — a personal version of a stock price
 // chart. "Balance" here is accessible net worth (the spendable accounts, locked
 // KiwiSaver/investments left out). The resolution is always one day: a daily bar
 // is the amount the balance moved that day (its net transaction flow), riding a
-// daily balance line, with two forward burn-rate projections. The client zooms
+// daily balance line, with one forward projection per forecast scenario. The
+// client zooms
 // (how many days fill the width) and scrolls; the data here is the full daily
 // history.
 //
@@ -48,23 +50,14 @@ export type BalanceSeries = {
    *  values. Boundary `i` is the balance entering day `i`; boundary `i+1` its close,
    *  and their difference is `nets[i]` — the bar. The last is `currentWorth`. */
   worthBoundaries: number[];
-  /** The monthly burn behind each projection, for the legend and tooltip. Null when
-   *  there is nothing to project — no history, or (forecast) income covers spend. */
-  forecastMonthly: number | null;
-  emergencyMonthly: number | null;
-  pessimisticMonthly: number | null;
-  /** Months for each burn to deplete `currentWorth` to zero — the runway the dashed
-   *  line spans. Null whenever the matching monthly figure is. */
-  forecastMonths: number | null;
-  emergencyMonths: number | null;
-  pessimisticMonths: number | null;
+  /** The forward half: one bending line per forecast scenario, each starting from
+   *  `currentWorth` at `now`. Empty only when there is nothing to project at all. */
+  scenarios: ProjectionScenario[];
+  /** Whether the workspace has any forecasts. False means the forward half is
+   *  empty — nobody has made one yet — which the dashboard says out loud beside the
+   *  chart rather than drawing a guessed line. */
+  scenariosConfigured: boolean;
 };
-
-/** Months to deplete `worth` at `monthlyBurn`, or null when it never depletes. */
-function monthsToZero(worth: number, monthlyBurn: number | null): number | null {
-  if (monthlyBurn === null || monthlyBurn <= 0 || worth <= 0) return null;
-  return worth / monthlyBurn;
-}
 
 /**
  * The daily balance series for the dashboard chart. Takes the balance and spend
@@ -135,15 +128,13 @@ export async function getBalanceSeries(
   worthBoundaries[nets.length] = currentWorth;
   for (let k = nets.length - 1; k >= 0; k--) worthBoundaries[k] = worthBoundaries[k + 1] - nets[k];
 
-  // Forecast net burn: the "life goes on" spend less the periodic income forecast
-  // to keep covering part of it — the same net burn the forecast runway tile uses.
-  // Emergency burn: essentials only, no income offset, the floor spending is cut
-  // to. Both deplete the accessible figure to zero.
-  const forecastMonthly =
-    spend.forecastBurn === null ? null : spend.forecastBurn - spend.forecastIncome;
-  const pessimisticMonthly =
-    spend.forecastBurn === null ? null : spend.forecastBurn;
-  const emergencyMonthly = spend.medianEssential;
+  // The forward half: each of the workspace's forecasts, its one budget walked
+  // forward day by day. A workspace with no forecasts gets an empty forward half
+  // and the chart draws no projection line — nothing is created here, because a
+  // read that quietly wrote a forecast would make the dashboard's first load a
+  // write, and put a plan in front of someone they never agreed to.
+  const scenarios = await getForecastProjections(balances, spend, now);
+  const scenariosConfigured = scenarios.length > 0;
 
   return {
     displayCurrency: display,
@@ -152,11 +143,7 @@ export async function getBalanceSeries(
     days,
     nets,
     worthBoundaries,
-    forecastMonthly,
-    emergencyMonthly,
-    pessimisticMonthly,
-    forecastMonths: monthsToZero(currentWorth, forecastMonthly),
-    emergencyMonths: monthsToZero(currentWorth, emergencyMonthly),
-    pessimisticMonths: monthsToZero(currentWorth, pessimisticMonthly),
+    scenarios,
+    scenariosConfigured,
   };
 }

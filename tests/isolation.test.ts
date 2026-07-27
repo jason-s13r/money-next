@@ -32,6 +32,10 @@ const B = "ws_test_b";
 const LINK_A = "link_test_a";
 const LINK_B = "link_test_b";
 const CONN = "conn_test_isolation";
+/** A shared-catalog category group, so the seeded budget items have a bucket to
+ *  sit in. Catalog, not tenant data — both workspaces reference the same row,
+ *  which is also what makes it a fair test that the *items* are still scoped. */
+const GROUP = "group_test_isolation";
 
 const dbA = scopedDb(A);
 
@@ -137,6 +141,36 @@ async function seed(ws: string, link: string, tag: string) {
   await catalogDb.transactionLabel.create({
     data: { workspaceId: ws, transactionId: `trans_${tag}`, labelId: `app_label_${tag}` },
   });
+  // A budget, an item, and a forecast pointing at it. Same slug in both
+  // workspaces on purpose, for the reason the rule document above gives: it is
+  // the per-workspace unique constraint being proved, and an instance-wide one
+  // would make this second create throw.
+  await catalogDb.budget.create({
+    data: { id: `budget_${tag}`, workspaceId: ws, name: "Everyday", slug: "everyday" },
+  });
+  await catalogDb.budgetItem.create({
+    data: {
+      id: `budget_item_${tag}`,
+      workspaceId: ws,
+      budgetId: `budget_${tag}`,
+      name: `Power bill ${tag}`,
+      amount: -250,
+      currency: "NZD",
+      categoryGroupId: GROUP,
+      frequency: "month",
+      anchorDate: new Date("2026-01-01T00:00:00Z"),
+    },
+  });
+  await catalogDb.forecast.create({
+    data: {
+      id: `forecast_${tag}`,
+      workspaceId: ws,
+      name: "Forecast",
+      slug: "forecast",
+      color: "var(--viz-1)",
+      budgetId: `budget_${tag}`,
+    },
+  });
   await catalogDb.fieldChange.create({
     data: {
       workspaceId: ws,
@@ -158,10 +192,12 @@ before(async () => {
   await drop(B);
   await catalogDb.merchant.deleteMany({ where: { id: { in: [`user_a`, `user_b`, "merchant_test_global"] } } });
   await catalogDb.connection.deleteMany({ where: { id: CONN } });
+  await catalogDb.categoryGroup.deleteMany({ where: { id: GROUP } });
 
   await catalogDb.connection.create({
     data: { id: CONN, name: "Test Bank", connectionType: "classic" },
   });
+  await catalogDb.categoryGroup.create({ data: { id: GROUP, name: "Test Group" } });
   // A global catalog merchant, to prove the shared half of `Merchant` still
   // reaches everyone.
   await catalogDb.merchant.create({
@@ -176,6 +212,7 @@ after(async () => {
   await drop(B);
   await catalogDb.merchant.deleteMany({ where: { id: "merchant_test_global" } });
   await catalogDb.connection.deleteMany({ where: { id: CONN } });
+  await catalogDb.categoryGroup.deleteMany({ where: { id: GROUP } });
   await catalogDb.$disconnect();
   await rlsApp.$disconnect();
 });
@@ -419,6 +456,19 @@ describe("a client scoped to A cannot see B", () => {
     // detail the transaction does, and has to be scoped just as hard.
     const changes = await dbA.fieldChange.findMany();
     assert.deepEqual(changes.map((c) => c.toLabel), ["Now a"]);
+
+    // A budget is a statement about someone's intended finances — what they earn,
+    // what they owe, and when — so it is every bit as disclosing as the ledger it
+    // is planned against, and the forecast built from it names the same budget.
+    const budgets = await dbA.budget.findMany();
+    assert.deepEqual(budgets.map((b) => b.id), [`budget_a`]);
+
+    const items = await dbA.budgetItem.findMany();
+    assert.deepEqual(items.map((i) => i.name), ["Power bill a"]);
+
+    const forecasts = await dbA.forecast.findMany();
+    assert.deepEqual(forecasts.map((f) => f.id), [`forecast_a`]);
+    assert.deepEqual(forecasts.map((f) => f.budgetId), [`budget_a`]);
   });
 
   test("findUnique on B's id returns null — the IDOR case", async () => {
@@ -493,6 +543,29 @@ describe("Row-Level Security enforces isolation at the database, not just the ap
   test("scoped to A, a raw read sees only A — even bypassing the app filter", async () => {
     const rows = await asWorkspace<{ id: string }>(A, `SELECT id FROM "Transaction"`);
     assert.deepEqual(rows.map((r) => r.id), ["trans_a"]);
+  });
+
+  test("the budget tables carry the policy too, not just the app filter", async () => {
+    // Worth its own case: `TENANT_MODELS` and the migration's policy list are two
+    // separate edits, and forgetting the second leaves the app filter working and
+    // the backstop silently absent — which every app-layer test above would still
+    // pass. These read as money_app, so only the policy can be what filters them.
+    const budgets = await asWorkspace<{ id: string }>(A, `SELECT id FROM "Budget"`);
+    assert.deepEqual(budgets.map((r) => r.id), ["budget_a"]);
+
+    const items = await asWorkspace<{ name: string }>(A, `SELECT name FROM "BudgetItem"`);
+    assert.deepEqual(items.map((r) => r.name), ["Power bill a"]);
+
+    const forecasts = await asWorkspace<{ id: string; budgetId: string }>(
+      A,
+      `SELECT id, "budgetId" FROM "Forecast"`,
+    );
+    assert.deepEqual(forecasts.map((r) => r.id), ["forecast_a"]);
+    assert.deepEqual(forecasts.map((r) => r.budgetId), ["budget_a"]);
+
+    // And fail closed with no scope set, like every other tenant table.
+    const unscoped = await asWorkspace<{ count: number }>(null, `SELECT count(*)::int AS count FROM "Budget"`);
+    assert.equal(Number(unscoped[0].count), 0);
   });
 
   test("scoped to A, B's transaction id is invisible at the database", async () => {

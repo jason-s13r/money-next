@@ -27,14 +27,41 @@ export const RANGES: { key: string; days: number | null }[] = [
 export const DEFAULT_RANGE = "9M";
 
 // Entity → colour. A subset of the app's validated categorical slots, one per
-// entity, never cycled: net worth cool, the two depletion projections warm, an
-// up day green, a down day orange.
+// entity, never cycled: net worth cool, an up day green, a down day orange.
+// Projections are not here — each forecast scenario carries its own stored
+// colour, so it keeps it when a neighbour is added or deleted.
 export const C_WORTH = "var(--viz-1)";
-export const C_FORECAST = "var(--viz-1)";
-export const C_EMERGENCY = "var(--viz-3)";
-export const C_PESSIMISTIC = "var(--viz-6)";
 export const C_UP = "var(--viz-2)";
 export const C_DOWN = "var(--viz-8)";
+
+/**
+ * Money in axis shorthand: `$40K`, `-$1.2M`, `$850`.
+ *
+ * Written out by hand rather than handed to `Intl`'s own `notation: "compact"`,
+ * which disagrees with itself across ICU versions about whether $40,000 is "$40K"
+ * or "$40.0K" — the server and the browser then render different text and React
+ * throws a hydration mismatch on a chart axis, which is about the last place
+ * anyone would look for one. Scaling here and formatting a plain decimal leaves
+ * `Intl` doing only the part it does identically everywhere.
+ */
+export function compactMoney(value: number, currency: string): string {
+  const abs = Math.abs(value);
+  const [scale, suffix] =
+    abs >= 1e9 ? [1e9, "B"] : abs >= 1e6 ? [1e6, "M"] : abs >= 1e3 ? [1e3, "K"] : [1, ""];
+
+  const scaled = value / scale;
+  // One decimal only where it says something: $1.2M earns it, $40K does not.
+  const digits = suffix && Math.abs(scaled) < 10 && Math.round(scaled * 10) % 10 !== 0 ? 1 : 0;
+
+  return (
+    new Intl.NumberFormat("en-NZ", {
+      style: "currency",
+      currency,
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    }).format(scaled) + suffix
+  );
+}
 
 function niceNum(range: number, round: boolean): number {
   const exp = Math.floor(Math.log10(range || 1));
@@ -79,3 +106,35 @@ export type Hover =
   | { kind: "future"; x: number; unit: number };
 
 export type Row = { color: string; label: string; value: string; y?: number };
+
+/** A vertex of a projected line: `day` days past today, `worth` at the end of it.
+ *  Mirrors `ProjectionPoint` on the server, kept structural so the client module
+ *  does not import a `server-only` one. */
+export type Point = { day: number; worth: number };
+
+/**
+ * The projected balance at `day`, interpolated along the polyline.
+ *
+ * The line is a vertex per *change*, so the value between two vertices is the
+ * straight segment joining them — the same interpolation the renderer draws, so
+ * the crosshair reads the pixel it sits on. Null past the line's own end: a
+ * projection that has run out has no worth to report, and continuing it flat
+ * would claim the balance stops falling exactly when the plan stops describing
+ * it.
+ */
+export function worthAt(points: Point[], day: number, start: number): number | null {
+  if (points.length === 0 || day < 0 || day > points[points.length - 1].day) return null;
+
+  let prevDay = 0;
+  let prevWorth = start;
+  for (const point of points) {
+    if (day <= point.day) {
+      const span = point.day - prevDay;
+      if (span <= 0) return point.worth;
+      return prevWorth + ((point.worth - prevWorth) * (day - prevDay)) / span;
+    }
+    prevDay = point.day;
+    prevWorth = point.worth;
+  }
+  return prevWorth;
+}

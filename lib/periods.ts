@@ -34,9 +34,13 @@ const nzDateFormat = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
-type YMD = { year: number; month: number; day: number };
+export type YMD = { year: number; month: number; day: number };
 
-function nzDate(date: Date): YMD {
+/** The NZ calendar day an instant falls on. Exported because budget recurrence
+ *  (lib/budget/recurrence.ts) has to answer the same question this file does —
+ *  "which local day is this?" — and two copies of the timezone resolution is
+ *  exactly the drift the note at the top of this file warns about. */
+export function nzDate(date: Date): YMD {
   const [year, month, day] = nzDateFormat.format(date).split("-").map(Number);
   return { year, month, day };
 }
@@ -177,6 +181,23 @@ export function periodStart(key: string, period: Period): Date {
       return new Date(Date.UTC(end - 1, 3, 1));
     }
   }
+}
+
+/**
+ * The first day *after* the period a key names — the exclusive end of its span,
+ * which is the next period's `periodStart`.
+ *
+ * Found by stepping far enough past the start to be certainly inside the next
+ * period and asking which one that is, rather than by adding a fixed length:
+ * periods here are not all the same length (28–31 days, 90–92, 365–366), and the
+ * one arithmetic that is always right is "the next key's start".
+ */
+export function periodEnd(key: string, period: Period): Date {
+  const start = periodStart(key, period);
+  // Comfortably longer than the period, comfortably shorter than two of them.
+  const skip = { day: 1, week: 7, month: 32, quarter: 93, year: 366, taxyear: 366 }[period];
+  const inside = new Date(start.getTime() + skip * 86_400_000);
+  return periodStart(periodKey(inside, period), period);
 }
 
 /**

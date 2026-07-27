@@ -2,8 +2,7 @@
 
 import { Link } from "@/ui/chrome/workspace-context";
 import { useState } from "react";
-import { formatMoneyWhole } from "@/lib/format";
-import { CELL, CHEVRON, Swatch } from "./comparison-table";
+import { CELL, CHEVRON, Swatch, formatCell, type CellFormat } from "./comparison-table";
 
 /** A row and everything it is made of. Three levels: group → category → merchant. */
 export type SpendNode = {
@@ -36,7 +35,17 @@ const INDENT_REM = 1.25;
  *
  * Closed by default, at every level. The table's job is the ten categories.
  */
-export function SpendRow({ row, depth = 0 }: { row: SpendNode; depth?: number }) {
+export function SpendRow({
+  row,
+  depth = 0,
+  format = "money",
+}: {
+  row: SpendNode;
+  depth?: number;
+  /** How the cells read. See `CellFormat` — the budget view's variance columns
+   *  are the reason this is a prop rather than a fixed rule. */
+  format?: CellFormat;
+}) {
   const [open, setOpen] = useState(false);
   const expandable = row.children.length > 0;
   const link = "underline decoration-current/25 underline-offset-2 hover:decoration-current";
@@ -102,14 +111,14 @@ export function SpendRow({ row, depth = 0 }: { row: SpendNode; depth?: number })
 
         {row.values.map((value, i) => (
           <td key={i} className={CELL}>
-            {value === 0 ? <span className="text-muted">—</span> : formatMoneyWhole(value)}
+            {formatCell(value, format)}
           </td>
         ))}
       </tr>
 
       {open
         ? row.children.map((child) => (
-            <SpendRow key={child.label} row={child} depth={depth + 1} />
+            <SpendRow key={child.label} row={child} depth={depth + 1} format={format} />
           ))
         : null}
     </>

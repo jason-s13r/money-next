@@ -1,9 +1,16 @@
 import "server-only";
 
 // Public types and pure helpers shared by the spend summary and review queue.
+//
+// The month-bucketing and recency-weighting helpers now live in the pure
+// `lib/budget/months.ts` (so the worker-side budget inference can share them) and
+// are re-exported here, unchanged, for everything that already imported them from
+// this module. Imported as well as re-exported, because `RECUR_MIN_MONTHS` below
+// still needs `MONTHS` as a local binding.
+import { completeMonths, monthKey, recencyWeightedMean, MONTHS } from "../../../budget/months";
+export { completeMonths, monthKey, recencyWeightedMean, MONTHS };
 
 export const NZ_TIMEZONE = "Pacific/Auckland";
-export const MONTHS = 12;
 /** Overfetch window: comfortably more than 12 months, filtered precisely below. */
 export const FETCH_DAYS = 400;
 /** A category joins the forecast only if it has spend in at least this many of
@@ -14,61 +21,11 @@ export const FETCH_DAYS = 400;
  *  see {@link FORECAST_EXCLUDED_CATEGORY_IDS}.) */
 export const RECUR_MIN_MONTHS = Math.ceil(MONTHS / 2);
 
-const monthFormat = new Intl.DateTimeFormat("en-NZ", {
-  timeZone: NZ_TIMEZONE,
-  year: "numeric",
-  month: "2-digit",
-});
-
-/** `2026-06`, in NZ local time. */
-export function monthKey(date: Date): string {
-  const parts = monthFormat.formatToParts(date);
-  const year = parts.find((p) => p.type === "year")!.value;
-  const month = parts.find((p) => p.type === "month")!.value;
-  return `${year}-${month}`;
-}
-
-/**
- * The last `MONTHS` *complete* calendar months, oldest first. The current month
- * is excluded: a month that is three days old always looks like a spending
- * collapse, and it would drag every median down with it.
- */
-export function completeMonths(now: Date): string[] {
-  let [year, month] = monthKey(now).split("-").map(Number);
-  const keys: string[] = [];
-  for (let i = 0; i < MONTHS; i++) {
-    month -= 1;
-    if (month === 0) {
-      month = 12;
-      year -= 1;
-    }
-    keys.unshift(`${year}-${String(month).padStart(2, "0")}`);
-  }
-  return keys;
-}
-
 export function median(values: number[]): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].toSorted((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
   return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-}
-
-/**
- * Mean of a monthly series (oldest first) biased toward recent months: month i,
- * counting from 1 at the oldest, carries weight i, so the newest month counts
- * MONTHS times as much as the oldest. Divides by the whole window's weight,
- * including months with no spend, so a category that is trailing off is faded
- * out rather than forecast at its former level.
- */
-export function recencyWeightedMean(oldestFirst: number[]): number {
-  let weighted = 0;
-  let weight = 0;
-  oldestFirst.forEach((value, i) => {
-    weighted += (i + 1) * value;
-    weight += i + 1;
-  });
-  return weight === 0 ? 0 : weighted / weight;
 }
 
 /**

@@ -120,3 +120,42 @@ export async function enqueueRules(
   });
   return { id: run.id, existing: false };
 }
+
+/**
+ * Queue a budget inference, or reuse the one already waiting for the same target.
+ *
+ * Inference talks to a local LLM, which is far too slow to hold a request open for
+ * (see `BudgetInferenceRun`), so the web app enqueues and the worker runs it.
+ *
+ * Coalesced per *target*: a create (`budgetId` null) coalesces with another queued
+ * create, and a re-infer coalesces with a queued re-infer of the same budget — two
+ * clicks of the same button should not run the model twice over the same history.
+ * A create and a re-infer never coalesce with each other, and re-inferring two
+ * different budgets queues two runs.
+ */
+export async function enqueueBudgetInference(
+  db: ScopedDb,
+  opts: { budgetId?: string | null; clearBackoff?: boolean } = {},
+): Promise<Enqueued<string>> {
+  const budgetId = opts.budgetId ?? null;
+
+  const waiting = await db.budgetInferenceRun.findFirst({
+    where: { status: "queued", budgetId },
+    orderBy: { startedAt: "asc" },
+  });
+
+  if (waiting) {
+    if (opts.clearBackoff && waiting.nextAttemptAt && waiting.nextAttemptAt > new Date()) {
+      await db.budgetInferenceRun.update({
+        where: { id: waiting.id },
+        data: { nextAttemptAt: null },
+      });
+    }
+    return { id: waiting.id, existing: true };
+  }
+
+  const run = await db.budgetInferenceRun.create({
+    data: { workspaceId: db.$workspaceId, status: "queued", budgetId },
+  });
+  return { id: run.id, existing: false };
+}

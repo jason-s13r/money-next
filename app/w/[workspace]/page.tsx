@@ -53,15 +53,16 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
     offset > 0 ? (offset - STEP <= 0 ? base : `${base}&from=${isoDate(windowStart(offset - STEP))}`) : null;
 
   // The net-worth-over-time chart reuses the balances and spend already loaded
-  // above: the accessible figure its line anchors to, and the burns its three
-  // projections run at. Its own query is just the per-day net flow, over all
-  // history — the chart is always daily and scrolls/zooms on the client.
+  // above: the accessible figure its line anchors to, and the history-derived
+  // rates its projections fall back on. Its own queries are the per-day net flow
+  // over all history, and the forecast scenarios to walk forward.
   const series = await getBalanceSeries(balances, spend, now);
 
-  // Runway scenarios are built outside JSX so the Hero component receives plain
-  // strings and colour tokens rather than inline templates.
+  // The runway tiles read off the very same projections the chart draws, so a
+  // tile can never disagree with the line above it. Built outside JSX so Hero
+  // receives plain strings and colour tokens rather than inline templates.
   const money = (amount: number) => formatMoneyWhole(amount, balances.displayCurrency);
-  const runways = getRunways(balances, spend, money);
+  const runways = getRunways(series.scenarios, money);
 
   return (
     <main className="mx-auto flex w-full max-w-5xl flex-col gap-6 px-3 py-5 sm:px-6 sm:py-8">
@@ -94,15 +95,28 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
 
       {/* Balance over time. The line is the accessible balance reconstructed from
           the transaction flow (BalanceSnapshot history is only days old); the bars
-          are each day's net flow — the line's own deltas — and the two dashed
-          lines project the emergency and forecast burns named in the tiles above
-          out to where the money runs out. */}
+          are each day's net flow — the line's own deltas — and each dashed line
+          walks one forecast scenario's budgets forward to where the money runs
+          out. */}
       <Card>
         <CardHeader>
           <CardTitle>Balance over time</CardTitle>
         </CardHeader>
         <CardContent>
           <BalanceChart series={series} />
+          {/* Said plainly rather than silently: with no forecast there is no
+              forward line at all. Nothing here creates one — a page that
+              bootstrapped a plan on render would put figures in front of someone
+              they never agreed to. */}
+          {!series.scenariosConfigured ? (
+            <p className="mt-3 text-xs text-muted">
+              No forecast yet, so the chart stops at today.{" "}
+              <Link href="/forecasts" className="underline underline-offset-2 hover:text-foreground">
+                Create a forecast
+              </Link>{" "}
+              to project a budget forward day by day.
+            </p>
+          ) : null}
         </CardContent>
       </Card>
 

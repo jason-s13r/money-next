@@ -1,5 +1,5 @@
 /**
- * Draining the two work queues: syncs and rules passes.
+ * Draining the work queues: syncs, rules passes and budget inferences.
  *
  * Not an entry point — `scripts/worker.ts` runs this on a poll loop (the compose
  * `worker` service) and `scripts/ingest.ts --drain` runs it once, right after
@@ -34,6 +34,7 @@ import { catalogDb, scopedDb, type ScopedDb } from "../lib/server/db";
 import { akahuFor, TOKEN_LINK_SELECT } from "../lib/server/akahu";
 import { runSync, type SyncLink } from "../lib/server/ingest/sync";
 import { runRules } from "../lib/server/rules/engine";
+import { runBudgetInference } from "../lib/server/budget/run";
 
 // How many times a run may be claimed before a failure is terminal, and the base
 // gap between retries (doubled each attempt) — a transient blip clears in seconds,
@@ -261,6 +262,75 @@ async function claimAndRunRule(db: ScopedDb): Promise<boolean> {
   return true;
 }
 
+// --- Budget inference queue ------------------------------------------------
+
+async function retryOrFailInference(db: ScopedDb, run: { id: string; attempts: number }, error: string) {
+  const { data, retryMs } = nextState(run.attempts, error);
+  // updateMany, not update: a user can Clear a run mid-flight (it deletes the row),
+  // and a finalise that threw on the missing row would take the whole worker tick
+  // down with it. A no-op on a cleared row is exactly right.
+  await db.budgetInferenceRun.updateMany({ where: { id: run.id }, data });
+  logOutcome("budget inference", run.id, run.attempts, retryMs);
+}
+
+/** Stale-claim recovery for the inference queue — the `SyncRun` reaper's twin. An
+ *  LLM run is slow, but WORKER_STALE_MINUTES is set well above any real run, so a
+ *  slow-but-alive inference is never reaped out from under itself. */
+async function reapStaleInference(db: ScopedDb): Promise<void> {
+  const cutoff = new Date(Date.now() - STALE_MINUTES * 60 * 1000);
+  const stale = await db.budgetInferenceRun.findMany({
+    where: { status: "running", startedAt: { lt: cutoff } },
+    select: { id: true, attempts: true },
+  });
+  for (const run of stale) {
+    const won = await db.budgetInferenceRun.updateMany({
+      where: { id: run.id, status: "running", startedAt: { lt: cutoff } },
+      data: { status: "queued" },
+    });
+    if (won.count === 0) continue;
+    console.error(`budget inference #${run.id}: stale claim (running > ${STALE_MINUTES}m), reclaiming`);
+    await retryOrFailInference(db, run, staleMessage("budget inference"));
+  }
+}
+
+/**
+ * Claim and run one queued budget inference. Mechanics mirror `claimAndRunSync`:
+ * an atomic queued → running claim that bumps `attempts`, the slow work, then a
+ * finalise. On success the created (or refreshed) budget's id is written back to the
+ * run, so the budgets page can point at it; on a throw the row is routed through the
+ * same retry-or-fail path as the other queues.
+ */
+async function claimAndRunInference(db: ScopedDb): Promise<boolean> {
+  const eligible = eligibleNow();
+  const next = await db.budgetInferenceRun.findFirst({
+    where: { status: "queued", ...eligible },
+    orderBy: { startedAt: "asc" },
+  });
+  if (!next) return false;
+
+  const claim = await db.budgetInferenceRun.updateMany({
+    where: { id: next.id, status: "queued", ...eligible },
+    data: { status: "running", startedAt: new Date(), attempts: { increment: 1 } },
+  });
+  if (claim.count === 0) return false;
+
+  console.log(`\n=== budget inference (${next.workspaceId}) — ${next.budgetId ? "re-infer" : "create"} ===`);
+  try {
+    const budgetId = await runBudgetInference(db, { budgetId: next.budgetId });
+    // updateMany, so a run the user Cleared while it was working finalises to a
+    // no-op instead of throwing on the missing row. The budget it built is already
+    // written either way.
+    await db.budgetInferenceRun.updateMany({
+      where: { id: next.id },
+      data: { status: "success", finishedAt: new Date(), budgetId },
+    });
+    console.log(`done (budget inference #${next.id})`);
+  } catch (error) {
+    await retryOrFailInference(db, { id: next.id, attempts: next.attempts + 1 }, error instanceof Error ? error.message : String(error));
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 
 /**
@@ -292,10 +362,12 @@ export async function drainOnce(workspaceIds?: string[]): Promise<number> {
     // reclaimed row is back in the queue for this same pass to pick up.
     await reapStaleSyncs(db);
     await reapStaleRules(db);
+    await reapStaleInference(db);
     // Keep draining each queue until it's empty: a burst of clicks shouldn't wait a
     // whole poll interval per row.
     while (await claimAndRunSync(db)) processed++;
     while (await claimAndRunRule(db)) processed++;
+    while (await claimAndRunInference(db)) processed++;
   }
   return processed;
 }

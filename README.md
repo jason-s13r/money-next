@@ -8,6 +8,8 @@ Built with [Next.js](https://nextjs.org) 16, React 19, TypeScript, Tailwind CSS 
 
 - **Dashboard** — net worth split into accessible, liquid, and locked balances; emergency and forecasted runway; a credit-facility meter; and a warning banner for uncategorised spending.
 - **Income and spending breakdown** — compare periods (day, week, month, quarter, year, or NZ tax year) with stacked bars and a drillable table down to category, subcategory, and merchant.
+- **Budgets** — plan expected income and spending as recurring items, or infer a starting budget from your own history (deterministically, or with an optional local LLM). A budget is a **base** — the ongoing plan — with optional seasonal **layers** that add on top only within their own window (a Christmas layer that applies each December). The budget-vs-actual view anchors on a base and folds in its active layers, comparing the plan against what actually happened.
+- **Forecasts** — project a base budget and its active layers forward as named scenarios, drawn as forward runway lines on the dashboard.
 - **Transactions** — recent, searchable, and filterable by account, category group, category, merchant, card suffix, or Akahu type. Each transaction has a detail page for editing merchant/category, linking transfers, and teaching automation rules.
 - **Accounts** — list of connected accounts with balances, available funds, and transaction counts; per-account transaction history with running balances.
 - **Rules** — a GoRules Zen decision graph that auto-enriches transactions (category, merchant, transfer linking). Rules are taught from a single classified transaction and run automatically on every sync.
@@ -27,6 +29,9 @@ Key tables:
 - `TransferGroup` — user-linked legs of internal transfers; excluded from income/spend metrics.
 - `FxRate` — ECB reference rates from [frankfurter.dev](https://frankfurter.dev), used to value multi-currency transactions and balances.
 - `BalanceSnapshot` — point-in-time balances captured on each sync.
+- `Budget`, `BudgetItem` — a plan and its recurring line items. A budget is either a base (`baseBudgetId` null) or a layer that adds onto one; deleting a base cascades to its layers. Items carry provenance (`inferred`, `inferredSource`, `basis`) so a still-guessed figure is marked as such.
+- `Forecast` — a named forward projection pinned to a single base budget.
+- `BudgetInferenceRun` — the queue and audit log for background budget inference; drained by the same worker as syncs and rules (see [Sync](#sync)).
 - `RuleDocument`, `RuleRun`, `RuleApplication` — decision graphs and an audit log of what they changed.
 - `TransactionConflict` — raised when a user-set enrichment field diverges from a later Akahu sync.
 - `SyncState`, `SyncRun` — incremental sync high-water mark and run history.
@@ -119,6 +124,12 @@ usually the one that isn't configured yet.
 so a stack with no `worker:start` wants `--drain`. `db:sync` and `db:worker` are
 deprecated aliases that print a warning and forward to these two.
 
+The same worker also drains **budget inference** runs. Inferring a budget talks to
+a local LLM (or the deterministic fallback), which is too slow to hold a request
+open for, so the web app enqueues a `BudgetInferenceRun` when you press the button
+and `worker:start` runs it in the background — a stack that infers budgets needs a
+worker draining for the same reason a syncing one does.
+
 ### Users
 
 Registration is invite-only and there is no site-admin surface, so these live in
@@ -182,11 +193,16 @@ lib/
     sync.ts           Akahu ingest pipeline
     transfers.ts      Link/unlink transfer legs
     conflicts.ts      Reconcile user edits vs. later Akahu syncs
+    budget/
+      infer.ts        Deterministic budget inference from history
+      llm.ts          Optional local-LLM inference (falls back to infer.ts)
+      run.ts          Background inference run, drained by the worker
     metrics/
       balance.ts      Net-worth summaries
       spend.ts        Spending forecasts and review queue
       runway.ts       Emergency/forecasted runway math
       comparison.ts   Period-over-period income/spending breakdown
+      budget/         Budget-vs-actual and forward projections (base + layers)
 ui/                   React components (server and client)
 prisma/               Schema and migrations
 scripts/              Every `pnpm` command above (see the Commands section)
@@ -203,6 +219,7 @@ scripts/              Every `pnpm` command above (see the Commands section)
 - **Transfer handling.** Akahu tags rows as `TRANSFER` but never links the legs. The app lets you manually link legs (same- or cross-currency), and can auto-link unambiguous opposite legs via rules.
 - **NZ timezone.** Period bucketing uses `Pacific/Auckland`, because many transactions are stamped at midday UTC and land in a different NZ month.
 - **Native addon.** `@gorules/zen-engine` is a native Node addon; it is kept out of the Next.js bundle via `serverExternalPackages` in [next.config.ts](next.config.ts).
+- **Local-only budget inference.** Budget inference reads recurrence straight out of your numbers. If `LLM_API` points at a model on the same machine (Ollama's OpenAI-compatible endpoint), it also asks the model to name the commitments — but the model only ever sees and returns *names*, which are re-mapped to real ids and re-validated before anything is saved. With no endpoint, or one that won't answer, the button still works: it falls back to the deterministic seeder. The endpoint is meant to be `127.0.0.1` — a household's whole transaction history is the payload, and it must not leave the machine. The counts-only console log is safe; the full transcript (`LLM_LOG_DIR`) contains the transactions themselves and is opt-in for that reason.
 
 ## Environment variables
 
@@ -221,6 +238,16 @@ TOKEN_ENCRYPTION_KEY=      # optional; the older symmetric scheme for stored tok
 TOKEN_PUBLIC_KEY=          # optional; from `pnpm link:keypair` — app included
 TOKEN_PRIVATE_KEY=         # optional; worker and CLI only, never the app
 ID_NAMESPACE=              # optional; labels ids this app mints. Defaults to "app"
+
+# Budget inference (all optional; unset ⇒ deterministic seeder only)
+LLM_API=                   # a local OpenAI-compatible endpoint, e.g. 127.0.0.1:11434 (Ollama). Local machine only.
+LLM_API_KEY=               # bearer token, only if the endpoint wants one (Ollama does not)
+LLM_MODEL=                 # model to ask for; defaults to "llama3.1"
+LLM_LOG_DIR=               # opt-in transcript dir — contains transactions, so local only
+LLM_TIMEOUT=               # per-call ms; default 300000, clamped 30000–600000
+LLM_MAX_CONCURRENCY=       # windows sent in parallel; default 1, up to 16
+LLM_MAX_MONTHS=            # how far back to read; default/cap is the deterministic window
+LLM_MAX_WINDOW_TX=         # split a category group larger than this; default 400
 ```
 
 The `AKAHU_*` pair is instance-wide, so it really serves one person's accounts. A

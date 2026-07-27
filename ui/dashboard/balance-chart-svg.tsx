@@ -4,9 +4,6 @@ import { formatMoneyWhole } from "@/lib/format";
 import {
   AXIS_W,
   C_DOWN,
-  C_EMERGENCY,
-  C_FORECAST,
-  C_PESSIMISTIC,
   C_UP,
   C_WORTH,
   H,
@@ -27,9 +24,8 @@ type Geom = {
   worthPath: string;
   worthArea: string;
   nowX: number;
-  forecastPath: string | null;
-  emergencyPath: string | null;
-  pessimisticPath: string | null;
+  /** One dashed line per forecast scenario, in legend order. */
+  projections: { id: string; color: string; path: string }[];
 };
 
 type ChartSvgProps = {
@@ -39,7 +35,8 @@ type ChartSvgProps = {
   worthBoundaries: number[];
   currentWorth: number;
   displayCurrency: string;
-  compact: Intl.NumberFormat;
+  /** Money in axis shorthand — see `compactMoney`. */
+  compact: (value: number) => string;
   xLabels: { x: number; text: string }[];
   hover: Hover | null;
   info: { label: string; rows: Row[] } | null;
@@ -77,7 +74,7 @@ export function BalanceChartSvg({
             fontSize={11}
             style={{ fill: "var(--text-muted)" }}
           >
-            {compact.format(v)}
+            {compact(v)}
           </text>
         ))}
       </svg>
@@ -91,7 +88,7 @@ export function BalanceChartSvg({
           role="img"
           aria-label={`Available balance over time, currently ${money(
             currentWorth,
-          )}, with daily net-flow bars and forecast and emergency burn-rate projections. Scroll horizontally for history.`}
+          )}, with daily net-flow bars and one projected line per forecast scenario. Scroll horizontally for history.`}
           onMouseMove={onMove}
           onMouseLeave={onLeave}
         >
@@ -135,16 +132,20 @@ export function BalanceChartSvg({
           {/* Net-worth line, on top of the candles */}
           <path d={worthPath} fill="none" style={{ stroke: C_WORTH }} strokeWidth={2} strokeLinejoin="round" />
 
-          {/* Projections */}
-          {geom.forecastPath && (
-            <path d={geom.forecastPath} fill="none" style={{ stroke: C_FORECAST }} strokeWidth={1} strokeDasharray="4 2" />
-          )}
-          {geom.emergencyPath && (
-            <path d={geom.emergencyPath} fill="none" style={{ stroke: C_EMERGENCY }} strokeWidth={1} strokeDasharray="2 3" />
-          )}
-          {geom.pessimisticPath && (
-            <path d={geom.pessimisticPath} fill="none" style={{ stroke: C_PESSIMISTIC }} strokeWidth={1} strokeDasharray="2 3" />
-          )}
+          {/* Projections — dashed, so the plan never reads as recorded history.
+              Colour is the only thing telling them apart, which is why each
+              scenario stores its own rather than taking one by position. */}
+          {geom.projections.map((p) => (
+            <path
+              key={p.id}
+              d={p.path}
+              fill="none"
+              style={{ stroke: p.color }}
+              strokeWidth={1}
+              strokeDasharray="4 2"
+              strokeLinejoin="round"
+            />
+          ))}
 
           {/* Today divider */}
           <line

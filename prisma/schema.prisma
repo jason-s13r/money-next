@@ -57,20 +57,24 @@ model Workspace {
   // That is not tidiness: Akahu's accreditation (and the Privacy Act) require
   // deletion on request to be real, so "delete a workspace" must never become a
   // soft delete of the rows that matter.
-  accounts            Account[]
-  transactions        Transaction[]
-  pendingTransactions PendingTransaction[]
-  balanceSnapshots    BalanceSnapshot[]
-  transferGroups      TransferGroup[]
-  conflicts           TransactionConflict[]
-  merchants           Merchant[]
-  labels              Label[]
-  transactionLabels   TransactionLabel[]
-  ruleDocuments       RuleDocument[]
-  ruleRuns            RuleRun[]
-  fieldChanges        FieldChange[]
-  syncStates          SyncState[]
-  syncRuns            SyncRun[]
+  accounts                Account[]
+  transactions            Transaction[]
+  pendingTransactions     PendingTransaction[]
+  balanceSnapshots        BalanceSnapshot[]
+  transferGroups          TransferGroup[]
+  conflicts               TransactionConflict[]
+  merchants               Merchant[]
+  labels                  Label[]
+  transactionLabels       TransactionLabel[]
+  budgets                 Budget[]
+  budgetItems             BudgetItem[]
+  forecasts               Forecast[]
+  budgetInferenceRuns     BudgetInferenceRun[]
+  ruleDocuments           RuleDocument[]
+  ruleRuns                RuleRun[]
+  fieldChanges            FieldChange[]
+  syncStates              SyncState[]
+  syncRuns                SyncRun[]
 }
 
 /// A person. Deliberately minimal, and matches the core fields Better Auth
@@ -369,9 +373,9 @@ model BankLink {
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
-  accounts   Account[]
-  syncState  SyncState?
-  syncRuns   SyncRun[]
+  accounts  Account[]
+  syncState SyncState?
+  syncRuns  SyncRun[]
 
   @@index([workspaceId, status])
 }
@@ -379,7 +383,7 @@ model BankLink {
 /// A connected financial account, mirrored from Akahu's `/accounts`.
 model Account {
   /// Akahu account id, e.g. `acc_...`
-  id               String  @id
+  id String @id
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -405,8 +409,8 @@ model Account {
   holder String?
 
   /// What this account can do, according to Akahu: TRANSACTIONS, PAYMENT_TO, PAYMENT_FROM.
-  hasTransactions Boolean @default(false)
-  canReceivePayments Boolean @default(false)
+  hasTransactions     Boolean @default(false)
+  canReceivePayments  Boolean @default(false)
   canInitiatePayments Boolean @default(false)
 
   /// Latest balance, flattened from `balance`. Absent for some account types.
@@ -417,10 +421,10 @@ model Account {
   overdrawn        Boolean?
 
   /// When Akahu last refreshed each part of the account data.
-  refreshedBalance     DateTime? @db.Timestamptz(3)
-  refreshedMeta        DateTime? @db.Timestamptz(3)
+  refreshedBalance      DateTime? @db.Timestamptz(3)
+  refreshedMeta         DateTime? @db.Timestamptz(3)
   refreshedTransactions DateTime? @db.Timestamptz(3)
-  refreshedParty       DateTime? @db.Timestamptz(3)
+  refreshedParty        DateTime? @db.Timestamptz(3)
 
   /// When Akahu last refreshed the account, distinct from when we last synced it.
   refreshedAt DateTime? @db.Timestamptz(3)
@@ -439,10 +443,10 @@ model Account {
 /// it can be enriched from `/connections`.
 model Connection {
   /// Akahu connection id, e.g. `conn_...`
-  id   String @id
-  name String
+  id             String  @id
+  name           String
   /// URL of the institution's logo.
-  logo String?
+  logo           String?
   /// classic | official
   connectionType String
 
@@ -460,7 +464,7 @@ model Connection {
 /// transactions, so they are all nullable.
 model Transaction {
   /// Akahu transaction id, e.g. `trans_...`
-  id        String  @id
+  id String @id
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -471,20 +475,20 @@ model Transaction {
   connectionId String
   connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
 
-  date         DateTime @db.Timestamptz(3)
-  description  String
+  date        DateTime @db.Timestamptz(3)
+  description String
   /// Negative for money out, positive for money in.
-  amount       Decimal @db.Decimal(19, 4)
+  amount      Decimal  @db.Decimal(19, 4)
   /// Account balance after this transaction, when the institution reports it.
-  balance      Decimal? @db.Decimal(19, 4)
+  balance     Decimal? @db.Decimal(19, 4)
   /// DEBIT | CREDIT | TRANSFER | EFTPOS | FEE | ...
-  type         String
-  hash         String?
+  type        String
+  hash        String?
 
-  merchantId    String?
-  merchant      Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
-  categoryId    String?
-  category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  merchantId      String?
+  merchant        Merchant?      @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+  categoryId      String?
+  category        Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   /// The `personal_finance` spending group this row sits under, as a real group id
   /// (NZFCC `group_...`, or an invented `group_custom_...` income group). Kept as a
   /// plain FK column — not derived through the category relation — because an
@@ -508,9 +512,9 @@ model Transaction {
 
   /// Foreign currency conversion details, when the transaction was made in
   /// another currency. The rate is a ratio, not money — it stays `Float`.
-  conversionAmount Decimal? @db.Decimal(19, 4)
+  conversionAmount   Decimal? @db.Decimal(19, 4)
   conversionCurrency String?
-  conversionRate Float?
+  conversionRate     Float?
 
   /// URL of a merchant logo image for this transaction, when Akahu provides one.
   logo String?
@@ -571,7 +575,7 @@ model Transaction {
 /// Pending rows are also less enriched than settled ones — Akahu attaches `meta`
 /// but no merchant or category — so those columns are absent here.
 model PendingTransaction {
-  id        Int     @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -585,7 +589,7 @@ model PendingTransaction {
   date        DateTime @db.Timestamptz(3)
   description String
   /// Negative for money out, positive for money in.
-  amount      Decimal @db.Decimal(19, 4)
+  amount      Decimal  @db.Decimal(19, 4)
   /// DEBIT | CREDIT | TRANSFER | EFTPOS | FEE | ...
   type        String
 
@@ -623,7 +627,7 @@ model TransferGroup {
   /// sequential one would publish how many transfers exist across every
   /// workspace on the instance, and could be walked. Scoping makes a guessed id
   /// return nothing — this makes there be nothing to guess.
-  id        String   @id @default(cuid())
+  id String @id @default(cuid())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -658,7 +662,7 @@ model FxRate {
 /// value from Akahu — an inflow Akahu simply leaves uncategorised never conflicts.
 /// The user's value is kept; this row is the prompt to reconcile on the tx page.
 model TransactionConflict {
-  id            Int         @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -680,8 +684,8 @@ model TransactionConflict {
 
   /// The value being kept (see `heldSource`), for display without a join. Named
   /// `userValue*` from when the user was the only owner the sync deferred to.
-  userValueId    String?
-  userValueLabel String?
+  userValueId     String?
+  userValueLabel  String?
   /// The value Akahu reported on the sync that raised this, for a side-by-side.
   akahuValueId    String?
   akahuValueLabel String?
@@ -705,7 +709,7 @@ model TransactionConflict {
 /// https://developers.akahu.nz/docs/the-transaction-model#merchant
 model Merchant {
   /// Akahu merchant id, e.g. `merchant_...`
-  id   String @id
+  id String @id
 
   /// The one table that is half catalog, half tenant data.
   ///
@@ -720,14 +724,15 @@ model Merchant {
   workspaceId String?
   workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  name String
+  name    String
   /// The merchant's website, when Akahu resolved one. Previously discarded at
   /// ingest; kept now so no enrichment field is lost.
   website String?
   /// URL of a logo image for this merchant, when Akahu provides one.
-  logo String?
+  logo    String?
 
   transactions Transaction[]
+  budgetItems  BudgetItem[]
 
   // A business can arrive under more than one id (Akahu has two for "Kamo Vets"),
   // so name is not unique — it is indexed for lookup, not constrained.
@@ -776,7 +781,7 @@ model TransactionLabel {
   transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
 
   labelId String
-  label   Label @relation(fields: [labelId], references: [id], onDelete: Cascade)
+  label   Label  @relation(fields: [labelId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
@@ -797,6 +802,7 @@ model CategoryGroup {
 
   categories   Category[]
   transactions Transaction[]
+  budgetItems  BudgetItem[]
 }
 
 /// The NZFCC category catalog, mirrored from nzfcc.org so an `nzfcc_...` id can
@@ -817,6 +823,7 @@ model Category {
   group   CategoryGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   transactions Transaction[]
+  budgetItems  BudgetItem[]
 
   syncedAt DateTime @updatedAt @db.Timestamptz(3)
 
@@ -826,11 +833,258 @@ model Category {
   @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "Category_name_trgm_idx")
 }
 
+// ---------------------------------------------------------------------------
+// Budgets
+//
+// Everything above this line is a record of what happened. These four models are
+// the only ones that describe what is *meant* to happen, and nothing about them
+// is ever mirrored from Akahu: a budget is entirely the user's, like `Label`.
+//
+// The shape is deliberately the mirror image of `Transaction`. A `BudgetItem` is
+// an intended transaction — signed amount, category group, optional category and
+// merchant — plus a recurrence. Expanding that recurrence yields dates, and
+// bucketing those dates with the same `periodKey` the metrics use (lib/periods.ts)
+// puts plan and actual in identical buckets. That is what lets the budget
+// breakdown reuse the historic comparison's types, row tree and components whole
+// (see lib/server/metrics/budget).
+// ---------------------------------------------------------------------------
+
+/// A named plan, and the span over which it applies.
+///
+/// The lifespan is what makes one model carry three quite different things: a
+/// general daily-living budget (no bounds, always on), a Christmas budget (a
+/// window, repeating every year), and a one-off holiday trip (a window, once).
+///
+/// Budgets *layer*, but explicitly rather than by coincidence. A budget is either
+/// a **base** — the ongoing plan, `baseBudgetId` null — or a **layer** of exactly
+/// one base, holding only the *extra* a period needs. A seasonal Christmas layer
+/// therefore describes what is spent on top of ordinary life, not instead of it,
+/// and it is added to its base precisely while its own window is live. The
+/// breakdown and every forecast expand a base together with its date-active
+/// layers; nothing sums two unrelated budgets, which is what makes the addition
+/// safe (see the note on `Forecast`). One level only — a layer has no layers of
+/// its own; the create/move actions enforce that, since the schema cannot.
+model Budget {
+  /// A cuid, not a counter — it appears in a URL. Same reasoning as `RuleRun`: a
+  /// sequential id would publish how many budgets exist across every workspace on
+  /// the instance.
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name String
+  /// Stable URL-safe identifier, unique *within a workspace* — the same key
+  /// `RuleDocument` uses, and unique per workspace for the same reason: an
+  /// instance-wide constraint would make the second workspace's "Christmas"
+  /// collide with the first's.
+  slug String
+
+  /// The span this budget applies over, as NZ calendar days and **inclusive of
+  /// both ends** — "active until 25 December" is what a person means, so the 25th
+  /// is in. Timestamptz like every other date here; the day it names is resolved
+  /// in Pacific/Auckland, for the reason lib/periods.ts gives at length.
+  ///
+  /// Both null is the general, always-on budget. Both set is a seasonal or event
+  /// budget. One of each is a valid half-bounded window ("from March onwards").
+  startsOn DateTime? @db.Timestamptz(3)
+  endsOn   DateTime? @db.Timestamptz(3)
+
+  /// Whether the window repeats every year. Christmas does; a holiday trip does
+  /// not. When set, only the month and day of `startsOn`/`endsOn` matter and the
+  /// year is ignored — including when the span wraps the New Year (15 Dec – 5 Jan),
+  /// which is the case `activeOn` has to handle explicitly. Meaningless, and
+  /// ignored, on an open-ended window.
+  repeatsAnnually Boolean @default(false)
+
+  /// Where this budget came from: `user` (someone made it) or `inferred` (the
+  /// seeder built it from transaction history). Provenance, never a control —
+  /// nothing branches on it for correctness. It is how "re-infer from history"
+  /// finds the budget to refresh, and how the UI can say a figure was guessed.
+  /// Same vocabulary and same intent as `Transaction.categorySource`.
+  origin String @default("user")
+
+  /// The base this budget layers onto, or null when it *is* a base. A layer holds
+  /// only the extra spend a period needs, added on top of its base; base + active
+  /// layers is what the breakdown and every forecast project. `Cascade`: a layer
+  /// is meaningless once its base is gone, so it goes with it. One level only —
+  /// the create/move actions refuse to point a layer at another layer.
+  baseBudgetId String?
+  base         Budget?  @relation("BudgetLayers", fields: [baseBudgetId], references: [id], onDelete: Cascade)
+  layers       Budget[] @relation("BudgetLayers")
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  items          BudgetItem[]
+  forecasts      Forecast[]
+  inferenceRuns  BudgetInferenceRun[]
+
+  @@unique([workspaceId, slug])
+  // The read every projection starts with: this workspace's budgets, narrowed to
+  // the ones whose window could overlap the span being drawn.
+  @@index([workspaceId, startsOn, endsOn])
+  // A base's layers, and the "bases only" filter the pickers use.
+  @@index([workspaceId, baseBudgetId])
+}
+
+/// One intended transaction: an amount, a recurrence, and where it is filed.
+model BudgetItem {
+  id String @id @default(cuid())
+
+  /// Carried on the row itself even though the item is reachable through its
+  /// budget: the RLS policy is a predicate on a column, and it cannot follow a
+  /// relation to find one (see 20260718000000_rls_backstop).
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  budgetId String
+  budget   Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  /// What the user calls it — "Power bill", "Presents".
+  name String
+
+  /// Negative for money out, positive for money in — **the same convention as
+  /// `Transaction.amount`**, deliberately, so the breakdown builder branches on
+  /// the sign exactly as the historic one does. The editor has an expense/income
+  /// toggle and writes the sign; nobody types a minus.
+  amount Decimal @db.Decimal(19, 4)
+
+  /// The currency the figure was entered in, stamped from the workspace's display
+  /// currency when the item is created. Stored rather than assumed because the
+  /// display currency is derived from whichever accounts are busiest
+  /// (`getDisplayCurrency`) and can therefore change under a budget that was
+  /// typed months earlier — without this column that would silently reinterpret
+  /// every amount. Converted at read like everything else.
+  currency String
+
+  /// The high-level bucket, and the only one of the three that is required: a
+  /// budgeted amount that belongs to no group could not appear in the breakdown at
+  /// all. `Restrict`, because the group catalog is shared and a refresh must not
+  /// be able to orphan a workspace's plan.
+  categoryGroupId String
+  categoryGroup   CategoryGroup @relation(fields: [categoryGroupId], references: [id], onDelete: Restrict)
+
+  /// Optional extra granularity: the NZFCC subcategory, and the merchant. Both
+  /// `SetNull` — losing the narrowing must not delete the budgeted money, which
+  /// still belongs to its group.
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  merchantId String?
+  merchant   Merchant? @relation(fields: [merchantId], references: [id], onDelete: SetNull)
+
+  /// `once | day | week | month | quarter | year`.
+  ///
+  /// The recurring values are `lib/periods.ts`'s `PERIODS` minus `taxyear`, so a
+  /// budget speaks the same vocabulary the breakdown buckets in. Two deliberate
+  /// absences: **fortnight is not a frequency** — it is `week` with `interval: 2`,
+  /// which the editor offers as a preset — and **`once` is not a period**, it is
+  /// the single-occurrence case event budgets are made of ("presents, on the
+  /// 20th"). That second one is why this is its own list and not `Period`.
+  frequency String
+  /// How many `frequency` steps between occurrences. 1 for monthly, 2 for
+  /// fortnightly. Ignored for `once`.
+  interval  Int    @default(1)
+
+  /// One real occurrence, from which the rest are derived: its NZ day-of-month,
+  /// weekday and month *are* the anchor within the period.
+  ///
+  /// A single column rather than separate day/weekday/month fields because those
+  /// can hold combinations that mean nothing (`anchorDay: 31` on a weekly item)
+  /// and because one is needed regardless — with `interval > 1` a weekday alone
+  /// does not say *which* fortnight is the on one. For `once`, this is simply the
+  /// date it happens.
+  anchorDate DateTime @db.Timestamptz(3)
+
+  /// Whether the seeder wrote this row and nobody has touched it since. Cleared on
+  /// the first user edit, which is what lets "re-infer from history" refresh the
+  /// rows still resting on a guess while leaving hand-corrected ones alone.
+  inferred Boolean @default(false)
+
+  /// How a seeded row was produced: `ai` (the local LLM read the history and named
+  /// it) or `computed` (the deterministic pattern detector, used when no model is
+  /// reachable or a window's inference failed). Null for a hand-typed row, which was
+  /// produced by neither. Provenance for the UI's badge, never a control — it says
+  /// where a figure came from, not what may be done to it. Distinct from `inferred`,
+  /// which is about whether the row is still an untouched guess: an edited AI row
+  /// keeps `inferredSource: ai` but `inferred: false`, so the badge is hidden while
+  /// the origin is not forgotten.
+  inferredSource String?
+
+  /// How a seeded figure was arrived at, in the seeder's own words — the LLM's
+  /// one-line rationale ("Recurring larger transactions appearing several times a
+  /// year") or the detector's ("12 payments over 24 months"). Shown in a popover on
+  /// the provenance badge so a guessed figure can be questioned. Null for a
+  /// hand-typed row, which needs no explanation of where it came from.
+  basis String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@index([workspaceId])
+  @@index([budgetId])
+  @@index([categoryGroupId])
+  @@index([categoryId])
+  @@index([merchantId])
+}
+
+/// A named forward projection: one budget, walked forward from today's balance.
+///
+/// This is what the dashboard's dashed burn lines became. They used to be three
+/// scalars from `getSpendSummary` (a flat forecast burn, a flat essentials floor,
+/// and the forecast again without its income offset), each divided into the
+/// balance to get a runway in months. A flat rate cannot show that December is
+/// expensive, and none of the three could be edited.
+///
+/// A forecast points at exactly *one* **base** budget, and projects it together
+/// with that base's date-active layers. An even earlier design let a forecast layer
+/// any several budgets additively, and that was the trap: layering is addition, so
+/// two unrelated budgets covering the same week were spent twice, and two that each
+/// budget a wage doubled the income. The base ↔ layer structure is what makes the
+/// addition safe again — a base owns its layers, a layer carries only the *extra* a
+/// period needs, and nothing sums two unrelated plans. So this points at a base, not
+/// a bare layer (`createForecast` enforces `baseBudgetId: null`), and the layers come
+/// along by relation. To vary a projection — strip the income for a worst-case line,
+/// thin the spending for an emergency floor — edit or duplicate the base's budget.
+model Forecast {
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  name String
+  /// Unique within a workspace, like `Budget.slug` and for the same reason.
+  slug String
+
+  /// The `--viz-*` token this forecast's line, legend swatch and runway tile wear.
+  /// Stored rather than derived from position so a forecast keeps its colour when
+  /// another is added, reordered or deleted — the same "colour follows the entity,
+  /// not its rank" rule `slotColor` states for categories.
+  color String
+
+  /// Order in the legend and the runway tiles. A plain integer the UI rewrites on
+  /// reorder; ties are broken by name so the order is always total.
+  position Int @default(0)
+
+  /// The one budget this forecast projects. `Cascade`: a forecast is a view *of* a
+  /// budget, so when the budget goes the forecast goes with it — there is nothing
+  /// left for it to project.
+  budgetId String
+  budget   Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@index([budgetId])
+}
+
 /// Point-in-time balance, appended on each sync so the dashboard can chart
 /// net worth over time. Akahu only ever exposes the *current* balance, so this
 /// history only exists because we record it.
 model BalanceSnapshot {
-  id        Int     @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -872,7 +1126,7 @@ model SyncState {
 
 /// Audit log of ingest runs, so a silently failing cron is visible.
 model SyncRun {
-  id         Int       @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -943,7 +1197,7 @@ model SyncRun {
 /// because the app never queries into the graph: it is loaded whole, parsed, and
 /// handed to the engine, and `jsonb` would reorder keys for no gain here.
 model RuleDocument {
-  id   Int    @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -979,7 +1233,7 @@ model RuleDocument {
 model RuleRun {
   /// A cuid: this one appears in a URL (`/rules/runs/<id>`), so a counter would
   /// hand every visitor a running total of the instance's rule activity.
-  id         String    @id @default(cuid())
+  id String @id @default(cuid())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1015,6 +1269,54 @@ model RuleRun {
 
   @@index([workspaceId, startedAt])
   @@index([startedAt])
+}
+
+/// A queued budget inference: read the history and build (or refresh) a budget,
+/// off the request.
+///
+/// Inference talks to a local LLM, which can take a minute or more over several
+/// windows — far too long to hold a page render or a form POST open for. So the web
+/// app writes a `queued` row (a tenant INSERT `money_app` already holds) and returns
+/// straight away; the `money_sync` worker (scripts/drain.ts) claims it, runs the
+/// inference and creates or refreshes the budget. The same queue machinery the sync
+/// and rules passes use: atomic claim, retry with backoff, stale-claim reaping.
+///
+/// `budgetId` is the budget the run concerns. Set upfront for a re-infer; null for a
+/// create, then filled in with the freshly created budget when it succeeds — so on
+/// success it always points at the budget to show, and the budgets list can show a
+/// run in flight as "being created" until the row it produces appears.
+model BudgetInferenceRun {
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// The budget this run builds or refreshes. Null while a create run is in flight,
+  /// set to the new budget on success; set from the start for a re-infer. `SetNull`
+  /// so deleting the budget leaves the record of the run behind.
+  budgetId String?
+  budget   Budget? @relation(fields: [budgetId], references: [id], onDelete: SetNull)
+
+  /// queued | running | success | failed. Same lifecycle as `SyncRun.status`: the
+  /// web app writes `queued`, the worker claims it (queued → running) and finalises
+  /// it, and a transient failure re-queues with backoff rather than failing outright.
+  status String @default("queued")
+
+  /// Created-at for a queued row; overwritten with the real start when the worker
+  /// claims it, so `finishedAt - startedAt` is execution time, not queue wait.
+  startedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+
+  /// Claim count and retry backoff, exactly as `SyncRun` — see there. The reaper and
+  /// the retry-or-fail decision in scripts/drain.ts read both.
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? @db.Timestamptz(3)
+
+  error String?
+
+  @@index([workspaceId, startedAt])
+  @@index([startedAt])
+  @@index([budgetId])
 }
 
 /// An append-only log of every change to an attributable enrichment field.

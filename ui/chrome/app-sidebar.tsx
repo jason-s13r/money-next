@@ -12,6 +12,8 @@ import {
   InboxIcon,
   StoreIcon,
   TagIcon,
+  TargetIcon,
+  TrendingUpIcon,
   WalletIcon,
   FilterIcon,
   RefreshCwIcon,
@@ -87,6 +89,8 @@ const nav: NavSection[] = [
     items: [
       { href: "/breakdown", label: "Income and spending", icon: PieChartIcon },
       { href: "/breakdown/flow", label: "Money Flow", icon: WaypointsIcon },
+      { href: "/budgets", label: "Budgets", icon: TargetIcon },
+      { href: "/forecasts", label: "Forecasts", icon: TrendingUpIcon },
     ],
   },
   {

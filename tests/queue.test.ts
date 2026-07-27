@@ -24,11 +24,13 @@ import assert from "node:assert/strict";
 import { after, before, beforeEach, describe, test } from "node:test";
 
 import { catalogDb, scopedDb } from "../lib/server/db";
-import { enqueueRules, enqueueSync } from "../lib/server/queue";
+import { enqueueBudgetInference, enqueueRules, enqueueSync } from "../lib/server/queue";
 
 const WS = "ws_test_queue";
 const LINK_A = "link_test_queue_a";
 const LINK_B = "link_test_queue_b";
+const BUDGET_A = "budget_test_queue_a";
+const BUDGET_B = "budget_test_queue_b";
 
 const db = scopedDb(WS);
 
@@ -43,6 +45,12 @@ async function park(id: number | string) {
   }
 }
 
+/** The `park` twin for inference runs — string ids collide with rule runs' by type,
+ *  so this one names the table it means. */
+async function parkInference(id: string) {
+  await db.budgetInferenceRun.update({ where: { id }, data: { nextAttemptAt: PARKED } });
+}
+
 before(async () => {
   await catalogDb.workspace.deleteMany({ where: { id: WS } });
   await catalogDb.workspace.create({
@@ -51,11 +59,16 @@ before(async () => {
   for (const id of [LINK_A, LINK_B]) {
     await catalogDb.bankLink.create({ data: { id, workspaceId: WS, name: id } });
   }
+  // Two budgets, so a re-infer run has a real `budgetId` to point at (the FK).
+  for (const [id, slug] of [[BUDGET_A, "b-a"], [BUDGET_B, "b-b"]]) {
+    await catalogDb.budget.create({ data: { id, workspaceId: WS, name: id, slug } });
+  }
 });
 
 beforeEach(async () => {
   await db.syncRun.deleteMany({});
   await db.ruleRun.deleteMany({});
+  await db.budgetInferenceRun.deleteMany({});
 });
 
 after(async () => {
@@ -189,5 +202,78 @@ describe("enqueueRules", () => {
       (await db.ruleRun.findUnique({ where: { id: first.id } }))?.nextAttemptAt,
       null,
     );
+  });
+});
+
+describe("enqueueBudgetInference", () => {
+  test("writes a queued create run when nothing is waiting", async () => {
+    const first = await enqueueBudgetInference(db, {});
+    await parkInference(first.id);
+
+    assert.equal(first.existing, false);
+    const row = await db.budgetInferenceRun.findUnique({ where: { id: first.id } });
+    assert.equal(row?.status, "queued");
+    assert.equal(row?.budgetId, null, "a create run points at no budget yet");
+  });
+
+  test("coalesces two creates into the one waiting run", async () => {
+    const first = await enqueueBudgetInference(db, {});
+    await parkInference(first.id);
+    const second = await enqueueBudgetInference(db, {});
+
+    assert.deepEqual(second, { id: first.id, existing: true });
+    assert.equal(await db.budgetInferenceRun.count(), 1);
+  });
+
+  test("a create and a re-infer never coalesce with each other", async () => {
+    const create = await enqueueBudgetInference(db, {});
+    await parkInference(create.id);
+    const reinfer = await enqueueBudgetInference(db, { budgetId: BUDGET_A });
+    await parkInference(reinfer.id);
+
+    assert.equal(reinfer.existing, false);
+    assert.notEqual(create.id, reinfer.id);
+    assert.equal(await db.budgetInferenceRun.count(), 2);
+  });
+
+  test("re-infers coalesce per budget: same budget reuses, another queues anew", async () => {
+    const a1 = await enqueueBudgetInference(db, { budgetId: BUDGET_A });
+    await parkInference(a1.id);
+
+    const a2 = await enqueueBudgetInference(db, { budgetId: BUDGET_A });
+    assert.deepEqual(a2, { id: a1.id, existing: true });
+
+    const b = await enqueueBudgetInference(db, { budgetId: BUDGET_B });
+    await parkInference(b.id);
+    assert.equal(b.existing, false);
+    assert.equal(await db.budgetInferenceRun.count(), 2);
+  });
+
+  test("a person clears the retry backoff; a plain re-request does not", async () => {
+    const first = await enqueueBudgetInference(db, {});
+    await parkInference(first.id);
+
+    await enqueueBudgetInference(db, {});
+    assert.deepEqual(
+      (await db.budgetInferenceRun.findUnique({ where: { id: first.id } }))?.nextAttemptAt,
+      PARKED,
+    );
+
+    await enqueueBudgetInference(db, { clearBackoff: true });
+    assert.equal(
+      (await db.budgetInferenceRun.findUnique({ where: { id: first.id } }))?.nextAttemptAt,
+      null,
+    );
+  });
+
+  test("a settled run does not absorb the next request", async () => {
+    const first = await enqueueBudgetInference(db, {});
+    await db.budgetInferenceRun.update({ where: { id: first.id }, data: { status: "success" } });
+
+    const second = await enqueueBudgetInference(db, {});
+    await parkInference(second.id);
+
+    assert.equal(second.existing, false, "a finished run must not swallow a fresh request");
+    assert.notEqual(second.id, first.id);
   });
 });

@@ -9,29 +9,29 @@ import { BalanceChartLegend, type LegendItem } from "./balance-chart-legend";
 import {
   AXIS_W,
   C_DOWN,
-  C_EMERGENCY,
-  C_FORECAST,
-  C_PESSIMISTIC,
   C_UP,
   C_WORTH,
   DAY_MS,
-  DAYS_PER_MONTH,
   DEFAULT_RANGE,
   FALLBACK_W,
   type Hover,
+  compactMoney,
   niceScale,
   PAD_T,
   parseDay,
   PLOT_H,
   RANGES,
   type Row,
+  worthAt,
 } from "./balance-chart.util";
 
 // Balance over time — a personal version of a stock price chart. "Balance" is the
 // accessible balance (net worth minus locked KiwiSaver/investments). The resolution
 // is always one day; each day is a bar rising (money in) or dropping (money out)
 // from the $0 line by that day's net transaction flow, riding a daily balance line,
-// with two forward burn-rate projections. Because a bar *is* the line's step for
+// with one forward projection per forecast scenario. Those bend: a scenario is a
+// set of budgets walked forward day by day, so an expensive December steps down
+// where a burn rate would have run straight. Because a bar *is* the line's step for
 // that day, both share one dollar axis. The range buttons set how many days fill
 // the width (the zoom); the rest scrolls. Marks follow the house data-viz rules:
 // thin lines, a recessive grid, text in ink tokens, colour for identity.
@@ -40,20 +40,7 @@ import {
 // `balance-chart-legend.tsx`.
 
 export function BalanceChart({ series }: { series: BalanceSeries }) {
-  const {
-    displayCurrency,
-    now,
-    currentWorth,
-    days,
-    nets,
-    worthBoundaries,
-    forecastMonthly,
-    emergencyMonthly,
-    pessimisticMonthly,
-    forecastMonths,
-    emergencyMonths,
-    pessimisticMonths,
-  } = series;
+  const { displayCurrency, now, currentWorth, days, nets, worthBoundaries, scenarios } = series;
 
   const N = days.length;
 
@@ -61,14 +48,8 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     (n: number) => formatMoneyWhole(n, displayCurrency),
     [displayCurrency],
   );
-  const compact = useMemo(
-    () =>
-      new Intl.NumberFormat("en-NZ", {
-        style: "currency",
-        currency: displayCurrency,
-        notation: "compact",
-        maximumFractionDigits: 1,
-      }),
+  const compact = useCallback(
+    (n: number) => compactMoney(n, displayCurrency),
     [displayCurrency],
   );
   const monthFmt = useMemo(() => new Intl.DateTimeFormat("en-NZ", { timeZone: "UTC", month: "short" }), []);
@@ -104,10 +85,14 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     return () => ro.disconnect();
   }, []);
 
-  const futureForecast = forecastMonths != null ? forecastMonths * DAYS_PER_MONTH : 0;
-  const futureEmergency = emergencyMonths != null ? emergencyMonths * DAYS_PER_MONTH : 0;
-  const futurePessimistic = pessimisticMonths != null ? pessimisticMonths * DAYS_PER_MONTH : 0;
-  const totalUnits = N + Math.max(futureForecast, futureEmergency, futurePessimistic);
+  // How far past today the drawing reaches: the longest line any scenario draws.
+  // A scenario that runs out ends there; one that does not ends at the horizon it
+  // was projected to.
+  const futureDays = useMemo(
+    () => Math.max(0, ...scenarios.map((s) => s.points[s.points.length - 1]?.day ?? 0)),
+    [scenarios],
+  );
+  const totalUnits = N + futureDays;
 
   const geom = useMemo(() => {
     const viewportW = Math.max(320, containerW - AXIS_W);
@@ -116,12 +101,16 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     const bw = Math.max(0.4, viewportW / (range.days ?? (totalUnits || 1)));
     const plotW = totalUnits * bw;
 
-    // One dollar axis, shared by the line and the bars. It spans the net-worth
-    // boundaries and $0; the net-flow bars root at $0, so their extents (a big
-    // in/out day) are folded in too, keeping any bar from clipping.
+    // One dollar axis, shared by the line, the bars and the projections. It spans
+    // the net-worth boundaries and $0; the net-flow bars root at $0, so their
+    // extents (a big in/out day) are folded in too, keeping any bar from
+    // clipping. The projected worths join them because a budget that plans to
+    // save climbs above every figure history has — an axis fitted to the past
+    // would run that line off the top of the plot.
+    const projectedWorths = scenarios.flatMap((s) => s.points.map((p) => p.worth));
     const yScale = niceScale(
-      Math.min(0, ...worthBoundaries, ...nets),
-      Math.max(0, ...worthBoundaries, ...nets),
+      Math.min(0, ...worthBoundaries, ...nets, ...projectedWorths),
+      Math.max(0, ...worthBoundaries, ...nets, ...projectedWorths),
     );
 
     const fx = (unit: number) => unit * bw;
@@ -133,23 +122,22 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     const worthArea = `${worthPath} L${fx(N)} ${zeroY} L${fx(0)} ${zeroY} Z`;
 
     const nowX = fx(N);
-    const proj = (units: number) => `M${nowX} ${fy(currentWorth)} L${fx(N + units)} ${zeroY}`;
 
-    return {
-      bw,
-      plotW,
-      viewportW,
-      yScale,
-      fx,
-      fy,
-      worthPath,
-      worthArea,
-      nowX,
-      forecastPath: futureForecast > 0 ? proj(futureForecast) : null,
-      emergencyPath: futureEmergency > 0 ? proj(futureEmergency) : null,
-      pessimisticPath: futurePessimistic > 0 ? proj(futurePessimistic) : null,
-    };
-  }, [containerW, rangeKey, totalUnits, worthBoundaries, nets, N, currentWorth, futureForecast, futureEmergency, futurePessimistic]);
+    // Every projection leaves today's balance at the same point the history line
+    // arrives at, then follows its own vertices. A straight-line scenario has one
+    // vertex and draws exactly the dash the chart always drew.
+    const projections = scenarios
+      .filter((s) => s.points.length > 0)
+      .map((s) => ({
+        id: s.id,
+        color: s.color,
+        path:
+          `M${nowX} ${fy(currentWorth)}` +
+          s.points.map((p) => ` L${fx(N + p.day)} ${fy(p.worth)}`).join(""),
+      }));
+
+    return { bw, plotW, viewportW, yScale, fx, fy, worthPath, worthArea, nowX, projections };
+  }, [containerW, rangeKey, totalUnits, worthBoundaries, nets, N, currentWorth, scenarios]);
 
   const { bw, plotW, fx, nowX } = geom;
 
@@ -169,7 +157,6 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     const out: { x: number; text: string }[] = [];
     const at = (i: number) => fx(i + 0.5);
 
-    const futureDays = Math.max(futureForecast, futureEmergency, futurePessimistic);
     const totalDays = N + futureDays;
 
     if (bw >= 16) {
@@ -219,7 +206,7 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     }
 
     return out;
-  }, [bw, N, days, dmFmt, monthFmt, fx, futureForecast, futureEmergency, futurePessimistic]);
+  }, [bw, N, days, dmFmt, monthFmt, fx, futureDays]);
 
   const [hover, setHover] = useState<Hover | null>(null);
 
@@ -252,82 +239,54 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
       };
     }
     const date = new Date(now + (hover.unit - N) * DAY_MS);
-    const fcWorth =
-      futureForecast > 0 && hover.unit <= N + futureForecast
-        ? currentWorth * (1 - (hover.unit - N) / futureForecast)
-        : null;
-    const emWorth =
-      futureEmergency > 0 && hover.unit <= N + futureEmergency
-        ? currentWorth * (1 - (hover.unit - N) / futureEmergency)
-        : null;
-    const psWorth = futurePessimistic > 0 && hover.unit <= N + futurePessimistic
-      ? currentWorth * (1 - (hover.unit - N) / futurePessimistic)
-      : null;
     return {
       label: fullFmt.format(date),
-      rows: [
-        ...(fcWorth != null ? [{ color: C_FORECAST, label: "Forecast", value: money(fcWorth), y: fcWorth }] : []),
-        ...(emWorth != null ? [{ color: C_EMERGENCY, label: "Reduced Spending", value: money(emWorth), y: emWorth }] : []),
-        ...(psWorth != null ? [{ color: C_PESSIMISTIC, label: "Pessimistic", value: money(psWorth), y: psWorth }] : []),
-      ],
+      // One row per scenario still running at this date. A line that has already
+      // hit zero drops out of the tooltip rather than reporting $0 for ever.
+      rows: scenarios.flatMap((s) => {
+        const worth = worthAt(s.points, hover.unit - N, currentWorth);
+        return worth === null
+          ? []
+          : [{ color: s.color, label: s.name, value: money(worth), y: worth }];
+      }),
     };
-  }, [
-    hover,
-    days,
-    worthBoundaries,
-    nets,
-    now,
-    N,
-    futureForecast,
-    futureEmergency,
-    futurePessimistic,
-    currentWorth,
-    fullFmt,
-    money,
-  ]);
+  }, [hover, days, worthBoundaries, nets, now, N, scenarios, currentWorth, fullFmt, money]);
 
-  // The gross forecast burn (Pessimistic) less the net one (Forecast) is exactly
-  // the periodic income assumed to offset it — so the same expenses/income/net
-  // breakdown the runway tile shows can be reconstructed here without threading
-  // the raw figures through the series.
-  const forecastIncome =
-    pessimisticMonthly != null && forecastMonthly != null ? pessimisticMonthly - forecastMonthly : null;
-
-  const legend: LegendItem[] = [{ color: C_WORTH, label: "Available balance" }];
-  if (futureForecast > 0)
-    legend.push({
-      color: C_FORECAST,
+  const legend: LegendItem[] = [
+    { color: C_WORTH, label: "Available balance" },
+    ...scenarios.map((s) => ({
+      color: s.color,
       dashed: true,
-      label: `Forecast · ${compact.format(forecastMonthly!)}/mo`,
+      // Whole dollars, not the axis's shorthand: a legend figure is read for
+      // its value, and "$1.8K/mo" is worse at that than "$1,831/mo".
+      //
+      // Same rule as the runway tile on the sign: a negative burn is a surplus,
+      // and reading it back as a minus in front of a dollar amount helps nobody.
+      label:
+        s.monthlyBurn === null
+          ? s.name
+          : s.monthlyBurn >= 0
+            ? `${s.name} · ${money(s.monthlyBurn)}/mo`
+            : `${s.name} · ${money(-s.monthlyBurn)}/mo spare`,
       popover: {
-        note: "Spend if life carries on unchanged, less the periodic income that keeps covering part of it.",
+        note: scenarioNote(s.budgets, s.blendedDays),
         rows: [
-          { label: "Forecast expenses", value: `${money(pessimisticMonthly!)}/mo` },
-          { label: "Less periodic income", value: `−${money(forecastIncome!)}/mo` },
-          { label: "Net burn", value: `${money(forecastMonthly!)}/mo`, emphasis: true },
+          { label: "Planned expenses", value: `${money(s.monthlyOut)}/mo` },
+          ...(s.monthlyIn > 0
+            ? [{ label: "Less planned income", value: `−${money(s.monthlyIn)}/mo` }]
+            : []),
+          {
+            label: s.monthlyBurn !== null && s.monthlyBurn < 0 ? "Net spare" : "Net burn",
+            value:
+              s.monthlyBurn === null
+                ? "—"
+                : `${money(Math.abs(s.monthlyBurn))}/mo`,
+            emphasis: true,
+          },
         ],
       },
-    });
-  if (futureEmergency > 0)
-    legend.push({
-      color: C_EMERGENCY,
-      dashed: true,
-      label: `Reduced Spending · ${compact.format(emergencyMonthly!)}/mo`,
-      popover: {
-        note: "Essentials only — the floor if discretionary spending stops. Assumes no income arrives to offset it.",
-        rows: [{ label: "Essential spend", value: `${money(emergencyMonthly!)}/mo`, emphasis: true }],
-      },
-    });
-  if (futurePessimistic > 0)
-    legend.push({
-      color: C_PESSIMISTIC,
-      dashed: true,
-      label: `Pessimistic · ${compact.format(pessimisticMonthly!)}/mo`,
-      popover: {
-        note: "Spending carries on unchanged and assumes no income arrives to offset it — the harshest case.",
-        rows: [{ label: "Forecast expenses", value: `${money(pessimisticMonthly!)}/mo`, emphasis: true }],
-      },
-    });
+    })),
+  ];
 
   return (
     <figure className="m-0">
@@ -348,4 +307,21 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
       />
     </figure>
   );
+}
+
+/**
+ * What a forecast's legend popover says about where its line came from.
+ *
+ * Naming the budget is what makes a spike legible — a step down in December is
+ * mysterious until the line says "Christmas". And the uncovered-day count is said
+ * out loud on purpose: a forecast mostly filled in from history is barely a plan,
+ * and the reader deserves that before trusting its date.
+ */
+function scenarioNote(budgets: string[], blendedDays: number): string {
+  const gaps =
+    blendedDays > 0
+      ? ` ${blendedDays.toLocaleString("en-NZ")} days ahead aren't covered by it and run at your historic rate.`
+      : "";
+
+  return `Projects ${budgets.join(" + ")}.${gaps}`;
 }

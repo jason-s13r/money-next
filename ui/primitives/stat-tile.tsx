@@ -55,7 +55,7 @@ export type HeroRunway = {
   label: string;
   /** Pre-built runway phrase, e.g. "12.5 months runway". */
   runwayText: string;
-  /** Pre-formatted burn figure, e.g. "$3,400/mo". */
+  /** Pre-built burn phrase, e.g. "burning $3,400/mo" or "$820/mo to spare". */
   burnText: string;
   /** Forecast income and expenses that net to the burn, for the tooltip. */
   burnBreakdown: { expenses: string; income: string; net: string } | null;
@@ -90,7 +90,7 @@ export function Hero({
               />
               <span className="font-medium">{r.label}</span>
               <span className="text-muted">
-                {r.runwayText}, burn rate{" "}
+                {r.runwayText},{" "}
                 {r.burnBreakdown ? (
                   // Popover, not Tooltip: opens on hover for pointer users and on
                   // tap for touch users, where a hover-only tooltip never would.
@@ -115,7 +115,7 @@ export function Hero({
                         <span className="tabular-nums">−{r.burnBreakdown.income}</span>
                       </span>
                       <span className="mt-0.5 flex justify-between gap-6 border-t border-border pt-1 font-medium text-foreground">
-                        <span>Net burn</span>
+                        <span>Net</span>
                         <span className="tabular-nums">{r.burnBreakdown.net}</span>
                       </span>
                     </PopoverContent>
