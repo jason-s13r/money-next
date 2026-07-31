@@ -10,15 +10,16 @@ import {
   duplicateBudget,
   moveLayerToBase,
   refineBudgetTowardActuals,
+  reinferBudget,
+  toggleBudgetForecast,
 } from "../actions";
-import { reinferBudget } from "../../forecasts/actions";
 import { BudgetForm, type BudgetFormValues } from "../budget-form";
 import { NO_ERROR, type BudgetActionState } from "../types";
 
 export type BaseChoice = { id: string; name: string };
 
-// Renaming a budget, changing when it applies, copying it, refreshing it from
-// history, and deleting it.
+// Renaming a budget, changing when it applies, toggling whether it is a forecast,
+// copying it, refreshing it from history, and deleting it.
 //
 // Down the bottom of the page and inside a card, because none of it is what
 // somebody came here to do — the items are. Deleting asks first: a budget is
@@ -47,6 +48,10 @@ export function BudgetSettings({
     <div className="flex flex-col gap-6">
       <BudgetForm budget={budget} />
 
+      {/* Only base budgets can be forecast projections. A layer is an extra on
+          top of a base, not a plan you project on its own. */}
+      {!isLayer ? <ForecastToggle budgetId={budget.id} forecast={budget.forecast} /> : null}
+
       {/* Only offered on a budget that came from history in the first place.
           Re-inferring one somebody typed would replace nothing (they have no
           inferred rows) while implying it might replace everything; and refining
@@ -69,6 +74,34 @@ export function BudgetSettings({
         <DeleteButton budgetId={budget.id} name={budget.name} />
       </div>
     </div>
+  );
+}
+
+/** Toggle whether this base budget appears as a forecast projection on the dashboard. */
+function ForecastToggle({ budgetId, forecast }: { budgetId: string; forecast: boolean }) {
+  const [state, formAction] = useActionState<BudgetActionState, FormData>(
+    toggleBudgetForecast,
+    NO_ERROR,
+  );
+
+  return (
+    <form action={formAction} className="flex flex-col gap-2 border-t border-current/20 pt-4">
+      <input type="hidden" name="budgetId" value={budgetId} />
+      <p className="text-sm text-muted">
+        Forecast budgets are projected forward on the dashboard balance chart and in
+        the runway tiles below it.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Pending variant={forecast ? "default" : "outline"}>
+          {forecast ? "Forecast on" : "Use as forecast"}
+        </Pending>
+        {state.error ? (
+          <p role="alert" className="text-sm text-status-critical">
+            {state.error}
+          </p>
+        ) : null}
+      </div>
+    </form>
   );
 }
 
@@ -233,7 +266,7 @@ function Pending({
   variant,
 }: {
   children: React.ReactNode;
-  variant: "outline" | "destructive";
+  variant: "default" | "outline" | "destructive";
 }) {
   const { pending } = useFormStatus();
   return (

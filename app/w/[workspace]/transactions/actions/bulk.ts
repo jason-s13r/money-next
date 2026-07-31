@@ -3,15 +3,22 @@
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { mintId } from "@/lib/ids";
 import { recordUserChanges } from "@/lib/server/changes";
+import { applyEnrichment } from "@/lib/server/enrichment";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
+import { withScopedTx } from "@/lib/server/db";
 import { getCategories, getLabels, getMerchants } from "@/lib/server/queries/lookups";
+import { clearCategoryGroup } from "@/lib/server/matching/transfers";
 
 // The bulk counterparts of the single-row enrichment actions, driven by the
 // transaction table's row-selection checkboxes. Each takes the selected ids and
 // the current listing path, and revalidates that path so the list re-renders with
 // the change. The scoped client filters every write, so ids from another
 // workspace are simply not touched (and, for the change log, not logged either).
+//
+// Category and merchant are thin here on purpose: the write is `applyEnrichment`,
+// the same one the detail page's setters go through, so "bulk" is a difference in
+// how many ids arrive rather than a second implementation to keep in step.
 
 /** Load the option sets the bulk bar's pickers need, on demand (first open). */
 export async function loadPickerCatalog() {
@@ -99,44 +106,101 @@ export async function bulkSetMerchant(
   await requireRole({ enrichment: ["update"] });
 
   const db = await getDb();
-  if (transactionIds.length === 0) return;
+  await applyEnrichment(db, "merchant", transactionIds, merchantId);
 
-  const merchant = merchantId
-    ? await db.merchant.findUnique({ where: { id: merchantId }, select: { id: true, name: true } })
-    : null;
-  if (merchantId && !merchant) throw new Error(`Unknown merchant: ${merchantId}`);
+  await revalidateWorkspacePath(path);
+}
 
-  // One read for the whole batch — the same shape the per-page `applyMerchantToTransactions`
-  // uses, so the change log stays a single round trip rather than one per row.
-  const priors = await db.transaction.findMany({
+/**
+ * Group every selected row into one transfer — the bulk face of the detail page's
+ * `linkTransfer`, for when the reader can already *see* both legs in a listing and
+ * ticking them is faster than opening one and hunting for the other.
+ *
+ * Done as a set operation rather than by replaying the one-pair linker down the
+ * selection. The pairwise version read as the obvious generalisation — anchor,
+ * then link each of the rest to it — but it costs a round trip per leg *inside* an
+ * interactive transaction, and Prisma gives one of those five seconds. A forty-row
+ * link, which is exactly the size that makes the bulk action worth having, is
+ * where that runs out. Merging groups is set-shaped anyway: there is one surviving
+ * group and everything else is folded into it, which is four statements whether
+ * the reader ticked two rows or two hundred.
+ */
+export async function bulkLinkTransfer(transactionIds: string[], path: string) {
+  await requireRole({ enrichment: ["update"] });
+
+  const db = await getDb();
+  if (transactionIds.length < 2) return;
+
+  // The scoped read both filters out ids from another workspace and dedupes, so a
+  // row can never be linked to itself. Oldest first, so which row ends up the
+  // anchor doesn't depend on the order the reader ticked.
+  const owned = await db.transaction.findMany({
     where: { id: { in: transactionIds } },
-    select: { id: true, merchantId: true, merchant: { select: { name: true } } },
+    orderBy: [{ date: "asc" }, { id: "asc" }],
+    select: { id: true, description: true, transferGroupId: true },
   });
+  if (owned.length < 2) return;
 
-  await db.transaction.updateMany({
-    where: { id: { in: transactionIds } },
-    data: { merchantId: merchant?.id ?? null, merchantSource: "user" },
-  });
+  const [anchor, ...rest] = owned;
 
-  await recordUserChanges(
-    db,
-    priors
-      .filter((prior) => prior.merchantId !== (merchant?.id ?? null))
-      .map((prior) => ({
-        transactionId: prior.id,
-        field: "merchant" as const,
-        fromId: prior.merchantId,
-        fromLabel: prior.merchant?.name ?? null,
-        toId: merchant?.id ?? null,
-        toLabel: merchant?.name ?? null,
-      })),
+  // The group everything ends up in: the anchor's if it has one, otherwise the
+  // first group any selected row belongs to, otherwise one made below. Reusing an
+  // existing group rather than always minting one is what carries along the legs
+  // that are *not* selected — a row already in a transfer brings its whole group.
+  const groups = [...new Set(owned.map((tx) => tx.transferGroupId).filter((id) => id !== null))];
+  const surviving = anchor.transferGroupId ?? groups[0] ?? null;
+
+  // Which legs the reader actually joined to the anchor — the pairs worth logging.
+  // Measured against the anchor's *original* group, not the surviving one: when the
+  // anchor had none and a leg brought one, it is the anchor that moved, and the two
+  // are newly in a transfer together either way. Comparing against `surviving`
+  // would call that leg unchanged and lose the pair.
+  const linked = rest.filter(
+    (leg) => anchor.transferGroupId === null || leg.transferGroupId !== anchor.transferGroupId,
   );
+  if (linked.length === 0) return; // everything ticked is already one transfer
 
-  await db.transactionConflict.deleteMany({
-    where: { transactionId: { in: transactionIds }, field: "merchant" },
+  await withScopedTx(db, async (tx) => {
+    const groupId =
+      surviving ?? (await tx.transferGroup.create({ data: { workspaceId: db.$workspaceId } })).id;
+
+    // Fold the other groups in whole, then delete the husks. `updateMany` on the
+    // group id (not the selected ids) is what brings unselected legs with them.
+    const absorbed = groups.filter((id) => id !== groupId);
+    if (absorbed.length > 0) {
+      await tx.transaction.updateMany({
+        where: { transferGroupId: { in: absorbed } },
+        data: { transferGroupId: groupId },
+      });
+      await tx.transferGroup.deleteMany({ where: { id: { in: absorbed } } });
+    }
+
+    // Whatever is left: the selected rows that belonged to no transfer at all.
+    const loose = owned.filter((tx) => tx.transferGroupId === null).map((tx) => tx.id);
+    if (loose.length > 0) {
+      await tx.transaction.updateMany({
+        where: { id: { in: loose } },
+        data: { transferGroupId: groupId },
+      });
+    }
+
+    await clearCategoryGroup(tx, groupId);
+
+    // Both sides of every pair that actually moved, as the single-row action
+    // does: a transfer is a fact about each of its legs, so opening any one of
+    // them should explain how it came to be part of this transfer. In the
+    // transaction, so the log cannot outlive a grouping that rolled back.
+    await recordUserChanges(
+      tx,
+      linked.flatMap((leg) => [
+        { transactionId: anchor.id, field: "transfer" as const, toLabel: leg.description },
+        { transactionId: leg.id, field: "transfer" as const, toLabel: anchor.description },
+      ]),
+    );
   });
 
   await revalidateWorkspacePath(path);
+  await Promise.all(owned.map((tx) => revalidateWorkspacePath(`/transactions/${tx.id}`)));
 }
 
 export async function bulkSetCategory(
@@ -147,46 +211,7 @@ export async function bulkSetCategory(
   await requireRole({ enrichment: ["update"] });
 
   const db = await getDb();
-  if (transactionIds.length === 0) return;
-
-  const category = categoryId
-    ? await db.category.findUnique({ where: { id: categoryId }, select: { id: true, name: true, groupId: true } })
-    : null;
-  if (categoryId && !category) throw new Error(`Unknown category: ${categoryId}`);
-
-  const priors = await db.transaction.findMany({
-    where: { id: { in: transactionIds } },
-    select: { id: true, categoryId: true, category: { select: { name: true } } },
-  });
-
-  await db.transaction.updateMany({
-    where: { id: { in: transactionIds } },
-    // Keep the denormalised group id in step with the category, as the single
-    // setter does — the metrics that group by it depend on it.
-    data: {
-      categoryId: category?.id ?? null,
-      categoryGroupId: category?.groupId ?? null,
-      categorySource: "user",
-    },
-  });
-
-  await recordUserChanges(
-    db,
-    priors
-      .filter((prior) => prior.categoryId !== (category?.id ?? null))
-      .map((prior) => ({
-        transactionId: prior.id,
-        field: "category" as const,
-        fromId: prior.categoryId,
-        fromLabel: prior.category?.name ?? null,
-        toId: category?.id ?? null,
-        toLabel: category?.name ?? null,
-      })),
-  );
-
-  await db.transactionConflict.deleteMany({
-    where: { transactionId: { in: transactionIds }, field: "category" },
-  });
+  await applyEnrichment(db, "category", transactionIds, categoryId);
 
   await revalidateWorkspacePath(path);
 }

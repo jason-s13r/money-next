@@ -1,10 +1,11 @@
 "use client";
 
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 
 import { useWorkspaceSlug } from "@/ui/chrome/workspace-context";
 import { workspacePath } from "@/lib/workspace-path";
+import { useDebouncedCallback } from "@/hooks/use-debounced-callback";
 
 // The transaction search box that lives in the nav bar. Typing debounces into a
 // client-side navigation to /transactions/search, so results stream in as you
@@ -52,12 +53,11 @@ export function SearchForm() {
 
   // Debounce keystrokes into a navigation. Skip when the typed value already
   // matches the url so syncing from the url (above) can't trigger a re-navigate.
-  useEffect(() => {
-    if (value.trim() === urlQuery.trim()) return;
-    const id = setTimeout(() => navigate(value), DEBOUNCE_MS);
-    return () => clearTimeout(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [value]);
+  useDebouncedCallback(
+    value,
+    () => { if (value.trim() !== urlQuery.trim()) navigate(value); },
+    DEBOUNCE_MS,
+  );
 
   return (
     <form

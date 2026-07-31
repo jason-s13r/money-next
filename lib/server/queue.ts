@@ -132,10 +132,17 @@ export async function enqueueRules(
  * clicks of the same button should not run the model twice over the same history.
  * A create and a re-infer never coalesce with each other, and re-inferring two
  * different budgets queues two runs.
+ *
+ * `userId` records who asked, and is left alone when coalescing — the first asker gets
+ * the credit, exactly as `trigger` does above. It matters more here than there: the run
+ * logs its whole conversation into a thread owned by that person (see
+ * lib/server/budget/inference-log.ts), so this is what decides whether the log exists
+ * and whose /chat it appears in. A run enqueued with no session behind it has no owner
+ * and is logged to the worker's console only.
  */
 export async function enqueueBudgetInference(
   db: ScopedDb,
-  opts: { budgetId?: string | null; clearBackoff?: boolean } = {},
+  opts: { budgetId?: string | null; userId?: string | null; clearBackoff?: boolean } = {},
 ): Promise<Enqueued<string>> {
   const budgetId = opts.budgetId ?? null;
 
@@ -155,7 +162,12 @@ export async function enqueueBudgetInference(
   }
 
   const run = await db.budgetInferenceRun.create({
-    data: { workspaceId: db.$workspaceId, status: "queued", budgetId },
+    data: {
+      workspaceId: db.$workspaceId,
+      status: "queued",
+      budgetId,
+      userId: opts.userId ?? null,
+    },
   });
   return { id: run.id, existing: false };
 }

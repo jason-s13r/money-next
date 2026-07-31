@@ -26,7 +26,7 @@ function BudgetRow({ budget, layer = false }: { budget: BudgetSummary; layer?: b
   return (
     <li>
       <Link
-        href={`/budgets/${budget.slug}`}
+        href={`/budgets/${budget.id}`}
         className={`flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 py-3 hover:opacity-80${
           // A layer sits indented under its base, so it reads as an extra on top.
           layer ? " pl-4" : ""
@@ -36,6 +36,7 @@ function BudgetRow({ budget, layer = false }: { budget: BudgetSummary; layer?: b
           <span className="flex items-center gap-2">
             <span className="truncate">{budget.name}</span>
             {layer ? <Badge variant="outline">Layer</Badge> : null}
+            {!layer && budget.forecast ? <Badge variant="outline">Forecast</Badge> : null}
             {budget.origin === "inferred" ? (
               // Says where the numbers came from, so nobody mistakes a guess for
               // a decision they made.

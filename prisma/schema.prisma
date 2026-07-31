@@ -68,13 +68,14 @@ model Workspace {
   transactionLabels       TransactionLabel[]
   budgets                 Budget[]
   budgetItems             BudgetItem[]
-  forecasts               Forecast[]
   budgetInferenceRuns     BudgetInferenceRun[]
   ruleDocuments           RuleDocument[]
   ruleRuns                RuleRun[]
   fieldChanges            FieldChange[]
   syncStates              SyncState[]
   syncRuns                SyncRun[]
+  chatThreads             ChatThread[]
+  chatMessages            ChatMessage[]
 }
 
 /// A person. Deliberately minimal, and matches the core fields Better Auth
@@ -109,6 +110,13 @@ model User {
   // hanging off a workspace: deleting a person must not delete the record that
   // the edit happened, only the claim about who made it.
   fieldChanges   FieldChange[]
+  // Cascade, unlike `fieldChanges` above: a thread is not a record of a change to
+  // the household's data, it is one person's conversation. Nobody else can read it
+  // (see ChatThread), so there is nothing left to preserve once they are gone.
+  chatThreads    ChatThread[]
+  // `SetNull` again: the run is a record of work done to the household's budgets,
+  // and outlives the claim about who asked for it.
+  inferenceRuns  BudgetInferenceRun[]
 }
 
 // ---------------------------------------------------------------------------
@@ -862,23 +870,25 @@ model Category {
 /// and it is added to its base precisely while its own window is live. The
 /// breakdown and every forecast expand a base together with its date-active
 /// layers; nothing sums two unrelated budgets, which is what makes the addition
-/// safe (see the note on `Forecast`). One level only — a layer has no layers of
-/// its own; the create/move actions enforce that, since the schema cannot.
+/// safe. One level only — a layer has no layers of its own; the create/move
+/// actions enforce that, since the schema cannot.
 model Budget {
-  /// A cuid, not a counter — it appears in a URL. Same reasoning as `RuleRun`: a
-  /// sequential id would publish how many budgets exist across every workspace on
-  /// the instance.
+  /// A cuid, not a counter — it *is* the address of the budget, in the URL and in
+  /// every link to it. Same reasoning as `RuleRun`: a sequential id would publish
+  /// how many budgets exist across every workspace on the instance.
+  ///
+  /// There is deliberately no slug. A budget had one and it was a copy of the name
+  /// taken at creation, which went stale on the first rename and grew `-2` suffixes
+  /// on every duplicate; a budget is not a shared or indexed page, so nothing was
+  /// bought with the readability.
   id String @id @default(cuid())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
+  /// What the household calls it. Not unique, and not a key: two "Christmas" layers
+  /// on two different bases is an ordinary thing to have.
   name String
-  /// Stable URL-safe identifier, unique *within a workspace* — the same key
-  /// `RuleDocument` uses, and unique per workspace for the same reason: an
-  /// instance-wide constraint would make the second workspace's "Christmas"
-  /// collide with the first's.
-  slug String
 
   /// The span this budget applies over, as NZ calendar days and **inclusive of
   /// both ends** — "active until 25 December" is what a person means, so the 25th
@@ -904,11 +914,18 @@ model Budget {
   /// Same vocabulary and same intent as `Transaction.categorySource`.
   origin String @default("user")
 
+  /// Whether this budget is one of the forward projections drawn on the dashboard
+  /// and runway tiles. A base budget marked `forecast` is walked forward day by day
+  /// together with its date-active layers; layers themselves are never forecast
+  /// roots. Replaces the old `Forecast` table, which was a named view of a budget:
+  /// the name and colour now come from the budget itself.
+  forecast Boolean @default(false)
+
   /// The base this budget layers onto, or null when it *is* a base. A layer holds
   /// only the extra spend a period needs, added on top of its base; base + active
-  /// layers is what the breakdown and every forecast project. `Cascade`: a layer
-  /// is meaningless once its base is gone, so it goes with it. One level only —
-  /// the create/move actions refuse to point a layer at another layer.
+  /// layers is what the breakdown and every forecast projection project. `Cascade`:
+  /// a layer is meaningless once its base is gone, so it goes with it. One level
+  /// only — the create/move actions refuse to point a layer at another layer.
   baseBudgetId String?
   base         Budget?  @relation("BudgetLayers", fields: [baseBudgetId], references: [id], onDelete: Cascade)
   layers       Budget[] @relation("BudgetLayers")
@@ -917,10 +934,8 @@ model Budget {
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   items          BudgetItem[]
-  forecasts      Forecast[]
   inferenceRuns  BudgetInferenceRun[]
 
-  @@unique([workspaceId, slug])
   // The read every projection starts with: this workspace's budgets, narrowed to
   // the ones whose window could overlap the span being drawn.
   @@index([workspaceId, startsOn, endsOn])
@@ -996,26 +1011,32 @@ model BudgetItem {
   /// date it happens.
   anchorDate DateTime @db.Timestamptz(3)
 
-  /// Whether the seeder wrote this row and nobody has touched it since. Cleared on
+  /// Whether the seeder wrote this row and nobody has agreed to it since. Cleared on
   /// the first user edit, which is what lets "re-infer from history" refresh the
-  /// rows still resting on a guess while leaving hand-corrected ones alone.
+  /// rows still resting on a guess while leaving hand-corrected ones alone — and
+  /// cleared on a row written through the chat, where the figure was talked over
+  /// with the household before it was stored and must survive the next pass.
   inferred Boolean @default(false)
 
-  /// How a seeded row was produced: `ai` (the local LLM read the history and named
-  /// it) or `computed` (the deterministic pattern detector, used when no model is
-  /// reachable or a window's inference failed). Null for a hand-typed row, which was
-  /// produced by neither. Provenance for the UI's badge, never a control — it says
-  /// where a figure came from, not what may be done to it. Distinct from `inferred`,
-  /// which is about whether the row is still an untouched guess: an edited AI row
-  /// keeps `inferredSource: ai` but `inferred: false`, so the badge is hidden while
-  /// the origin is not forgotten.
+  /// How the figure on this row was arrived at: `ai` (a model read the history and
+  /// named it — the seeder, or the chat) or `computed` (the deterministic pattern
+  /// detector, used when no model is reachable or a window's inference failed). Null
+  /// for a hand-typed row, which was produced by neither.
+  ///
+  /// Provenance for the UI's badge, never a control — it says where a figure came
+  /// from, not what may be done to it, which is `inferred`'s business. The two are
+  /// genuinely independent: a chat-written row is `inferredSource: ai` and
+  /// `inferred: false`, because a model proposed it *and* the household agreed to
+  /// it. Editing the amount by hand clears this, since the figure is then nobody's
+  /// but the person's who typed it.
   inferredSource String?
 
-  /// How a seeded figure was arrived at, in the seeder's own words — the LLM's
-  /// one-line rationale ("Recurring larger transactions appearing several times a
-  /// year") or the detector's ("12 payments over 24 months"). Shown in a popover on
-  /// the provenance badge so a guessed figure can be questioned. Null for a
-  /// hand-typed row, which needs no explanation of where it came from.
+  /// How the figure was arrived at, in the words of whatever arrived at it — the
+  /// LLM's one-line rationale ("Recurring larger transactions appearing several
+  /// times a year"), the detector's ("12 payments over 24 months"), or what was
+  /// settled on in the chat. Shown in a popover on the provenance badge so a figure
+  /// nobody typed can be questioned. Null for a hand-typed row, which needs no
+  /// explanation of where it came from.
   basis String?
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -1026,58 +1047,6 @@ model BudgetItem {
   @@index([categoryGroupId])
   @@index([categoryId])
   @@index([merchantId])
-}
-
-/// A named forward projection: one budget, walked forward from today's balance.
-///
-/// This is what the dashboard's dashed burn lines became. They used to be three
-/// scalars from `getSpendSummary` (a flat forecast burn, a flat essentials floor,
-/// and the forecast again without its income offset), each divided into the
-/// balance to get a runway in months. A flat rate cannot show that December is
-/// expensive, and none of the three could be edited.
-///
-/// A forecast points at exactly *one* **base** budget, and projects it together
-/// with that base's date-active layers. An even earlier design let a forecast layer
-/// any several budgets additively, and that was the trap: layering is addition, so
-/// two unrelated budgets covering the same week were spent twice, and two that each
-/// budget a wage doubled the income. The base ↔ layer structure is what makes the
-/// addition safe again — a base owns its layers, a layer carries only the *extra* a
-/// period needs, and nothing sums two unrelated plans. So this points at a base, not
-/// a bare layer (`createForecast` enforces `baseBudgetId: null`), and the layers come
-/// along by relation. To vary a projection — strip the income for a worst-case line,
-/// thin the spending for an emergency floor — edit or duplicate the base's budget.
-model Forecast {
-  id String @id @default(cuid())
-
-  workspaceId String
-  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-
-  name String
-  /// Unique within a workspace, like `Budget.slug` and for the same reason.
-  slug String
-
-  /// The `--viz-*` token this forecast's line, legend swatch and runway tile wear.
-  /// Stored rather than derived from position so a forecast keeps its colour when
-  /// another is added, reordered or deleted — the same "colour follows the entity,
-  /// not its rank" rule `slotColor` states for categories.
-  color String
-
-  /// Order in the legend and the runway tiles. A plain integer the UI rewrites on
-  /// reorder; ties are broken by name so the order is always total.
-  position Int @default(0)
-
-  /// The one budget this forecast projects. `Cascade`: a forecast is a view *of* a
-  /// budget, so when the budget goes the forecast goes with it — there is nothing
-  /// left for it to project.
-  budgetId String
-  budget   Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now()) @db.Timestamptz(3)
-  updatedAt DateTime @updatedAt @db.Timestamptz(3)
-
-  @@unique([workspaceId, slug])
-  @@index([workspaceId])
-  @@index([budgetId])
 }
 
 /// Point-in-time balance, appended on each sync so the dashboard can chart
@@ -1297,6 +1266,24 @@ model BudgetInferenceRun {
   budgetId String?
   budget   Budget? @relation(fields: [budgetId], references: [id], onDelete: SetNull)
 
+  /// Who asked for this run. Null for a run with no person behind it — and for
+  /// every row written before this column existed.
+  ///
+  /// It is here for one reason: the run logs itself into a `ChatThread` (see
+  /// `unattended` there), and a thread is private to its author, so the log needs
+  /// an owner and the only honest candidate is whoever pressed the button. Nothing
+  /// about *running* the inference uses it. `SetNull`, like `FieldChange.userId`:
+  /// deleting a person must not delete the record that the run happened.
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// The conversation this run logged itself into, set by the worker as soon as it
+  /// opens one. Null until then, and forever for a run nobody owns. `SetNull` so
+  /// deleting the thread — the ordinary thing to do with a log you have read —
+  /// leaves the run behind.
+  threadId String?
+  thread   ChatThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+
   /// queued | running | success | failed. Same lifecycle as `SyncRun.status`: the
   /// web app writes `queued`, the worker claims it (queued → running) and finalises
   /// it, and a transient failure re-queues with backoff rather than failing outright.
@@ -1314,9 +1301,26 @@ model BudgetInferenceRun {
 
   error String?
 
+  /// When somebody watching the run's log asked it to stop reading and build the
+  /// budget from what it had.
+  ///
+  /// The run happens in the worker, in another process, so there is no signal to
+  /// send it and no registry to find it in — the way the interactive chat's stop
+  /// reaches a turn (lib/server/chat/runs.ts). A column is the channel: the loop
+  /// reads it between rounds and stops there. That makes stopping take effect
+  /// after the step in flight rather than during it, which is the honest bound on
+  /// anything crossing a process boundary through a database.
+  ///
+  /// A timestamp rather than a flag so the log can say when it was asked, and so
+  /// a request that arrives after the run has ended is a fact about the row
+  /// rather than a value nothing will ever read.
+  stopRequestedAt DateTime? @db.Timestamptz(3)
+
   @@index([workspaceId, startedAt])
   @@index([startedAt])
   @@index([budgetId])
+  @@index([threadId])
+  @@index([userId])
 }
 
 /// An append-only log of every change to an attributable enrichment field.
@@ -1389,4 +1393,163 @@ model FieldChange {
   @@index([workspaceId, transactionId, createdAt])
   @@index([ruleRunId])
   @@index([transactionId])
+}
+
+// ---------------------------------------------------------------------------
+// Chat
+//
+// A conversation with the local model, persisted. This is what supersedes the
+// file transcripts under `LLM_LOG_DIR`: the conversation is rows, readable in the
+// app, rather than a directory on the server nobody looks at. That now includes
+// the headless budget inference, which logs its whole run into a thread of its
+// own (`unattended` below) owned by whoever asked for it.
+// ---------------------------------------------------------------------------
+
+/// One conversation.
+///
+/// **Private to its author**, which is the one place in this app where membership
+/// of a workspace is not enough to read something. Every other tenant table is
+/// household data — the transactions, the budgets, the rules — and `scopedDb`
+/// plus RLS is the whole access story. A chat is not that: it is one person
+/// thinking out loud, and the other member of a household did not ask to read it.
+///
+/// Note what that means for enforcement. RLS only knows `app.workspace_id`, so
+/// the database can keep another *workspace* out but not another *member*; the
+/// `userId` filter that does is application code, and it lives in exactly one
+/// place (lib/server/queries/chat.ts) so it cannot be forgotten at a call site.
+model ChatThread {
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// Who it belongs to. Required, unlike `FieldChange.userId` — a thread with no
+  /// owner would be a thread nobody may read, which is not a useful row to keep.
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  /// Taken from the opening message and editable after. Not a summary the model
+  /// writes: that would be another round trip before the first reply appears.
+  title String
+
+  /// Written by a background run rather than by a person talking: the log of one
+  /// unattended budget inference (lib/server/budget/inference-log.ts).
+  ///
+  /// A log is a conversation to *read*, not one to take a turn in, and this column
+  /// is what says so: the thread page renders it read-only and the turn route
+  /// refuses a turn on it. Two things make that necessary. It is still being
+  /// written by another process while the run lasts, so a turn would be two
+  /// writers on one thread; and it was held with tools that exist only in that run
+  /// (`propose_items`, `finish`).
+  ///
+  /// Not permanent, though — see `continuedAt`. A finished log can be taken over,
+  /// which clears this and makes the thread an ordinary conversation.
+  unattended Boolean @default(false)
+
+  /// When a person took over a finished run's log and carried on in it.
+  ///
+  /// Taking over clears `unattended`, which is what puts a composer on the page
+  /// and lets the turn route claim the thread; this is what remembers that
+  /// everything above the takeover was written by a worker rather than said by
+  /// anyone. Two things read it: the page, to mark the boundary, and the turn,
+  /// which tells the model what it is picking up — the run's tools are gone and
+  /// the budget it was building has already been saved.
+  ///
+  /// The record stays honest because the boundary is visible. A log continued in
+  /// place beats a copy: the transcript of a run is megabytes of served
+  /// transactions, and forking it to protect a distinction the page can simply
+  /// draw would duplicate a household's history to no end.
+  continuedAt DateTime? @db.Timestamptz(3)
+
+  /// Set when a turn starts, cleared when it settles. No longer the authority on
+  /// what is running — the in-process registry in lib/server/chat/runs.ts is —
+  /// but still what a freshly rendered page has to go on, and what says a turn
+  /// was interrupted by the process dying rather than by finishing.
+  runningSince DateTime? @db.Timestamptz(3)
+
+  /// Which model answers here. Null means whatever `LLM_MODEL` currently is, which
+  /// is what every thread opened before this column existed wants. Stored per
+  /// thread rather than per workspace because the choice is about the
+  /// conversation — a quick one wants a small model, and switching mid-thread is
+  /// a legitimate thing to do when the small one gets stuck.
+  model String?
+
+  /// The conversation so far, in prose, standing in for the messages up to
+  /// `summarizedThroughSeq`. Null until someone compacts.
+  ///
+  /// This is the second half of the same argument as `ChatMessage.elided`: what
+  /// the model is shown and what the person can read are different things. The
+  /// messages are never deleted — scroll back and they are all there — but the
+  /// model is handed the summary and then everything since, which is what lets a
+  /// conversation outlive the context window it started in.
+  summary String?
+
+  /// The last message the summary accounts for. Everything after it is still sent
+  /// verbatim. Kept beside the summary rather than derived, because "what did this
+  /// summary cover?" has exactly one right answer and recomputing it from the
+  /// summary's age would be a guess.
+  summarizedThroughSeq Int?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+  updatedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  messages ChatMessage[]
+  /// The runs that logged themselves here. At most one in practice — a retried run
+  /// opens a fresh thread rather than appending to the log of the attempt that
+  /// failed — but the relation is a list because the foreign key is on the run.
+  inferenceRuns BudgetInferenceRun[]
+
+  /// The thread list: one person's threads, most recently used first.
+  @@index([workspaceId, userId, updatedAt])
+}
+
+/// One message in a thread, stored in the shape the API speaks.
+///
+/// `role`, `content`, `toolCalls` and `toolCallId` are the OpenAI chat message
+/// fields, kept verbatim rather than normalised into something of our own. That
+/// is deliberate: rehydrating a thread to continue it is then a `map`, not a
+/// reconstruction, and there is no second representation to drift out of step
+/// with what was actually said.
+model ChatMessage {
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  threadId String
+  thread   ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+
+  /// Position in the conversation, from 0. Ordering by `createdAt` would be a
+  /// coin toss between an assistant message and the tool results it triggered,
+  /// which arrive in the same millisecond and must not be reordered — the API
+  /// rejects a tool result that does not follow its call.
+  seq Int
+
+  /// system | user | assistant | tool
+  role String
+
+  /// Null on an assistant turn that only called tools and said nothing.
+  content String?
+
+  /// The assistant's `tool_calls`, verbatim.
+  toolCalls Json?
+
+  /// On a tool result: which call it answers, and which tool ran. The name is
+  /// redundant against the call but saves the UI a lookup to decide how to render
+  /// a result, and survives if the calling message is ever pruned.
+  toolCallId String?
+  toolName   String?
+
+  /// Whether this message's content is dropped when rebuilding the model's view
+  /// of the thread. A served page of transactions has done its job once it has
+  /// been reasoned over, and carrying thousands of rows forward is what runs a
+  /// small local model out of context — the same trade the budget inference makes
+  /// in-flight. The row keeps its full content regardless: the elision is for the
+  /// model, not for the person, who can still scroll back and see what it read.
+  elided Boolean @default(false)
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@unique([threadId, seq])
+  @@index([workspaceId, threadId, seq])
 }

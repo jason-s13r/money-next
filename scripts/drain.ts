@@ -29,97 +29,31 @@
  * Safe to run as one instance, and safe if two overlap: each claim is atomic
  * (queued → running guarded by a conditional update), so `pnpm worker:sync --drain`
  * on a laptop cannot take a row out from under a running worker.
+ *
+ * Both of those mechanisms — the claim, the backoff, the reaper — are the same for
+ * all three queues and live in lib/server/run-queue.ts. What is left here is what
+ * each queue actually *does*, which is the only part that differs.
  */
 import { catalogDb, scopedDb, type ScopedDb } from "../lib/server/db";
 import { akahuFor, TOKEN_LINK_SELECT } from "../lib/server/akahu";
 import { runSync, type SyncLink } from "../lib/server/ingest/sync";
 import { runRules } from "../lib/server/rules/engine";
 import { runBudgetInference } from "../lib/server/budget/run";
-
-// How many times a run may be claimed before a failure is terminal, and the base
-// gap between retries (doubled each attempt) — a transient blip clears in seconds,
-// a persistent one gives up rather than spinning forever on the Akahu quota.
-const MAX_ATTEMPTS = Number(process.env.WORKER_MAX_ATTEMPTS ?? 3);
-const BACKOFF_SECONDS = Number(process.env.WORKER_BACKOFF_SECONDS ?? 30);
-
-// A `running` row older than this has no live worker on it (the process died
-// mid-run) — the reaper reclaims it. Deliberately far above any real sync so a
-// slow-but-alive run is never reaped out from under itself and double-run.
-const STALE_MINUTES = Number(process.env.WORKER_STALE_MINUTES ?? 15);
-
-// A `queued` row is only claimable once any retry backoff has elapsed.
-const eligibleNow = () => ({ OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: new Date() } }] });
-
-/**
- * The retry-or-fail decision, shared by both queues. `attempts` is how many times
- * this run has been claimed (bumped at claim), so it reflects the try that just
- * ended. Below the cap the run goes back to `queued` with exponential backoff — the
- * re-queue clears `finishedAt` (it isn't over) but keeps the last `error`, so the
- * page shows *why* a pending run is being retried; at the cap it fails for good.
- * Returns the `data` to write and, for the log line, the backoff (null on fail).
- */
-function nextState(attempts: number, error: string) {
-  if (attempts < MAX_ATTEMPTS) {
-    const backoffMs = BACKOFF_SECONDS * 1000 * 2 ** (attempts - 1);
-    return {
-      data: { status: "queued", nextAttemptAt: new Date(Date.now() + backoffMs), finishedAt: null, error },
-      retryMs: backoffMs,
-    };
-  }
-  return { data: { status: "failed" as const, finishedAt: new Date(), error }, retryMs: null };
-}
-
-function logOutcome(label: string, id: string | number, attempts: number, retryMs: number | null) {
-  if (retryMs === null) console.error(`${label} #${id} failed for good after ${attempts} attempts`);
-  else console.error(`${label} #${id} failed (attempt ${attempts}/${MAX_ATTEMPTS}), retrying in ${Math.round(retryMs / 1000)}s`);
-}
-
-const staleMessage = (kind: string) =>
-  `The worker running this ${kind} stopped before it finished (no update for over ${STALE_MINUTES} minutes).`;
+import {
+  claim,
+  eligibleNow,
+  failureText,
+  finalise,
+  reapStale,
+} from "../lib/server/run-queue";
 
 // --- Sync queue ------------------------------------------------------------
 
-async function retryOrFailSync(db: ScopedDb, run: { id: number; attempts: number }, error: string) {
-  const { data, retryMs } = nextState(run.attempts, error);
-  await db.syncRun.update({ where: { id: run.id }, data });
-  logOutcome("sync run", run.id, run.attempts, retryMs);
-}
-
-/**
- * Reclaim syncs left `running` by a worker that died mid-job. A `running` row whose
- * `startedAt` is older than the stale window can't have a live worker on it — the
- * claim resets `startedAt` to now and a real run finishes far inside the window —
- * so hand each back to `retryOrFailSync`. The reclaim is a guarded `updateMany`
- * (still `running`, still stale) so it can't race a legitimate finish, and it flips
- * the row to `queued` first so nothing else treats it as in-flight while we decide.
- */
-async function reapStaleSyncs(db: ScopedDb): Promise<void> {
-  const cutoff = new Date(Date.now() - STALE_MINUTES * 60 * 1000);
-  const stale = await db.syncRun.findMany({
-    where: { status: "running", startedAt: { lt: cutoff } },
-    select: { id: true, attempts: true },
-  });
-  for (const run of stale) {
-    const won = await db.syncRun.updateMany({
-      where: { id: run.id, status: "running", startedAt: { lt: cutoff } },
-      data: { status: "queued" },
-    });
-    if (won.count === 0) continue; // finished between the read and here
-    console.error(`sync run #${run.id}: stale claim (running > ${STALE_MINUTES}m), reclaiming`);
-    await retryOrFailSync(db, run, staleMessage("sync"));
-  }
-}
-
 /**
  * Claim and run one queued sync for a workspace, if there is one. Returns whether
- * it did work, so the caller can keep draining until the queue is empty.
- *
- * The claim is a guarded `updateMany` (queued → running, `count` tells us whether
- * we won the race): a plain read-then-write would let two workers both pick up the
- * same row. `startedAt` is reset to now on claim, so the run's duration on `/sync`
- * is execution time, not the time it sat in the queue — and, because that is what
- * the reaper measures staleness from, claiming also renews the row's lease. The
- * claim bumps `attempts`, and a run in retry backoff is skipped until its time comes.
+ * it did work, so the caller can keep draining until the queue is empty. Claiming
+ * is `claim` (lib/server/run-queue.ts); what is here is what a sync in particular
+ * does once it holds the row.
  */
 async function claimAndRunSync(db: ScopedDb): Promise<boolean> {
   const eligible = eligibleNow();
@@ -128,12 +62,7 @@ async function claimAndRunSync(db: ScopedDb): Promise<boolean> {
     orderBy: { startedAt: "asc" },
   });
   if (!next) return false;
-
-  const claim = await db.syncRun.updateMany({
-    where: { id: next.id, status: "queued", ...eligible },
-    data: { status: "running", startedAt: new Date(), attempts: { increment: 1 } },
-  });
-  if (claim.count === 0) return false; // another worker took it between read and write
+  if (!(await claim(db.syncRun, next.id, eligible))) return false;
 
   // The link the run was queued against. It can be gone (bank disconnected) or no
   // longer active between enqueue and now — a permanent condition, so fail it
@@ -190,7 +119,7 @@ async function claimAndRunSync(db: ScopedDb): Promise<boolean> {
     // Retry with backoff, or fail for good once attempts run out. `next.attempts`
     // is the pre-claim value; the claim above bumped it, so add one to reflect the
     // try that just ended.
-    await retryOrFailSync(db, { id: next.id, attempts: next.attempts + 1 }, error instanceof Error ? error.message : String(error));
+    await finalise(db.syncRun, "sync run", { id: next.id, attempts: next.attempts + 1 }, failureText(error));
   }
 
   return true;
@@ -198,36 +127,12 @@ async function claimAndRunSync(db: ScopedDb): Promise<boolean> {
 
 // --- Rules queue -----------------------------------------------------------
 
-async function retryOrFailRule(db: ScopedDb, run: { id: string; attempts: number }, error: string) {
-  const { data, retryMs } = nextState(run.attempts, error);
-  await db.ruleRun.update({ where: { id: run.id }, data });
-  logOutcome("rule run", run.id, run.attempts, retryMs);
-}
-
-/** Stale-claim recovery for the rules queue — the `SyncRun` reaper's twin. */
-async function reapStaleRules(db: ScopedDb): Promise<void> {
-  const cutoff = new Date(Date.now() - STALE_MINUTES * 60 * 1000);
-  const stale = await db.ruleRun.findMany({
-    where: { status: "running", startedAt: { lt: cutoff } },
-    select: { id: true, attempts: true },
-  });
-  for (const run of stale) {
-    const won = await db.ruleRun.updateMany({
-      where: { id: run.id, status: "running", startedAt: { lt: cutoff } },
-      data: { status: "queued" },
-    });
-    if (won.count === 0) continue;
-    console.error(`rule run #${run.id}: stale claim (running > ${STALE_MINUTES}m), reclaiming`);
-    await retryOrFailRule(db, run, staleMessage("rules run"));
-  }
-}
-
 /**
- * Claim and run one queued rules pass. The mechanics mirror `claimAndRunSync`; the
- * work is `runRules` over the workspace, handed the claimed run's id so it finalises
- * that row in place (success + the field-change log) instead of creating its own. On
- * the happy path `runRules` writes the success; on a throw the row is still
- * `running`, so we route it through the same retry-or-fail path here.
+ * Claim and run one queued rules pass. The work is `runRules` over the workspace,
+ * handed the claimed run's id so it finalises that row in place (success + the
+ * field-change log) instead of creating its own. On the happy path `runRules`
+ * writes the success; on a throw the row is still `running`, so we route it
+ * through the same retry-or-fail path as every other queue.
  *
  * The row's own `trigger` is passed back in rather than assumed: these are queued by
  * "apply now" *and* by the ingest (`trigger: "sync"`), and the log should say which.
@@ -239,12 +144,7 @@ async function claimAndRunRule(db: ScopedDb): Promise<boolean> {
     orderBy: { startedAt: "asc" },
   });
   if (!next) return false;
-
-  const claim = await db.ruleRun.updateMany({
-    where: { id: next.id, status: "queued", ...eligible },
-    data: { status: "running", startedAt: new Date(), attempts: { increment: 1 } },
-  });
-  if (claim.count === 0) return false;
+  if (!(await claim(db.ruleRun, next.id, eligible))) return false;
 
   console.log(`\n=== rules pass (${next.workspaceId}) — ${next.trigger} ===`);
   try {
@@ -257,48 +157,22 @@ async function claimAndRunRule(db: ScopedDb): Promise<boolean> {
         (summary.errors ? `, ${summary.errors} errored` : ""),
     );
   } catch (error) {
-    await retryOrFailRule(db, { id: next.id, attempts: next.attempts + 1 }, error instanceof Error ? error.message : String(error));
+    await finalise(db.ruleRun, "rule run", { id: next.id, attempts: next.attempts + 1 }, failureText(error));
   }
   return true;
 }
 
 // --- Budget inference queue ------------------------------------------------
 
-async function retryOrFailInference(db: ScopedDb, run: { id: string; attempts: number }, error: string) {
-  const { data, retryMs } = nextState(run.attempts, error);
-  // updateMany, not update: a user can Clear a run mid-flight (it deletes the row),
-  // and a finalise that threw on the missing row would take the whole worker tick
-  // down with it. A no-op on a cleared row is exactly right.
-  await db.budgetInferenceRun.updateMany({ where: { id: run.id }, data });
-  logOutcome("budget inference", run.id, run.attempts, retryMs);
-}
-
-/** Stale-claim recovery for the inference queue — the `SyncRun` reaper's twin. An
- *  LLM run is slow, but WORKER_STALE_MINUTES is set well above any real run, so a
- *  slow-but-alive inference is never reaped out from under itself. */
-async function reapStaleInference(db: ScopedDb): Promise<void> {
-  const cutoff = new Date(Date.now() - STALE_MINUTES * 60 * 1000);
-  const stale = await db.budgetInferenceRun.findMany({
-    where: { status: "running", startedAt: { lt: cutoff } },
-    select: { id: true, attempts: true },
-  });
-  for (const run of stale) {
-    const won = await db.budgetInferenceRun.updateMany({
-      where: { id: run.id, status: "running", startedAt: { lt: cutoff } },
-      data: { status: "queued" },
-    });
-    if (won.count === 0) continue;
-    console.error(`budget inference #${run.id}: stale claim (running > ${STALE_MINUTES}m), reclaiming`);
-    await retryOrFailInference(db, run, staleMessage("budget inference"));
-  }
-}
-
 /**
- * Claim and run one queued budget inference. Mechanics mirror `claimAndRunSync`:
- * an atomic queued → running claim that bumps `attempts`, the slow work, then a
- * finalise. On success the created (or refreshed) budget's id is written back to the
- * run, so the budgets page can point at it; on a throw the row is routed through the
- * same retry-or-fail path as the other queues.
+ * Claim and run one queued budget inference. On success the created (or refreshed)
+ * budget's id is written back to the run, so the budgets page can point at it; on
+ * a throw the row is routed through the same retry-or-fail path as the others.
+ *
+ * This is the slowest queue by a wide margin — it is an LLM conversation — but the
+ * reaper needs no special case for that: WORKER_STALE_MINUTES is set well above
+ * any real inference, so a slow-but-alive one is never reaped out from under
+ * itself and double-run.
  */
 async function claimAndRunInference(db: ScopedDb): Promise<boolean> {
   const eligible = eligibleNow();
@@ -307,16 +181,17 @@ async function claimAndRunInference(db: ScopedDb): Promise<boolean> {
     orderBy: { startedAt: "asc" },
   });
   if (!next) return false;
-
-  const claim = await db.budgetInferenceRun.updateMany({
-    where: { id: next.id, status: "queued", ...eligible },
-    data: { status: "running", startedAt: new Date(), attempts: { increment: 1 } },
-  });
-  if (claim.count === 0) return false;
+  if (!(await claim(db.budgetInferenceRun, next.id, eligible))) return false;
 
   console.log(`\n=== budget inference (${next.workspaceId}) — ${next.budgetId ? "re-infer" : "create"} ===`);
   try {
-    const budgetId = await runBudgetInference(db, { budgetId: next.budgetId });
+    // `userId` is carried through for the log the run writes (a thread belongs to a
+    // person), and `id` so the log can be recorded on this row while it is still going.
+    const budgetId = await runBudgetInference(db, {
+      id: next.id,
+      budgetId: next.budgetId,
+      userId: next.userId,
+    });
     // updateMany, so a run the user Cleared while it was working finalises to a
     // no-op instead of throwing on the missing row. The budget it built is already
     // written either way.
@@ -326,7 +201,7 @@ async function claimAndRunInference(db: ScopedDb): Promise<boolean> {
     });
     console.log(`done (budget inference #${next.id})`);
   } catch (error) {
-    await retryOrFailInference(db, { id: next.id, attempts: next.attempts + 1 }, error instanceof Error ? error.message : String(error));
+    await finalise(db.budgetInferenceRun, "budget inference", { id: next.id, attempts: next.attempts + 1 }, failureText(error));
   }
   return true;
 }
@@ -360,9 +235,9 @@ export async function drainOnce(workspaceIds?: string[]): Promise<number> {
     const db = scopedDb(workspaceId);
     // Recover anything a dead worker (or cron) left `running` before draining, so a
     // reclaimed row is back in the queue for this same pass to pick up.
-    await reapStaleSyncs(db);
-    await reapStaleRules(db);
-    await reapStaleInference(db);
+    await reapStale(db.syncRun, "sync run", "sync");
+    await reapStale(db.ruleRun, "rule run", "rules run");
+    await reapStale(db.budgetInferenceRun, "budget inference", "budget inference");
     // Keep draining each queue until it's empty: a burst of clicks shouldn't wait a
     // whole poll interval per row.
     while (await claimAndRunSync(db)) processed++;

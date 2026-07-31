@@ -26,10 +26,10 @@ export type BudgetComparison = Comparison & {
   contributors: Map<string, string[]>;
 };
 
-/** A budget in the selector: enough to name it and link to it. */
+/** A budget in the selector: enough to name it and link to it. The id is the link
+ *  — a budget has no slug (see `Budget.id`). */
 export type BudgetRef = {
   id: string;
-  slug: string;
   name: string;
 };
 

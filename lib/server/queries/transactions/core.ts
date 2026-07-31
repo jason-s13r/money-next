@@ -1,6 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { getDb } from "../../db/request";
+import { scopedBatch } from "../../db";
 import { convert, FALLBACK_DISPLAY_CURRENCY, loadRates } from "../../currency";
 import { moneySum, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
@@ -56,6 +57,15 @@ export const listInclude = {
 /** A short human summary of the transfer a listed row is one leg of. */
 export type TransferSummary = { label: string };
 
+/** One other leg of a listed row's transfer group, as `enrichTransactions` reads
+ *  them: enough to name the account the money went to or came from. Named because
+ *  the empty case has to be typed as this and cannot infer it from `[]`. */
+type TransferLegRow = {
+  transferGroupId: string | null;
+  accountId: string;
+  account: { name: string };
+};
+
 /**
  * Attaches to each listed row the three things the shared table shows beyond the
  * row's own columns, in one batched pass over a whole page:
@@ -83,17 +93,31 @@ export async function enrichTransactions<
     ...new Set(items.map((i) => i.transferGroupId).filter((id): id is string => id != null)),
   ];
 
-  const [legs, openConflicts, rates] = await Promise.all([
+  // The two database reads go together in one batch rather than side by side in a
+  // `Promise.all`: parallel scoped queries are parallel *transactions*, each
+  // paying its own BEGIN/set_config/COMMIT (see `scopedBatch`). The rate load is
+  // its own thing — it is cached and often touches no database at all — so it
+  // stays alongside.
+  const [[legs, openConflicts], rates] = await Promise.all([
     groupIds.length > 0
-      ? db.transaction.findMany({
-          where: { transferGroupId: { in: groupIds } },
-          select: { transferGroupId: true, accountId: true, account: { select: { name: true } } },
-        })
-      : Promise.resolve([]),
-    db.transactionConflict.findMany({
-      where: { status: "open", transactionId: { in: items.map((i) => i.id) } },
-      select: { transactionId: true },
-    }),
+      ? scopedBatch(db, [
+          db.transaction.findMany({
+            where: { transferGroupId: { in: groupIds } },
+            select: { transferGroupId: true, accountId: true, account: { select: { name: true } } },
+          }),
+          db.transactionConflict.findMany({
+            where: { status: "open", transactionId: { in: items.map((i) => i.id) } },
+            select: { transactionId: true },
+          }),
+        ] as const)
+      : // No transfer legs to look up, so there is nothing to batch the conflict
+        // read with; one query on its own is cheaper as one query.
+        db.transactionConflict
+          .findMany({
+            where: { status: "open", transactionId: { in: items.map((i) => i.id) } },
+            select: { transactionId: true },
+          })
+          .then((conflicts) => [[] as TransferLegRow[], conflicts] as const),
     loadRates([...items.map((i) => i.account.currency), DISPLAY_CURRENCY]),
   ]);
 
@@ -214,15 +238,22 @@ export async function listTransactions(
 ) {
   await connection();
   const db = await getDb();
-  const [rows, total, net] = await Promise.all([
-    db.transaction.findMany({
-      where,
-      orderBy: orderByForSort(sort),
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: listInclude,
-    }),
-    db.transaction.count({ where }),
+  // The page and its count in one batch: one round trip instead of two, and — the
+  // part that is not just speed — one snapshot, so "showing 1–20 of 57" can no
+  // longer be assembled from two different moments with a row inserted between
+  // them. `netInDisplay` runs alongside because its own two queries are dependent
+  // (see there) and cannot join this batch.
+  const [[rows, total], net] = await Promise.all([
+    scopedBatch(db, [
+      db.transaction.findMany({
+        where,
+        orderBy: orderByForSort(sort),
+        skip: (page - 1) * perPage,
+        take: perPage,
+        include: listInclude,
+      }),
+      db.transaction.count({ where }),
+    ] as const),
     netInDisplay(where),
   ]);
 

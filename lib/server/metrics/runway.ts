@@ -1,6 +1,6 @@
 import type { ProjectionScenario } from "./budget/forecast";
 
-// The runway tiles under the balance — one per forecast scenario, read straight
+// The runway tiles under the balance — one per forecast budget, read straight
 // off the projections the chart draws.
 //
 // It used to divide a balance by a flat monthly burn. It no longer computes a
@@ -79,12 +79,12 @@ function describe(months: number | null, depletionDay: string | null) {
 }
 
 /**
- * One runway per forecast scenario, in the order the chart draws them.
+ * One runway per forecast budget, in the order the chart draws them.
  *
  * Takes the projections rather than the summaries because the projections are
  * the answer: `getBalanceSeries` has already built them (from the workspace's
- * own scenarios, or from the flat history-derived fallback), and passing them in
- * is what keeps every tile agreeing with the line above it.
+ * own forecast budgets, or from the flat history-derived fallback), and passing
+ * them in is what keeps every tile agreeing with the line above it.
  */
 export function getRunways(
   scenarios: ProjectionScenario[],

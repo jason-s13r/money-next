@@ -93,7 +93,7 @@ export default function WorkspaceError({
         <button
           type="button"
           onClick={reset}
-          className="mt-4 self-start rounded bg-foreground px-3 py-1.5 text-sm font-medium text-background"
+          className="mt-4 self-start rounded bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
         >
           Try again
         </button>
@@ -102,7 +102,7 @@ export default function WorkspaceError({
       {link ? (
         <Link
           href={link.href}
-          className="mt-4 self-start rounded bg-foreground px-3 py-1.5 text-sm font-medium text-background"
+          className="mt-4 self-start rounded bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground"
         >
           {link.label}
         </Link>

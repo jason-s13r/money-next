@@ -9,7 +9,7 @@ import type { BudgetRef } from "@/lib/server/metrics/budget";
 // drives the URL, it should open in a new tab, and it works with JavaScript off.
 
 const PILL = "shrink-0 rounded-md px-2.5 py-1.5 whitespace-nowrap";
-const ON = "bg-foreground text-background";
+const ON = "bg-primary text-primary-foreground";
 const OFF = "text-secondary hover:bg-current/5";
 
 /**

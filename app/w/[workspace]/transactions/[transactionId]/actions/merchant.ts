@@ -2,19 +2,13 @@
 
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { mintId } from "@/lib/ids";
-import { recordUserChanges } from "@/lib/server/changes";
+import { applyEnrichment } from "@/lib/server/enrichment";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
 
-/** What the field change log needs to know before an edit overwrites it. */
-async function priorMerchant(db: Awaited<ReturnType<typeof getDb>>, transactionId: string) {
-  const prior = await db.transaction.findUnique({
-    where: { id: transactionId },
-    select: { merchantId: true, merchant: { select: { name: true } } },
-  });
-  if (!prior) throw new Error(`Unknown transaction: ${transactionId}`);
-  return prior;
-}
+// Naming a transaction's payee by hand, and applying that name to the rows on the
+// page that look like it. The write is `applyEnrichment` — see the note in the
+// category action for what it does and why its steps have to commit together.
 
 export async function setTransactionMerchant(
   transactionId: string,
@@ -23,32 +17,8 @@ export async function setTransactionMerchant(
   await requireRole({ enrichment: ["update"] });
 
   const db = await getDb();
-  const prior = await priorMerchant(db, transactionId);
-
-  const merchant = merchantId
-    ? await db.merchant.findUnique({ where: { id: merchantId } })
-    : null;
-  if (merchantId && !merchant) throw new Error(`Unknown merchant: ${merchantId}`);
-
-  await db.transaction.update({
-    where: { id: transactionId },
-    data: { merchantId: merchant?.id ?? null, merchantSource: "user" },
-  });
-
-  if (prior.merchantId !== (merchant?.id ?? null)) {
-    await recordUserChanges(db, [
-      {
-        transactionId,
-        field: "merchant",
-        fromId: prior.merchantId,
-        fromLabel: prior.merchant?.name ?? null,
-        toId: merchant?.id ?? null,
-        toLabel: merchant?.name ?? null,
-      },
-    ]);
-  }
-
-  await db.transactionConflict.deleteMany({ where: { transactionId, field: "merchant" } });
+  const written = await applyEnrichment(db, "merchant", [transactionId], merchantId);
+  if (written === 0) throw new Error(`Unknown transaction: ${transactionId}`);
 
   await revalidateWorkspacePath(`/transactions/${transactionId}`);
 }
@@ -73,45 +43,27 @@ export async function createMerchantAndSetForTransaction(
   const trimmed = name.trim();
   if (!trimmed) throw new Error("Merchant name is required");
 
-  const prior = await priorMerchant(db, transactionId);
-
   const merchant = await db.merchant.create({
-    data: {
-      id: mintId("merchant"),
-      workspaceId: db.$workspaceId,
-      name: trimmed,
-    },
+    data: { id: mintId("merchant"), workspaceId: db.$workspaceId, name: trimmed },
+    select: { id: true },
   });
 
-  await db.transaction.update({
-    where: { id: transactionId },
-    data: {
-      merchantId: merchant.id,
-      merchantSource: "user",
-    },
-  });
-
-  // Always a change: the merchant was minted a line ago, so nothing can already
-  // have it.
-  await recordUserChanges(db, [
-    {
-      transactionId,
-      field: "merchant",
-      fromId: prior.merchantId,
-      fromLabel: prior.merchant?.name ?? null,
-      toId: merchant.id,
-      toLabel: merchant.name,
-    },
-  ]);
-
-  await db.transactionConflict.deleteMany({ where: { transactionId, field: "merchant" } });
+  // Assigned through the shared path like any other pick, which costs one indexed
+  // re-read of the row minted a line above. Worth it: the version that skipped the
+  // read also had to skip the diff ("always a change, nothing can already have
+  // it") and so was a second way of writing this field, correct only as long as
+  // nobody changed the first one.
+  const written = await applyEnrichment(db, "merchant", [transactionId], merchant.id);
+  if (written === 0) throw new Error(`Unknown transaction: ${transactionId}`);
 
   await revalidateWorkspacePath(`/transactions/${transactionId}`);
 }
 
-// Bulk version of the single setter, for applying this transaction's chosen
-// merchant to the list of similar transactions on the same page.
-
+/**
+ * Apply this transaction's chosen merchant to the list of similar transactions
+ * shown alongside it. `sourceId` is the transaction whose page is open, so its
+ * view is the one that revalidates.
+ */
 export async function applyMerchantToTransactions(
   sourceId: string,
   merchantId: string,
@@ -120,39 +72,7 @@ export async function applyMerchantToTransactions(
   await requireRole({ enrichment: ["update"] });
 
   const db = await getDb();
-  if (transactionIds.length === 0) return;
-
-  const merchant = await db.merchant.findUnique({ where: { id: merchantId } });
-  if (!merchant) throw new Error(`Unknown merchant: ${merchantId}`);
-
-  // One read for the whole batch — see the note in the category equivalent.
-  const priors = await db.transaction.findMany({
-    where: { id: { in: transactionIds } },
-    select: { id: true, merchantId: true, merchant: { select: { name: true } } },
-  });
-
-  await db.transaction.updateMany({
-    where: { id: { in: transactionIds } },
-    data: { merchantId: merchant.id, merchantSource: "user" },
-  });
-
-  await recordUserChanges(
-    db,
-    priors
-      .filter((prior) => prior.merchantId !== merchant.id)
-      .map((prior) => ({
-        transactionId: prior.id,
-        field: "merchant" as const,
-        fromId: prior.merchantId,
-        fromLabel: prior.merchant?.name ?? null,
-        toId: merchant.id,
-        toLabel: merchant.name,
-      })),
-  );
-
-  await db.transactionConflict.deleteMany({
-    where: { transactionId: { in: transactionIds }, field: "merchant" },
-  });
+  await applyEnrichment(db, "merchant", transactionIds, merchantId);
 
   await revalidateWorkspacePath(`/transactions/${sourceId}`);
 }

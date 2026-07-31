@@ -1,6 +1,5 @@
 "use server";
 
-import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 
 import { auth } from "@/lib/server/auth";
@@ -9,6 +8,7 @@ import { requireRole } from "@/lib/server/auth/session";
 import { isRole } from "@/lib/server/auth/roles";
 import { withResetTokenCapture } from "@/lib/server/auth/reset-capture";
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
+import { apiErrorMessage, text } from "@/lib/form-data";
 import { NO_ERROR, type MemberActionState, type ResetLinkState } from "./types";
 
 /**
@@ -45,10 +45,7 @@ async function run(action: () => Promise<unknown>): Promise<MemberActionState> {
   try {
     await action();
   } catch (error) {
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "That didn't work." };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "That didn't work.") };
   }
 
   await revalidateWorkspacePath("/members");
@@ -62,9 +59,9 @@ export async function invite(
 ): Promise<MemberActionState> {
   const ctx = await requireRole({ invitation: ["create"] });
 
-  const email = String(formData.get("email") ?? "").trim();
+  const email = text(formData, "email");
   const role = String(formData.get("role") ?? "");
-  const name = String(formData.get("name") ?? "").trim();
+  const name = text(formData, "name");
 
   // A select renders three options; a POST can carry any string. Better Auth
   // rejects an unknown role too, but this app's own vocabulary is the thing
@@ -96,7 +93,7 @@ export async function cancelInvite(
 ): Promise<MemberActionState> {
   await requireRole({ invitation: ["cancel"] });
 
-  const invitationId = String(formData.get("invitationId") ?? "");
+  const invitationId = text(formData, "invitationId");
 
   return run(async () =>
     auth.api.cancelInvitation({
@@ -117,7 +114,7 @@ export async function removeMember(
 ): Promise<MemberActionState> {
   const ctx = await requireRole({ member: ["delete"] });
 
-  const memberIdOrEmail = String(formData.get("memberId") ?? "");
+  const memberIdOrEmail = text(formData, "memberId");
 
   return run(async () =>
     auth.api.removeMember({
@@ -141,7 +138,7 @@ export async function changeRole(
 ): Promise<MemberActionState> {
   const ctx = await requireRole({ member: ["update"] });
 
-  const memberId = String(formData.get("memberId") ?? "");
+  const memberId = text(formData, "memberId");
   const role = String(formData.get("role") ?? "");
 
   if (!isRole(role)) return { error: "Pick a role." };
@@ -184,7 +181,7 @@ export async function generateResetLink(
 ): Promise<ResetLinkState> {
   const ctx = await requireRole({ member: ["update"] });
 
-  const userId = String(formData.get("userId") ?? "");
+  const userId = text(formData, "userId");
 
   const membership = await authDb.membership.findFirst({
     where: { workspaceId: ctx.workspace.id, userId },
@@ -211,9 +208,6 @@ export async function generateResetLink(
 
     return { error: null, token };
   } catch (error) {
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Couldn't generate a link.", token: null };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Couldn't generate a link."), token: null };
   }
 }

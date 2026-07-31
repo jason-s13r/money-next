@@ -50,11 +50,11 @@ export type BalanceSeries = {
    *  values. Boundary `i` is the balance entering day `i`; boundary `i+1` its close,
    *  and their difference is `nets[i]` — the bar. The last is `currentWorth`. */
   worthBoundaries: number[];
-  /** The forward half: one bending line per forecast scenario, each starting from
+  /** The forward half: one bending line per forecast budget, each starting from
    *  `currentWorth` at `now`. Empty only when there is nothing to project at all. */
   scenarios: ProjectionScenario[];
-  /** Whether the workspace has any forecasts. False means the forward half is
-   *  empty — nobody has made one yet — which the dashboard says out loud beside the
+  /** Whether the workspace has any forecast budgets. False means the forward half is
+   *  empty — nobody has marked one yet — which the dashboard says out loud beside the
    *  chart rather than drawing a guessed line. */
   scenariosConfigured: boolean;
 };
@@ -128,11 +128,11 @@ export async function getBalanceSeries(
   worthBoundaries[nets.length] = currentWorth;
   for (let k = nets.length - 1; k >= 0; k--) worthBoundaries[k] = worthBoundaries[k + 1] - nets[k];
 
-  // The forward half: each of the workspace's forecasts, its one budget walked
-  // forward day by day. A workspace with no forecasts gets an empty forward half
-  // and the chart draws no projection line — nothing is created here, because a
-  // read that quietly wrote a forecast would make the dashboard's first load a
-  // write, and put a plan in front of someone they never agreed to.
+  // The forward half: each of the workspace's forecast budgets, walked forward
+  // day by day. A workspace with no forecast budgets gets an empty forward half and
+  // the chart draws no projection line — nothing is created here, because a read
+  // that quietly wrote a forecast would make the dashboard's first load a write,
+  // and would put a plan in front of someone they never agreed to.
   const scenarios = await getForecastProjections(balances, spend, now);
   const scenariosConfigured = scenarios.length > 0;
 

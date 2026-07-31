@@ -102,7 +102,6 @@ export async function buildBudgetComparison(
         orderBy: [{ startsOn: { sort: "asc", nulls: "first" } }, { name: "asc" }],
         select: {
           id: true,
-          slug: true,
           name: true,
           startsOn: true,
           endsOn: true,
@@ -321,7 +320,7 @@ export async function budgetsInWindow(
   const rows = await db.budget.findMany({
     where: { baseBudgetId: null, ...overlapsWindow(from, to) },
     orderBy: [{ startsOn: { sort: "asc", nulls: "first" } }, { name: "asc" }],
-    select: { id: true, slug: true, name: true },
+    select: { id: true, name: true },
   });
 
   return rows;

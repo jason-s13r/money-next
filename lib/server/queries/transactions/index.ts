@@ -1,6 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { getDb } from "../../db/request";
+import { scopedBatch } from "../../db";
 import { money, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
 import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";
@@ -40,7 +41,9 @@ export async function getAccountTransactions(
 ) {
   await connection();
   const db = await getDb();
-  const [rows, total] = await Promise.all([
+  // One batch, for the reasons in `listTransactions`: a round trip saved, and the
+  // page and its count read from the same snapshot.
+  const [rows, total] = await scopedBatch(db, [
     db.transaction.findMany({
       where: { accountId },
       orderBy: orderByForSort(sort),
@@ -49,7 +52,7 @@ export async function getAccountTransactions(
       include: listInclude,
     }),
     db.transaction.count({ where: { accountId } }),
-  ]);
+  ] as const);
 
   return { items: await enrichTransactions(rows.map(transactionMoney)), total };
 }

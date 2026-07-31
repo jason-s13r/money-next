@@ -6,10 +6,11 @@ import type { ProposedItem } from "../server/budget/infer";
 // the recurrence arithmetic, for the same reason that does — it is where a bug is
 // silent (a mis-mapped category, a dropped bill) and so it is what the tests pin.
 //
-// The server half (lib/server/budget/llm.ts) gathers history, drives the windows,
-// and builds the `Catalog` these functions consume. Everything a model says passes
-// through `resolveProposedItems` before it is trusted: names in, real ids out, and
-// anything that will not resolve or validate dropped.
+// The server half (lib/server/budget/llm.ts) runs the conversation, answers the
+// model's tool calls out of the transaction history, and builds the `Catalog` these
+// functions consume. Everything a model says passes through `resolveProposedItems`
+// before it is trusted: names in, real ids out, and anything that will not resolve
+// or validate dropped.
 //
 // `ProposedItem` is imported as a type only, so nothing here pulls the server-only
 // module it is declared in into a plain test run.
@@ -48,8 +49,13 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** Pull the item array out of whatever the model wrapped it in. Tolerates a bare
  *  array, `{ items: [...] }`, `{ budget: [...] }` or `{ budgetItems: [...] }`, and
  *  returns `[]` on anything that will not parse rather than throwing — a garbled
- *  window must not sink the run. Also strips markdown fences the model sometimes
+ *  reply must not sink the run. Also strips markdown fences the model sometimes
  *  adds despite being asked for raw JSON only.
+ *
+ *  Items normally arrive as the arguments of a `propose_items` tool call, not as
+ *  message text. This is the salvage path for the weaker model that ignores the
+ *  tools and just writes the JSON out in its reply: rather than lose the answer,
+ *  the text is parsed the old way and resolved through the same gate.
  */
 export function parseModelContent(content: string): RawBudgetItem[] {
   const stripped = stripJsonMarkdown(content);
@@ -74,6 +80,37 @@ function stripJsonMarkdown(content: string): string {
     .replace(/^```json\s*/i, "")
     .replace(/\s*```$/i, "")
     .trim();
+}
+
+/**
+ * A tool call's `arguments` as an object, or null when they will not parse.
+ *
+ * The wire format is a JSON *string*, and a local model is loose with it: fences
+ * around it, or the whole object encoded a second time so the string parses to
+ * another string. Both are unwrapped here, and a call whose arguments are beyond
+ * saving returns null.
+ *
+ * The SDK owns the parsing of a tool call now, and is strict about it. This is what
+ * still reaches it, through `repairLooseToolCall` — which is where the null goes back
+ * to meaning "hand the model its own error" rather than "throw".
+ */
+export function parseToolArguments(raw: string | undefined | null): Record<string, unknown> | null {
+  if (!raw || !raw.trim()) return {};
+  let value: unknown;
+  try {
+    value = JSON.parse(stripJsonMarkdown(raw));
+  } catch {
+    return null;
+  }
+  // Double-encoded: the arguments string held a JSON string holding the object.
+  if (typeof value === "string") {
+    try {
+      value = JSON.parse(stripJsonMarkdown(value));
+    } catch {
+      return null;
+    }
+  }
+  return isRecord(value) && !Array.isArray(value) ? value : null;
 }
 
 /** A `YYYY-MM-DD` at UTC midnight — the NZ-day representation the recurrence module

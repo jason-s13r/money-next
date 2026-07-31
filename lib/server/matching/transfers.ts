@@ -5,7 +5,7 @@
 // server — can import it. The interactive counterparts live in the transaction
 // page's server action (which wraps `linkTransferLegs` with `revalidatePath`).
 
-import { withScopedTx, type ScopedDb } from "../db";
+import { withScopedTx, type ScopedDb, type ScopedTx } from "../db";
 
 /**
  * Put `targetId` in the same transfer group as `sourceId`, creating the group if
@@ -15,11 +15,19 @@ import { withScopedTx, type ScopedDb } from "../db";
  *
  * Returns `true` when a change was made, `false` when the two were already in the
  * same group (the no-op the auto-linker relies on to stay idempotent).
+ *
+ * `log` runs inside the same transaction as the link, and only when there is a
+ * link to describe. It exists because the two callers attribute their writes
+ * differently — a person clicked, or a rule fired — and `source` is the whole
+ * point of the change log, so this function cannot decide it. What it *can*
+ * decide is that whatever the caller writes about the link commits with the link:
+ * a log entry for a grouping that rolled back is worse than no entry at all.
  */
 export async function linkTransferLegs(
   db: ScopedDb,
   sourceId: string,
   targetId: string,
+  log?: (tx: ScopedTx) => Promise<void>,
 ): Promise<boolean> {
   if (sourceId === targetId) throw new Error("A transaction cannot be a transfer of itself.");
 
@@ -70,18 +78,30 @@ export async function linkTransferLegs(
       }
     }
 
-    // A transfer's legs are money moving between the user's own accounts, not
-    // income or spending, so they carry no category group. Clear it across the
-    // whole group — including any leg linked before this existed — so a transfer
-    // never lands in an income breakdown. The ingest side suppresses the same
-    // "Other Income" fallback for TRANSFER-type rows, so a later sync won't put
-    // it back.
-    await tx.transaction.updateMany({
-      where: { transferGroupId: groupId },
-      data: { categoryGroupId: null },
-    });
+    await clearCategoryGroup(tx, groupId);
+    await log?.(tx);
   });
   return true;
+}
+
+/**
+ * Strip the category group from every leg of a transfer.
+ *
+ * A transfer's legs are money moving between the user's own accounts, not income
+ * or spending, so they carry no category group. Cleared across the whole group —
+ * including any leg linked before this existed — so a transfer never lands in an
+ * income breakdown. The ingest side suppresses the same "Other Income" fallback
+ * for TRANSFER-type rows, so a later sync won't put it back.
+ *
+ * Shared by the one-pair linker above and the bulk linker in the transactions
+ * action, which are otherwise different shapes: this is the rule about what a
+ * transfer *is*, and it should not be stated twice.
+ */
+export async function clearCategoryGroup(tx: ScopedTx, groupId: string): Promise<void> {
+  await tx.transaction.updateMany({
+    where: { transferGroupId: groupId },
+    data: { categoryGroupId: null },
+  });
 }
 
 // The auto-linker is deliberately narrower than the interactive candidate finder

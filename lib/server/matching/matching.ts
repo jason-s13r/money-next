@@ -4,6 +4,7 @@ import { getDb } from "../db/request";
 import { convert, loadRates } from "../currency";
 import { transactionMoney } from "../money";
 import type { Prisma } from "../../generated/prisma/client";
+import { descriptionTokens, prefilterTokens, SIMILAR_THRESHOLD, tokenOverlap } from "./tokens";
 
 // Fuzzy matching of transactions against one another, for two features that share
 // the same description-overlap scoring: finding other transactions *like* a given
@@ -11,41 +12,32 @@ import type { Prisma } from "../../generated/prisma/client";
 // transfer (to link the two sides of a move between accounts). Both score bank
 // descriptions in JS rather than SQL because a recurring payment carries a volatile
 // reference number that an exact `WHERE description = …` would never group.
+//
+// The tokenisation itself lives in ./tokens, which carries no `server-only` — see
+// the note there. Re-exported here because this is where every caller has always
+// found it.
 
-// A description is split into comparable tokens on whitespace and `#`, with
-// leading/trailing punctuation trimmed but internal punctuation kept — so a
-// counterparty's dashed account number (a stable signal) survives intact while a
-// `#`-glued reference like `<ref>#<name>` separates into its volatile and stable
-// halves.
-export function descriptionTokens(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .split(/[\s#]+/)
-      .map((t) => t.replace(/^[^a-z0-9]+|[^a-z0-9]+$/g, ""))
-      // Drop tokens carrying an unbroken run of 4+ digits: a per-transaction
-      // reference or batch id (`payrollref778213004411`, `d783879600`) that changes
-      // every instance, so it only ever lowers the overlap between two instances of
-      // the same recurring payment. A dashed account number like `012-345-678` — a
-      // *stable* shared signal — has only 3-digit groups and survives.
-      .filter((t) => t !== "" && !/\d{4,}/.test(t)),
-  );
-}
+export { descriptionTokens } from "./tokens";
 
-/** Jaccard overlap of two token sets: shared tokens over their union, in [0, 1]. */
-function tokenOverlap(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  let shared = 0;
-  for (const t of a) if (b.has(t)) shared++;
-  return shared / (a.size + b.size - shared);
-}
+// The relations a matched row carries beyond its own columns. Every result of this
+// module is rendered by the same client components — the similar-transactions list
+// and the transfer-leg pickers on the detail page — so they read the same fields,
+// and writing the shape once is what keeps a column added to one of those lists
+// from silently missing from the other.
+//
+// `satisfies` rather than a type annotation, so the literal shape survives and
+// Prisma still infers each row's payload from it.
+const MATCH_INCLUDE = {
+  account: { select: { name: true, currency: true } },
+  merchant: { select: { name: true } },
+} satisfies Prisma.TransactionInclude;
 
-// How much description overlap counts as "similar". With volatile reference/batch
-// numbers now dropped at tokenisation (see `descriptionTokens`), two instances of
-// the same recurring credit that differ only in that reference score at or near
-// 1.0; unrelated direct credits sharing just "direct"/"credit" score well under
-// this.
-const SIMILAR_THRESHOLD = 0.5;
+/** The same, plus the category — the similar-transactions list shows it, because
+ *  applying a category to the set is the whole reason that list exists. */
+const SIMILAR_INCLUDE = {
+  ...MATCH_INCLUDE,
+  category: { select: { name: true } },
+} satisfies Prisma.TransactionInclude;
 
 /**
  * Other transactions that look like this one, so a category or merchant set here
@@ -59,6 +51,19 @@ const SIMILAR_THRESHOLD = 0.5;
  * reference number that an exact `WHERE description = …` would never group: the
  * same recurring credit reads `…<ref-A>#<name> <party> <acct>` one month and
  * `…<ref-B># <name> <party> <acct>` the next.
+ *
+ * Done in two queries, which is the whole shape of this function and worth saying
+ * why. Scoring has to happen in JS (above), but the naive reading of that — fetch
+ * every same-type row and score it — makes the cost of opening a transaction grow
+ * with the size of the ledger, forever, in a query the reader never asked for.
+ * `type` is a handful of values, so "same type" is most of the history.
+ *
+ * So the candidates are narrowed in SQL by a filter that provably cannot drop a
+ * match (`prefilterTokens`), and read in two passes: descriptions only, which is
+ * what the scoring actually reads, and then the full rows for the few that won.
+ * Both halves matter — the prefilter bounds how many rows are considered, the
+ * projection bounds what each one costs, and neither alone would keep a
+ * three-year ledger's detail page off a table scan with three joins on it.
  */
 export async function getSimilarTransactions(
   tx: { id: string; type: string; description: string; merchantId: string | null },
@@ -67,37 +72,62 @@ export async function getSimilarTransactions(
   await connection();
   const db = await getDb();
 
-  // Same-type rows are the candidate pool; at this app's scale (a personal
-  // ledger) scoring them in memory is cheap, and it is the only way to catch the
-  // reference-number drift above.
-  const rows = await db.transaction.findMany({
-    where: { type: tx.type, id: { not: tx.id } },
-    orderBy: [{ date: "desc" }, { id: "desc" }],
-    include: {
-      account: { select: { name: true, currency: true } },
-      merchant: { select: { name: true } },
-      category: { select: { name: true } },
-    },
-  });
-  // These rows are rendered by a client component, so they cannot carry `Decimal`.
-  const candidates = rows.map(transactionMoney);
-
   const sourceTokens = descriptionTokens(tx.description);
+  const probes = prefilterTokens(sourceTokens);
 
-  return candidates
+  // Nothing to match on: a description that tokenised to nothing (all reference
+  // numbers) on a transaction with no merchant. `tokenOverlap` would score every
+  // candidate 0 anyway, so this is the same answer without the query.
+  if (probes.length === 0 && tx.merchantId == null) return [];
+
+  // A shared merchant is a definitive match; text overlap is the fallback for the
+  // merchant-less inflows (salary, refunds) this feature mainly serves. As an
+  // `OR`, the two are the same two branches the scoring below applies — the
+  // database is being asked the same question, just early and cheaply.
+  const candidateWhere = {
+    type: tx.type,
+    id: { not: tx.id },
+    OR: [
+      ...(tx.merchantId != null ? [{ merchantId: tx.merchantId }] : []),
+      ...probes.map((token) => ({
+        description: { contains: token, mode: "insensitive" as const },
+      })),
+    ],
+  };
+
+  // Pass one: only what the scoring reads. No joins and no `Decimal`, so a wide
+  // prefilter result costs a few bytes a row rather than a hydrated transaction.
+  const lean = await db.transaction.findMany({
+    where: candidateWhere,
+    orderBy: [{ date: "desc" }, { id: "desc" }],
+    select: { id: true, description: true, merchantId: true },
+  });
+
+  const ranked = lean
     .map((c) => {
-      // A shared merchant is a definitive match; text overlap is the fallback for
-      // the merchant-less inflows (salary, refunds) this feature mainly serves.
       const sameMerchant = tx.merchantId != null && c.merchantId === tx.merchantId;
       const score = sameMerchant ? 1 : tokenOverlap(sourceTokens, descriptionTokens(c.description));
-      return { tx: c, score, sameMerchant };
+      return { id: c.id, score, sameMerchant };
     })
     .filter((s) => s.sameMerchant || s.score >= SIMILAR_THRESHOLD)
     // Best matches first; the sort is stable, so equal scores keep the newest-first
     // order the query already imposed.
     .toSorted((a, b) => b.score - a.score)
-    .slice(0, limit)
-    .map((s) => s.tx);
+    .slice(0, limit);
+
+  if (ranked.length === 0) return [];
+
+  // Pass two: the rows that survived, hydrated. At most `limit` of them.
+  const rows = await db.transaction.findMany({
+    where: { id: { in: ranked.map((s) => s.id) } },
+    include: SIMILAR_INCLUDE,
+  });
+
+  // Back into score order: `where: { id: { in: … } }` does not preserve the order
+  // of the list, and the ranking is the point of the feature.
+  // These rows are rendered by a client component, so they cannot carry `Decimal`.
+  const byId = new Map(rows.map((row) => [row.id, transactionMoney(row)]));
+  return ranked.map((s) => byId.get(s.id)).filter((row) => row !== undefined);
 }
 
 export type SimilarTransaction = Awaited<ReturnType<typeof getSimilarTransactions>>[number];
@@ -137,10 +167,7 @@ export async function getTransferGroupLegs(tx: { id: string; transferGroupId: st
   const legs = await db.transaction.findMany({
     where: { transferGroupId: tx.transferGroupId, id: { not: tx.id } },
     orderBy: [{ date: "desc" }, { id: "desc" }],
-    include: {
-      account: { select: { name: true, currency: true } },
-      merchant: { select: { name: true } },
-    },
+    include: MATCH_INCLUDE,
   });
   return legs.map(transactionMoney);
 }
@@ -199,10 +226,7 @@ export async function getTransferCandidates(
         account: { is: { currency } },
         date: window,
       },
-      include: {
-        account: { select: { name: true, currency: true } },
-        merchant: { select: { name: true } },
-      },
+      include: MATCH_INCLUDE,
     }),
     // Cross-currency counterparts: opposite-sign, different-account, different-
     // currency rows in the window. Scored below by same-instant conversion or by
@@ -216,10 +240,7 @@ export async function getTransferCandidates(
         date: window,
         account: { is: { currency: { not: currency } } },
       },
-      include: {
-        account: { select: { name: true, currency: true } },
-        merchant: { select: { name: true } },
-      },
+      include: MATCH_INCLUDE,
     }),
   ]);
 

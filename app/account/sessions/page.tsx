@@ -36,18 +36,18 @@ export default async function SessionsPage() {
  * membership-style direct reads of the auth tables are already how the invite
  * page and session guard work. `money_app` has SELECT on `Session`.
  *
- * Tokens are read but never leave the server: only the row id reaches the
- * client, and the revoke action resolves the token back from it.
+ * Tokens are never read: only the row id reaches the client, and the revoke
+ * action resolves the token from it. The current session is identified by id,
+ * not by token — selecting the token at all was wider than needed.
  */
 async function activeSessions(userId: string): Promise<SessionView[]> {
   const current = await getSession();
-  const currentToken = current?.session.token;
+  const currentId = current?.session.id;
 
   const rows = await authDb.session.findMany({
     where: { userId, expiresAt: { gt: new Date() } },
     select: {
       id: true,
-      token: true,
       ipAddress: true,
       userAgent: true,
       createdAt: true,
@@ -58,7 +58,7 @@ async function activeSessions(userId: string): Promise<SessionView[]> {
 
   return rows.map((row) => ({
     id: row.id,
-    current: row.token === currentToken,
+    current: row.id === currentId,
     device: describeUserAgent(row.userAgent),
     ip: row.ipAddress?.trim() ? row.ipAddress : "Unknown location",
     signedIn: formatDateTime(row.createdAt),

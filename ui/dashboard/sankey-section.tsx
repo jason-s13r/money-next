@@ -6,8 +6,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { SankeyDiagram } from "./sankey";
 
-// Active segment matches the app-wide inverted-pill selection (see balance-chart-legend).
-const ACTIVE_SEGMENT = "aria-pressed:bg-foreground aria-pressed:text-background";
+// Active segment matches the app-wide filled-pill selection (see balance-chart-legend).
+const ACTIVE_SEGMENT = "aria-pressed:bg-primary aria-pressed:text-primary-foreground";
 
 /**
  * One period's diagram, already built. The adapter reads a whole Comparison —

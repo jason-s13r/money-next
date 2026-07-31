@@ -1,12 +1,12 @@
 "use server";
 
-import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/server/auth";
 import { authDb } from "@/lib/server/db";
 import { getSession } from "@/lib/server/auth/session";
+import { apiErrorMessage, raw, text } from "@/lib/form-data";
 import { workspacePath } from "@/lib/workspace-path";
 import type { InviteState } from "./types";
 
@@ -68,9 +68,11 @@ export async function signUpFromInvite(
   _prev: InviteState,
   formData: FormData,
 ): Promise<InviteState> {
-  const id = String(formData.get("inviteId") ?? "");
-  const name = String(formData.get("name") ?? "").trim();
-  const password = String(formData.get("password") ?? "");
+  const id = text(formData, "inviteId");
+  const name = text(formData, "name");
+  // `raw`: the password is hashed as typed, so trimming here would create an
+  // account whose stored hash does not match what the user thinks they chose.
+  const password = raw(formData, "password");
 
   const invite = await liveInvite(id);
   if (!invite) return { error: "This invitation isn't valid any more." };
@@ -83,12 +85,7 @@ export async function signUpFromInvite(
       body: { email: invite.email, name, password },
     });
   } catch (error) {
-    // Includes the password-policy failure (12 characters, per lib/server/auth)
-    // and the unique-email collision, both of which are the user's to fix.
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not create your account." };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not create your account.") };
   }
 
   // Outside the try: `redirect` works by throwing, and a redirect swallowed by
@@ -101,7 +98,7 @@ export async function acceptInvite(
   _prev: InviteState,
   formData: FormData,
 ): Promise<InviteState> {
-  const id = String(formData.get("inviteId") ?? "");
+  const id = text(formData, "inviteId");
 
   const session = await getSession();
   if (!session) redirect(`/login?next=${encodeURIComponent(`/invite/${id}`)}`);
@@ -110,18 +107,12 @@ export async function acceptInvite(
   if (!invite) return { error: "This invitation isn't valid any more." };
 
   try {
-    // The email match, the pending check, the expiry, and the compare-and-set
-    // that makes redemption single-use all live inside here. The checks above
-    // are for rendering a decent message; this one is the control.
     await auth.api.acceptInvitation({
       headers: await headers(),
       body: { invitationId: id },
     });
   } catch (error) {
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not accept this invitation." };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not accept this invitation.") };
   }
 
   redirect(workspacePath(invite.workspace.slug, "/"));

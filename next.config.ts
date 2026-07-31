@@ -27,6 +27,20 @@ const nextConfig: NextConfig = {
           // transaction ids.
           { key: "Referrer-Policy", value: "same-origin" },
           { key: "X-Content-Type-Options", value: "nosniff" },
+          // Pin HTTPS for one year in production. Gated on the env so the
+          // `INSECURE_HTTP` dev/test path (a plain-HTTP container on localhost)
+          // does not send a header that would lock a browser to a scheme the
+          // next request cannot use.
+          ...(process.env.NODE_ENV === "production" && process.env.INSECURE_HTTP !== "true"
+            ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" }]
+            : []),
+          // A finance app has no legitimate use of camera, microphone, or
+          // geolocation. Deny them at the browser level rather than relying on
+          // the app never asking — cheap defense-in-depth.
+          {
+            key: "Permissions-Policy",
+            value: "camera=(), microphone=(), geolocation=()",
+          },
         ],
       },
     ];

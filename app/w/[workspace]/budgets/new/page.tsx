@@ -8,10 +8,10 @@ import { InferButton } from "./infer-button";
 // Inferring from history is offered first and deliberately: typing a household's
 // whole financial life into a form is an hour of work most people will not finish,
 // and nearly all of it is already in the transaction table. The inference reads that
-// history with a local AI, which is slow, so it runs in the background — the button
-// only sets it going and the finished budget turns up on the budgets list. The blank
-// form stays for the budgets history cannot know about — a holiday, a plan to spend
-// differently than you have been.
+// history with a local AI — either in a chat you can steer, or headlessly in the
+// background if you would rather not sit through it. The blank form stays for the
+// budgets history cannot know about — a holiday, a plan to spend differently than you
+// have been.
 
 export const metadata = { title: "New budget" };
 
@@ -25,8 +25,8 @@ export default function NewBudgetPage() {
           <CardTitle>Infer a budget with AI</CardTitle>
           <CardDescription>
             Read the last {INFER_MONTHS} months of transactions with a local AI and build a
-            budget from them — the recurring bills, the pay, the habits. It runs in the
-            background and can take a minute or two; check back on your budgets shortly.
+            budget from them — the recurring bills, the pay, the habits. Either way it takes
+            a minute or two.
           </CardDescription>
         </CardHeader>
         <CardContent>

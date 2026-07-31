@@ -141,12 +141,11 @@ async function seed(ws: string, link: string, tag: string) {
   await catalogDb.transactionLabel.create({
     data: { workspaceId: ws, transactionId: `trans_${tag}`, labelId: `app_label_${tag}` },
   });
-  // A budget, an item, and a forecast pointing at it. Same slug in both
-  // workspaces on purpose, for the reason the rule document above gives: it is
-  // the per-workspace unique constraint being proved, and an instance-wide one
-  // would make this second create throw.
+  // A budget, an item, and the budget marked as a forecast. The same *name* in
+  // both workspaces, which is fine and always was: a budget is identified by its id,
+  // and what is being proved here is that one workspace's client cannot see the other's.
   await catalogDb.budget.create({
-    data: { id: `budget_${tag}`, workspaceId: ws, name: "Everyday", slug: "everyday" },
+    data: { id: `budget_${tag}`, workspaceId: ws, name: "Everyday", forecast: true },
   });
   await catalogDb.budgetItem.create({
     data: {
@@ -159,16 +158,6 @@ async function seed(ws: string, link: string, tag: string) {
       categoryGroupId: GROUP,
       frequency: "month",
       anchorDate: new Date("2026-01-01T00:00:00Z"),
-    },
-  });
-  await catalogDb.forecast.create({
-    data: {
-      id: `forecast_${tag}`,
-      workspaceId: ws,
-      name: "Forecast",
-      slug: "forecast",
-      color: "var(--viz-1)",
-      budgetId: `budget_${tag}`,
     },
   });
   await catalogDb.fieldChange.create({
@@ -459,16 +448,13 @@ describe("a client scoped to A cannot see B", () => {
 
     // A budget is a statement about someone's intended finances — what they earn,
     // what they owe, and when — so it is every bit as disclosing as the ledger it
-    // is planned against, and the forecast built from it names the same budget.
+    // is planned against. The forecast flag is part of that budget.
     const budgets = await dbA.budget.findMany();
     assert.deepEqual(budgets.map((b) => b.id), [`budget_a`]);
+    assert.deepEqual(budgets.map((b) => b.forecast), [true]);
 
     const items = await dbA.budgetItem.findMany();
     assert.deepEqual(items.map((i) => i.name), ["Power bill a"]);
-
-    const forecasts = await dbA.forecast.findMany();
-    assert.deepEqual(forecasts.map((f) => f.id), [`forecast_a`]);
-    assert.deepEqual(forecasts.map((f) => f.budgetId), [`budget_a`]);
   });
 
   test("findUnique on B's id returns null — the IDOR case", async () => {
@@ -555,13 +541,6 @@ describe("Row-Level Security enforces isolation at the database, not just the ap
 
     const items = await asWorkspace<{ name: string }>(A, `SELECT name FROM "BudgetItem"`);
     assert.deepEqual(items.map((r) => r.name), ["Power bill a"]);
-
-    const forecasts = await asWorkspace<{ id: string; budgetId: string }>(
-      A,
-      `SELECT id, "budgetId" FROM "Forecast"`,
-    );
-    assert.deepEqual(forecasts.map((r) => r.id), ["forecast_a"]);
-    assert.deepEqual(forecasts.map((r) => r.budgetId), ["budget_a"]);
 
     // And fail closed with no scope set, like every other tenant table.
     const unscoped = await asWorkspace<{ count: number }>(null, `SELECT count(*)::int AS count FROM "Budget"`);

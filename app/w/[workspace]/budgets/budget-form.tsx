@@ -23,6 +23,7 @@ export type BudgetFormValues = {
   startsOn: string | null;
   endsOn: string | null;
   repeatsAnnually: boolean;
+  forecast: boolean;
 };
 
 /** `YYYY-MM-DD` for a date input, which is what the action parses back. */
@@ -156,6 +157,16 @@ export function BudgetForm({ budget }: { budget?: BudgetFormValues }) {
         endsOn={budget?.endsOn}
         repeatsAnnually={budget?.repeatsAnnually}
       />
+
+      <label className="flex items-start gap-2 text-sm">
+        <Checkbox name="forecast" checked={budget?.forecast} className="mt-0.5" />
+        <span>
+          Use this budget as a forecast
+          <span className="block text-xs text-muted">
+            Projects it forward on the dashboard balance chart and runway tiles.
+          </span>
+        </span>
+      </label>
 
       <div className="flex items-center gap-3">
         <Submit editing={Boolean(budget)} />

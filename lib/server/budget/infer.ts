@@ -21,7 +21,9 @@ import {
 import type { Frequency } from "../../budget/recurrence";
 import { describeRecurrence } from "../../budget/recurrence";
 import { periodKey } from "../../periods";
-import { inferViaLLM, isLlmAvailable } from "./llm";
+import { isLlmAvailable } from "../chat/client";
+import type { InferenceLog } from "./inference-log";
+import { inferViaLLM } from "./llm";
 
 // Reading a budget out of what already happened.
 //
@@ -75,6 +77,15 @@ export type BudgetProposal = {
   /** How many transactions went into it, recurring or not. */
   transactions: number;
   currency: string;
+  /** What to call it, in the words of whatever built it — the model names the budget
+   *  it just spent a conversation on, since it is the only thing here that knows what
+   *  ended up in it. Null from the deterministic path, which knows nothing but rows,
+   *  and from a model that never said; the caller supplies the fallback. */
+  name?: string | null;
+  /** Whether this is everything there was to propose, or just what had been proposed
+   *  when somebody watching the run's log asked it to stop. The caller needs the
+   *  difference to say why an empty proposal is empty. */
+  stopped?: boolean;
 };
 
 type Row = {
@@ -386,24 +397,33 @@ function detectItems(rows: Row[], now: Date): ProposedItem[] {
  * The model is preferred but never depended on: an endpoint that is unreachable, or
  * that fails partway through a run, drops through to `proposeBudgetFromHistory` so
  * the button that seeds a budget is never left broken by a model being down.
+ *
+ * `into` is the run's log, when it has one. Only the model path has a conversation to
+ * write into it, but *which path ran* is exactly what a log of the run should say —
+ * so the downgrade is recorded there as well as on the console.
  */
 export async function proposeBudget(
   db: ScopedDb,
   now: Date = new Date(),
+  into: InferenceLog | null = null,
 ): Promise<BudgetProposal> {
   if (await isLlmAvailable()) {
     try {
-      return await inferViaLLM(db, now);
+      return await inferViaLLM(db, now, into);
     } catch (error) {
       // Fall through to the deterministic path — a model that died mid-run must not
       // take the whole feature down with it — but say why in the worker log rather
       // than swallowing it, since a silent downgrade is exactly what hides a broken
       // model endpoint.
       const reason = error instanceof Error ? error.message : String(error);
-      console.log(`  [llm] inference failed (${reason}) — falling back to deterministic detection`);
+      const note = `inference failed (${reason}) — falling back to deterministic detection`;
+      console.log(`  [llm] ${note}`);
+      await into?.note(note);
     }
   } else {
-    console.log("  [budget] no LLM reachable — using deterministic detection");
+    const note = "no LLM reachable — using deterministic detection";
+    console.log(`  [budget] ${note}`);
+    await into?.note(note);
   }
   return proposeBudgetFromHistory(db, now);
 }

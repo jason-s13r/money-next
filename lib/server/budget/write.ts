@@ -1,5 +1,4 @@
 import { withScopedTx, type ScopedDb, type ScopedTx } from "../db";
-import { slugify } from "../../slug";
 import type { BudgetProposal, ProposedItem } from "./infer";
 
 // Turning a proposal into budget rows — the writes shared by the worker (which
@@ -68,19 +67,6 @@ export async function refreshInferred(
   });
 }
 
-/** A budget slug unique within the workspace, `-2`/`-3`… appended on collision.
- *  Takes the db so it works in the worker as well as a request. */
-export async function uniqueBudgetSlug(db: ScopedDb, name: string): Promise<string> {
-  const base = slugify(name) || "budget";
-  for (let n = 1; ; n++) {
-    const slug = n === 1 ? base : `${base}-${n}`;
-    // findFirst, not findUnique: a slug is unique only within a workspace, and the
-    // scoped client supplies the other half of that key.
-    const clash = await db.budget.findFirst({ where: { slug }, select: { id: true } });
-    if (!clash) return slug;
-  }
-}
-
 /**
  * Create a new inferred (locked) budget from a proposal, items and all, in one
  * transaction so it is never left half-seeded.
@@ -89,16 +75,15 @@ export async function createInferredBudget(
   db: ScopedDb,
   name: string,
   proposal: BudgetProposal,
-): Promise<{ id: string; slug: string }> {
-  const slug = await uniqueBudgetSlug(db, name);
+): Promise<{ id: string }> {
   const workspaceId = db.$workspaceId;
   return withScopedTx(db, async (tx) => {
     const budget = await tx.budget.create({
-      data: { workspaceId, name, slug, origin: "inferred" },
+      data: { workspaceId, name, origin: "inferred" },
     });
     await tx.budgetItem.createMany({
       data: proposal.items.map((item) => itemRow(item, workspaceId, budget.id, proposal.currency)),
     });
-    return { id: budget.id, slug };
+    return { id: budget.id };
   });
 }

@@ -57,7 +57,7 @@ export type HeroRunway = {
   runwayText: string;
   /** Pre-built burn phrase, e.g. "burning $3,400/mo" or "$820/mo to spare". */
   burnText: string;
-  /** Forecast income and expenses that net to the burn, for the tooltip. */
+  /** Planned income and expenses that net to the burn, for the tooltip. */
   burnBreakdown: { expenses: string; income: string; net: string } | null;
   /** CSS colour token for the pulsing dot — must match the chart line. */
   color: string;
@@ -103,15 +103,15 @@ export function Hero({
                         </span>
                       }
                     />
-                    {/* Spell out the arithmetic: the net burn is forecast expenses
-                        less the periodic income forecast to keep covering part of it. */}
+                    {/* Spell out the arithmetic: the net burn is planned expenses
+                        less the periodic income planned to keep covering part of it. */}
                     <PopoverContent className="flex flex-col gap-1 text-left text-secondary">
                       <span className="flex justify-between gap-6">
-                        <span>Forecast expenses</span>
+                        <span>Planned expenses</span>
                         <span className="tabular-nums">{r.burnBreakdown.expenses}</span>
                       </span>
                       <span className="flex justify-between gap-6">
-                        <span>Less periodic income</span>
+                        <span>Less planned income</span>
                         <span className="tabular-nums">−{r.burnBreakdown.income}</span>
                       </span>
                       <span className="mt-0.5 flex justify-between gap-6 border-t border-border pt-1 font-medium text-foreground">

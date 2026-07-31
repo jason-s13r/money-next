@@ -1,5 +1,6 @@
 import { PrismaPg } from "@prisma/adapter-pg";
 import { PrismaClient } from "../../generated/prisma/client";
+import { serialiseTransactions } from "./serialise";
 
 // The unscoped Prisma client. Internal to this directory on purpose.
 //
@@ -26,7 +27,11 @@ function createClient() {
   // The adapter owns a `pg` connection pool. A serverless deployment must point
   // DATABASE_URL at a pooler rather than the database directly, or concurrent
   // functions will exhaust Postgres' connection limit.
-  const adapter = new PrismaPg({ connectionString: databaseUrl! });
+  //
+  // Wrapped so each transaction runs its statements one at a time: every scoped
+  // query is a transaction here, and Prisma loads a query's relations
+  // concurrently onto that transaction's single connection — see ./serialise.
+  const adapter = serialiseTransactions(new PrismaPg({ connectionString: databaseUrl! }));
   return new PrismaClient({ adapter });
 }
 

@@ -4,6 +4,7 @@ import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { mintId } from "@/lib/ids";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
+import type { ScopedDb } from "@/lib/server/db";
 import { getLabels } from "@/lib/server/queries/lookups";
 
 /**
@@ -31,7 +32,7 @@ export async function listLabels() {
  * `workspaceId` check alone would not catch.
  */
 async function assertOwned(
-  db: Awaited<ReturnType<typeof getDb>>,
+  db: ScopedDb,
   transactionId: string,
   labelId: string,
 ) {

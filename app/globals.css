@@ -43,23 +43,45 @@
   /* Not a categorical slot: the de-emphasis grey for "we don't know yet". */
   --viz-unknown: #898781;
 
-  /* shadcn/ui component tokens (neutral base). The dark values live in `.dark`. */
+  /* The accent hue. `components.json` says `baseColor: neutral`, which is why every
+     shadcn token below used to be `oklch(x 0 0)` — zero chroma, grey chrome on a grey
+     page. The accent is not a new colour: it is the dataviz series blue (`--viz-1`)
+     brought into the chrome, so the interface and the charts agree rather than being
+     two unrelated palettes on one screen.
+
+     Blue rather than green on purpose. In a ledger green already *means* something —
+     `--status-good` and `--viz-2` are both green — and painting buttons and nav in it
+     would put "this is fine" and "this is a control" in the same colour. Blue is the
+     one hue here that carries no financial meaning.
+
+     Every value below is measured against the surface it lands on, not eyeballed.
+     `--viz-1` itself (#2a78d6) is 4.42:1 under white text — just under AA — so the
+     surface step is one darker. Ratios in the comments are white-on-colour unless
+     said otherwise. */
+  --accent-hue-600: #2a78d6; /* = --viz-1, used where 3:1 is the bar (rings) */
+  --accent-hue-700: #2266bd; /* 5.67:1 white-on-it; 5.67:1 as text on white */
+  --accent-hue-800: #1f5fae; /* 5.20:1 as text on the pale tint below */
+  --accent-hue-100: #dceafb; /* pale fill; 1.17:1 on the sidebar, so it reads as a pill */
+
+  /* shadcn/ui component tokens (neutral base, accented). The dark values live in `.dark`. */
   --card: oklch(1 0 0);
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
+  --primary: var(--accent-hue-700);
+  --primary-foreground: #ffffff;
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
   --muted: oklch(0.97 0 0);
   --muted-foreground: oklch(0.556 0 0);
-  --accent: oklch(0.97 0 0);
-  --accent-foreground: oklch(0.205 0 0);
+  --accent: var(--accent-hue-100);
+  --accent-foreground: var(--accent-hue-800);
   --destructive: oklch(0.577 0.245 27.325);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
+  /* A focus ring is not text: 3:1 against its surroundings is the bar, and 600 clears
+     it at 4.42:1 while staying the same blue as the series. */
+  --ring: var(--accent-hue-600);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -68,12 +90,14 @@
   --radius: 0.625rem;
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.97 0 0);
-  --sidebar-accent-foreground: oklch(0.205 0 0);
+  --sidebar-primary: var(--accent-hue-700);
+  --sidebar-primary-foreground: #ffffff;
+  /* Nav hover and the current page. The pale fill is 1.17:1 against the sidebar — a
+     pill you can see without it shouting — and carries 800 text at 5.20:1. */
+  --sidebar-accent: var(--accent-hue-100);
+  --sidebar-accent-foreground: var(--accent-hue-800);
   --sidebar-border: oklch(0.922 0 0);
-  --sidebar-ring: oklch(0.708 0 0);
+  --sidebar-ring: var(--accent-hue-600);
 }
 
 @theme inline {
@@ -156,23 +180,32 @@
   --viz-8: #d95926;
   --viz-unknown: #898781;
 
-  /* shadcn/ui component tokens (dark). */
+  /* The accent hue, stepped for the dark surface rather than flipped — the same rule
+     the dataviz palette above follows. On #0a0a0a the accent has to carry *light* text
+     colour and *dark* foreground on a filled control, so 700 and 800 swap ends: the
+     light steps do the work and near-black sits on top of them. */
+  --accent-hue-600: #5fa8f5; /* rings; 7.93:1 on the page */
+  --accent-hue-700: #7cb8f7; /* filled controls, 9.48:1 with #0a0a0a on it; 8.59:1 as text on a card */
+  --accent-hue-800: #9ccbf9; /* 7.28:1 as text on the tint below */
+  --accent-hue-100: #1b3557; /* pale-equivalent fill; 1.45:1 on the sidebar */
+
+  /* shadcn/ui component tokens (dark, accented). */
   --card: oklch(0.205 0 0);
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: var(--accent-hue-700);
+  --primary-foreground: #0a0a0a;
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
   --muted-foreground: oklch(0.708 0 0);
-  --accent: oklch(0.269 0 0);
-  --accent-foreground: oklch(0.985 0 0);
+  --accent: var(--accent-hue-100);
+  --accent-foreground: var(--accent-hue-800);
   --destructive: oklch(0.704 0.191 22.216);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --ring: var(--accent-hue-600);
   --chart-1: oklch(0.87 0 0);
   --chart-2: oklch(0.556 0 0);
   --chart-3: oklch(0.439 0 0);
@@ -180,12 +213,15 @@
   --chart-5: oklch(0.269 0 0);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
-  --sidebar-primary-foreground: oklch(0.985 0 0);
-  --sidebar-accent: oklch(0.269 0 0);
-  --sidebar-accent-foreground: oklch(0.985 0 0);
+  /* Was `oklch(0.488 0.243 264.376)` — the one chromatic token shadcn's neutral base
+     ships, a violet that belonged to no other colour on the page. Now the same blue as
+     everything else. */
+  --sidebar-primary: var(--accent-hue-700);
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: var(--accent-hue-100);
+  --sidebar-accent-foreground: var(--accent-hue-800);
   --sidebar-border: oklch(1 0 0 / 10%);
-  --sidebar-ring: oklch(0.556 0 0);
+  --sidebar-ring: var(--accent-hue-600);
 }
 
 body {

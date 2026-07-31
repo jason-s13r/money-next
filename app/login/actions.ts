@@ -1,11 +1,11 @@
 "use server";
 
-import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/server/auth";
 import { safeNext } from "@/lib/safe-next";
+import { apiErrorMessage, raw, text } from "@/lib/form-data";
 
 /**
  * Signing in, as a server action rather than a `fetch` from an event handler.
@@ -28,8 +28,10 @@ import { safeNext } from "@/lib/safe-next";
 export type LoginState = { error: string | null };
 
 export async function signIn(_prev: LoginState, formData: FormData): Promise<LoginState> {
-  const email = String(formData.get("email") ?? "");
-  const password = String(formData.get("password") ?? "");
+  const email = text(formData, "email");
+  // `raw`, not `text`: a trailing space in a password is part of the password,
+  // and trimming it here would refuse a credential the account was created with.
+  const password = raw(formData, "password");
   const next = safeNext(formData.get("next"));
 
   let twoFactor = false;
@@ -45,13 +47,7 @@ export async function signIn(_prev: LoginState, formData: FormData): Promise<Log
     // than throwing.
     twoFactor = "twoFactorRedirect" in result && result.twoFactorRedirect === true;
   } catch (error) {
-    // Better Auth answers identically for an unknown email and a wrong password.
-    // Pass its message through unembellished — a more helpful one here is how an
-    // instance tells a stranger who banks with it (T4).
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not sign in." };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not sign in.") };
   }
 
   // Outside the try/catch: `redirect` works by throwing, and catching it here

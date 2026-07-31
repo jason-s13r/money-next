@@ -18,6 +18,7 @@ import {
   catKey,
   dedupeProposedItems,
   parseModelContent,
+  parseToolArguments,
   resolveProposedItems,
   type Catalog,
 } from "../lib/budget/llm";
@@ -54,6 +55,37 @@ describe("parseModelContent unwraps whatever the model wrapped its items in", ()
     assert.deepEqual(parseModelContent("not json at all"), []);
     assert.deepEqual(parseModelContent(`{"nope":true}`), []);
     assert.deepEqual(parseModelContent("42"), []);
+  });
+});
+
+describe("parseToolArguments survives how a local model encodes a tool call", () => {
+  test("a plain arguments object", () => {
+    assert.deepEqual(parseToolArguments(`{"area":"Food","offset":400}`), {
+      area: "Food",
+      offset: 400,
+    });
+  });
+
+  test("no arguments at all is an empty object, not a failure", () => {
+    // list_spending_areas and finish both take none, and models send "", "{}" or null.
+    assert.deepEqual(parseToolArguments(""), {});
+    assert.deepEqual(parseToolArguments(undefined), {});
+    assert.deepEqual(parseToolArguments("{}"), {});
+  });
+
+  test("fenced arguments are unwrapped", () => {
+    assert.deepEqual(parseToolArguments('```json\n{"area":"Food"}\n```'), { area: "Food" });
+  });
+
+  test("double-encoded arguments are unwrapped once more", () => {
+    assert.deepEqual(parseToolArguments(JSON.stringify(`{"area":"Food"}`)), { area: "Food" });
+  });
+
+  test("anything that will not parse, or is not an object, is null", () => {
+    // Null is the signal to hand the model the error rather than throw.
+    assert.equal(parseToolArguments("{area: Food"), null);
+    assert.equal(parseToolArguments(`["Food"]`), null);
+    assert.equal(parseToolArguments("42"), null);
   });
 });
 

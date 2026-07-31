@@ -1,6 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 
+import { getDb } from "../../db/request";
 import { buildComparison } from "../comparison/build";
 import {
   UNKNOWN_MERCHANT,
@@ -199,6 +200,7 @@ export async function getBudgetVsActual(
   now: Date = new Date(),
 ): Promise<BudgetVsActual> {
   await connection();
+  const db = await getDb();
 
   const [budget, elapsedBudget, actual, available] = await Promise.all([
     buildBudgetComparison(budgetIds, period, count, offset, now),
@@ -206,7 +208,7 @@ export async function getBudgetVsActual(
     // on `clipToNow`: measuring a part-elapsed month against a whole month's plan
     // reports a large underspend every month until it ends.
     buildBudgetComparison(budgetIds, period, count, offset, now, { clipToNow: true }),
-    buildComparison(period, count, offset, now),
+    buildComparison(db, period, count, offset, now),
     budgetsInWindow(period, count, offset, now),
   ]);
 

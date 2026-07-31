@@ -16,7 +16,8 @@ import {
 import { authClient } from "@/lib/auth-client";
 import type { BuildInfo } from "@/lib/server/build-info";
 import { BuildStamp } from "@/ui/chrome/build-stamp";
-import { ThemeItems, initials } from "@/ui/chrome/app-sidebar";
+import { initials } from "@/ui/chrome/nav-user";
+import { ThemeItems } from "@/ui/chrome/theme-items";
 import {
   Sidebar,
   SidebarContent,

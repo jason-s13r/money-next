@@ -1,10 +1,10 @@
 "use server";
 
-import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/server/auth";
+import { apiErrorMessage, raw } from "@/lib/form-data";
 import { type ResetState } from "./types";
 
 /**
@@ -24,8 +24,10 @@ import { type ResetState } from "./types";
  * — which is the point of keeping the link short-lived and single-use.
  */
 export async function resetPassword(_prev: ResetState, formData: FormData): Promise<ResetState> {
-  const token = String(formData.get("token") ?? "");
-  const password = String(formData.get("password") ?? "");
+  // Both `raw`: the token is a credential compared byte-for-byte, and the
+  // password is hashed as typed. Neither is a field to tidy up on the way past.
+  const token = raw(formData, "token");
+  const password = raw(formData, "password");
 
   if (!token) {
     // A form with no token can't reset anything — this is the link-was-mangled
@@ -39,12 +41,7 @@ export async function resetPassword(_prev: ResetState, formData: FormData): Prom
       body: { token, newPassword: password },
     });
   } catch (error) {
-    // Covers the expired/used/unknown token (INVALID_TOKEN) and the 12-character
-    // policy — both the user's to act on, so they belong on the page.
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not reset your password." };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not reset your password.") };
   }
 
   // Outside the try: `redirect` works by throwing, and catching it here would

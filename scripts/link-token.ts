@@ -35,6 +35,7 @@ let withScopedTx: typeof import("../lib/server/db").withScopedTx;
 import { encryptSecret, hasEncryptionKey, tokenAad } from "../lib/server/secrets";
 import { hasSealKey, isSealed, sealSecret } from "../lib/server/seal";
 import { askPastedSecret, askYesNo, promptSession } from "./read-secret";
+import { runScript } from "./_bootstrap";
 
 type Args = {
   list: boolean;
@@ -358,18 +359,4 @@ async function main() {
   return args.link ? updateLink(args) : createLink(args);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // This script owns its process, so it owns the disconnect. (A server action
-    // must never do this — see docs/multi-user.md.)
-    //
-    // Optional, because `--help` returns before `main` imports the database layer
-    // and `catalogDb` is still unbound — which made `pnpm link:token --help` exit
-    // 1 with a TypeError on the one machine most likely to run it: the one that
-    // is not configured yet, which is the whole reason the lazy import exists.
-    await catalogDb?.$disconnect();
-  });
+runScript(main, () => catalogDb?.$disconnect());

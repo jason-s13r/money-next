@@ -30,8 +30,10 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 
-# LLM inference transcripts (LLM_LOG_DIR) — contain raw transaction data, never commit
+# LLM inference transcripts left over from before a run logged itself into a chat
+# thread — they contain raw transaction data, so keep ignoring them
 budget-inference-*.log
+logs/
 
 # env files (can opt-in for committing if needed)
 .env*
@@ -62,3 +64,10 @@ classify.rules.json
 .pnpm-store/
 *.dump
 /logs/
+
+# vendored agent skill docs — third-party, not ours to redistribute
+.agents/
+skills-lock.json
+
+# internal working notes, not part of the published project
+internal/

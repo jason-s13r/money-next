@@ -7,6 +7,7 @@ import { activeOn, occurrencesIn, type Frequency, type Lifespan } from "../../..
 import {
   DAYS_PER_MONTH,
   PROJECTION_DAYS,
+  SCENARIO_COLORS,
   walkProjection,
   type ProjectionScenario,
 } from "../../../budget/projection";
@@ -33,14 +34,14 @@ export {
 // statement that every month costs the same, which is false for anyone who has a
 // Christmas, an annual insurance premium or a fortnightly wage, and it is exactly
 // the thing a budget already knows better. So this walks day by day instead,
-// summing the occurrences of every item in a forecast's budget, and the line bends
+// summing the occurrences of every item in a forecast budget, and the line bends
 // where the money actually moves.
 //
-// A forecast is one *base* budget, named, projected forward together with that
-// base's date-active layers: a Christmas layer lands its extra spend only across
-// the days its own window covers. Income is whatever the base contains: an
-// emergency or worst-case line is a budget with the income items removed, not a
-// toggle here — which is why there is no `includeIncome` any more.
+// A forecast scenario is one *base* budget whose `forecast` flag is true, projected
+// forward together with that base's date-active layers: a Christmas layer lands its
+// extra spend only across the days its own window covers. Income is whatever the base
+// contains: an emergency or worst-case line is a budget with the income items
+// removed, not a toggle here — which is why there is no `includeIncome` any more.
 //
 // Nothing here writes, and nothing here invents a forecast. A workspace with none
 // gets `[]`, and the dashboard simply draws no forward line until one is made.
@@ -70,13 +71,13 @@ type BudgetRow = {
 };
 
 /**
- * Every forecast in the workspace, projected forward from today's accessible
+ * Every forecast budget in the workspace, projected forward from today's accessible
  * balance.
  *
- * Empty when the workspace has no forecasts. That is not an error and must not be
- * repaired here: a read that quietly created a forecast would make the dashboard's
- * first load a write, and would put a plan in front of someone they never agreed
- * to. The dashboard simply draws no forward line until one exists.
+ * Empty when the workspace has no base budgets marked `forecast: true`. That is not
+ * an error and must not be repaired here: a read that quietly created a forecast would
+ * make the dashboard's first load a write, and would put a plan in front of someone
+ * they never agreed to. The dashboard simply draws no forward line until one exists.
  */
 export async function getForecastProjections(
   balances: BalanceSummary,
@@ -89,6 +90,7 @@ export async function getForecastProjections(
   // The same shape for the base and for each of its layers, so both expand through
   // one code path below.
   const budgetSelect = {
+    id: true,
     name: true,
     startsOn: true,
     endsOn: true,
@@ -104,16 +106,12 @@ export async function getForecastProjections(
     },
   } as const;
 
-  const rows = await db.forecast.findMany({
-    orderBy: [{ position: "asc" }, { name: "asc" }],
+  const rows = await db.budget.findMany({
+    where: { forecast: true, baseBudgetId: null },
+    orderBy: [{ createdAt: "asc" }, { name: "asc" }],
     select: {
-      id: true,
-      slug: true,
-      name: true,
-      color: true,
-      // A forecast projects a base; its layers come along by relation and add their
-      // extra spend on the days their own windows cover.
-      budget: { select: { ...budgetSelect, layers: { select: budgetSelect } } },
+      ...budgetSelect,
+      layers: { select: budgetSelect },
     },
   });
   if (rows.length === 0) return [];
@@ -122,8 +120,8 @@ export async function getForecastProjections(
   const toDisplay = await displayConverter(
     display,
     rows.flatMap((s) => [
-      ...s.budget.items.map((i) => i.currency),
-      ...s.budget.layers.flatMap((l) => l.items.map((i) => i.currency)),
+      ...s.items.map((i) => i.currency),
+      ...s.layers.flatMap((l) => l.items.map((i) => i.currency)),
     ]),
   );
 
@@ -149,9 +147,9 @@ export async function getForecastProjections(
     items: b.items.map((item) => ({ ...item, amount: money(item.amount) })),
   });
 
-  return rows.map((row) => {
-    const base = toBudgetRow(row.budget);
-    const layers = row.budget.layers.map(toBudgetRow);
+  return rows.map((row, index) => {
+    const base = toBudgetRow(row);
+    const layers = row.layers.map(toBudgetRow);
 
     const nets = new Array<number>(days).fill(0);
     const outs = new Array<number>(days).fill(0);
@@ -218,9 +216,8 @@ export async function getForecastProjections(
 
     return {
       id: row.id,
-      slug: row.slug,
       name: row.name,
-      color: row.color,
+      color: SCENARIO_COLORS[index % SCENARIO_COLORS.length],
       budgets: contributors,
       blendedDays,
       ...walkProjection(nets, outs, ins, balances.accessible, from),

@@ -26,6 +26,7 @@
 // See the note in list-workspaces.ts: every import here is dynamic, and a file
 // with no static import or export is not a module.
 export {};
+import { runScript } from "./_bootstrap";
 
 /** Set once the database is actually imported, so `--help` never opens a client. */
 let disconnect: (() => Promise<void>) | null = null;
@@ -79,11 +80,4 @@ async function main() {
   console.log(`Renamed ${user.email}: "${user.name}" → "${args.name}".`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await disconnect?.();
-  });
+runScript(main, () => disconnect?.());

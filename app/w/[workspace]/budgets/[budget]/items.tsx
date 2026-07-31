@@ -126,9 +126,13 @@ export function BudgetItems({
                       <span className="flex min-w-0 flex-col gap-0.5">
                         <span className="flex items-center gap-2">
                           <span className="truncate">{item.name}</span>
-                          {/* Only while the row is still an untouched guess: it goes
-                              the moment someone edits the figure. */}
-                          {item.inferred ? (
+                          {/* Whose figure this is, for as long as it is still theirs.
+                              A seeded guess, or one a model proposed in chat — which
+                              is not a guess (nothing may overwrite it) but is still
+                              the model's, and worth saying so beside. It goes when
+                              somebody retypes the amount by hand, because
+                              `updateBudgetItem` clears the provenance with it. */}
+                          {item.inferred || item.inferredSource ? (
                             <ProvenanceBadge source={item.inferredSource} basis={item.basis} />
                           ) : null}
                         </span>
@@ -165,8 +169,8 @@ export function BudgetItems({
 }
 
 /**
- * The badge on a still-guessed item: what produced its figure, and — in a popover
- * — the reason the seeder gave for it.
+ * The badge on an item nobody has retyped: what produced its figure, and — in a
+ * popover — the reason given for it.
  *
  * "AI" for a row the local model named, "Computed" for one the deterministic
  * detector found (including where the model failed for a group and the detector

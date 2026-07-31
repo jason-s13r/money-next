@@ -47,6 +47,8 @@ let enqueueSync: typeof import("../lib/server/queue").enqueueSync;
 // the global scope and collide with the next script's.
 export {};
 
+import { runScript } from "./_bootstrap";
+
 type Args = {
   full: boolean;
   days?: number;
@@ -340,13 +342,4 @@ async function main() {
   );
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // This script owns its process, so it owns the disconnect. `catalogDb` is
-    // undefined if we exited at `--help`, before the import.
-    await catalogDb?.$disconnect();
-  });
+runScript(main, () => catalogDb?.$disconnect());

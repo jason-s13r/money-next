@@ -25,8 +25,8 @@ export async function generateMetadata(props: PageProps<"/w/[workspace]/budgets/
 }
 
 export default async function BudgetPage(props: PageProps<"/w/[workspace]/budgets/[budget]">) {
-  const slug = (await props.params).budget;
-  const budget = await getBudget(slug);
+  const id = (await props.params).budget;
+  const budget = await getBudget(id);
   if (!budget) notFound();
 
   const [groups, categories, merchants, runs, allBudgets] = await Promise.all([
@@ -48,7 +48,7 @@ export default async function BudgetPage(props: PageProps<"/w/[workspace]/budget
 
   // A re-infer of this budget in flight: its items are about to be rebuilt by the
   // worker, so keep the page pulling until the run settles and they update.
-  const reinferring = runs.some((r) => r.budgetSlug === slug && r.status !== "failed");
+  const reinferring = runs.some((r) => r.budgetId === id && r.status !== "failed");
 
   const lifespan = lifespanOf(budget);
   const now = new Date();
@@ -107,7 +107,7 @@ export default async function BudgetPage(props: PageProps<"/w/[workspace]/budget
       {isLayer && budget.base ? (
         <p className="mt-1 text-sm text-muted">
           Layer of{" "}
-          <Link href={`/budgets/${budget.base.slug}`} className="underline">
+          <Link href={`/budgets/${budget.base.id}`} className="underline">
             {budget.base.name}
           </Link>{" "}
           — its amounts stack on top while this window is live.
@@ -152,6 +152,7 @@ export default async function BudgetPage(props: PageProps<"/w/[workspace]/budget
               startsOn: budget.startsOn ? budget.startsOn.toISOString().slice(0, 10) : null,
               endsOn: budget.endsOn ? budget.endsOn.toISOString().slice(0, 10) : null,
               repeatsAnnually: budget.repeatsAnnually,
+              forecast: budget.forecast,
             }}
           />
         </CardContent>

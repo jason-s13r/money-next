@@ -30,6 +30,7 @@
  */
 import { decryptSecret, hasEncryptionKey } from "../lib/server/secrets";
 import { hasSealKey, isSealed, sealSecret, tokenAad } from "../lib/server/seal";
+import { runScript } from "./_bootstrap";
 
 // Bound in `main`, after the `--help` check: lib/server/db throws at module scope
 // without DATABASE_URL, and the machine whose operator is reading `--help` is
@@ -218,14 +219,4 @@ async function main() {
   );
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // This script owns its process, so it owns the disconnect — and `catalogDb`
-    // is only bound once `main` has imported the database layer, which a `--help`
-    // run never does.
-    await catalogDb?.$disconnect();
-  });
+runScript(main, () => catalogDb?.$disconnect());

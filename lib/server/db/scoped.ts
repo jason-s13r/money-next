@@ -43,13 +43,17 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "TransactionLabel",
   "Budget",
   "BudgetItem",
-  "Forecast",
   "BudgetInferenceRun",
   "RuleDocument",
   "RuleRun",
   "FieldChange",
   "SyncState",
   "SyncRun",
+  // Workspace-scoped like the rest. The *further* narrowing to one user — a chat
+  // thread is private to its author — is application code in
+  // lib/server/queries/chat.ts, because RLS only knows the workspace.
+  "ChatThread",
+  "ChatMessage",
 ]);
 
 /**
@@ -312,23 +316,41 @@ export function withScopedTx<T>(db: ScopedDb, fn: (tx: ScopedTx) => Promise<T>):
 }
 
 /**
- * Run a ready array of scoped writes as one atomic, pipelined transaction with
- * the RLS variable set once at its head.
+ * Run a ready array of scoped operations as one pipelined transaction with the
+ * RLS variable set once at its head, and hand back their results in order.
  *
- * The batch counterpart to `withScopedTx`, for the ingest steps that build a page
- * of upserts up front and commit them together (`syncTransactions`,
- * `syncPendingTransactions`). The ops are built from the scoped client as before;
- * this prepends the `set_config` as the batch's first statement and runs the whole
- * batch inside the `inScopedTx` context, so the per-operation wrapper stands down
- * and every op executes on the one connection where the variable is set. That the
- * async context reaches Prisma's internal batch execution — so the wrapper does
- * not nest a transaction inside the batch — is verified against the database.
+ * The batch counterpart to `withScopedTx`, for the groups that are known up front
+ * and have no logic between them. The ops are built from the scoped client as
+ * before; this prepends the `set_config` as the batch's first statement and runs
+ * the whole batch inside the `inScopedTx` context, so the per-operation wrapper
+ * stands down and every op executes on the one connection where the variable is
+ * set. That the async context reaches Prisma's internal batch execution — so the
+ * wrapper does not nest a transaction inside the batch — is verified against the
+ * database.
+ *
+ * **Reads belong here as much as writes.** The ingest's pages of upserts were the
+ * original caller, but the reason is not that they are writes: it is that the
+ * per-operation wrapper turns each *separate* query into its own BEGIN / set /
+ * query / COMMIT, so a listing page firing three reads in a `Promise.all` pays
+ * four statements apiece for what is one round trip here. A read batch also gets
+ * something the fan-out cannot have at any price: all of it sees one snapshot, so
+ * a page and the total it is counted against can no longer disagree because a row
+ * arrived between them.
+ *
+ * The `set_config` result is stripped before returning, so callers see exactly the
+ * ops they passed, in order and individually typed. The cast is doing real work
+ * and is the reason this is worth a function: `$transaction` types its result from
+ * the tuple it is given, and prepending a statement shifts every index by one.
  */
-export function scopedBatch(db: ScopedDb, ops: Prisma.PrismaPromise<unknown>[]) {
-  return inScopedTx.run(true, () =>
+export async function scopedBatch<T extends readonly Prisma.PrismaPromise<unknown>[]>(
+  db: ScopedDb,
+  ops: T,
+): Promise<{ -readonly [K in keyof T]: Awaited<T[K]> }> {
+  const results = await inScopedTx.run(true, () =>
     db.$transaction([
       db.$executeRaw`SELECT set_config('app.workspace_id', ${db.$workspaceId}, true)`,
       ...ops,
     ]),
   );
+  return results.slice(1) as { -readonly [K in keyof T]: Awaited<T[K]> };
 }

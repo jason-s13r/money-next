@@ -44,6 +44,205 @@ function defended(source: string | undefined): boolean {
   return source === "user" || source === "rule";
 }
 
+/**
+ * The mutable accumulators a page's transactions share — the per-transaction
+ * reconcile step collects into these, and the caller commits them in one batch
+ * after the whole page is processed.
+ *
+ * A bag of `Map`s and arrays passed by reference is not the prettiest interface,
+ * but it is the honest one: the whole point of the loop is that a page's rows
+ * contribute to *shared* collections which are then committed together, and a
+ * version that returned a value per transaction would only have the caller merge
+ * it back into these same structures.
+ */
+type ReconcileContext = {
+  priorById: Map<string, {
+    id: string;
+    categoryId: string | null;
+    category: { name: string } | null;
+    categorySource: string;
+    merchantId: string | null;
+    merchant: { name: string } | null;
+    merchantSource: string;
+  }>;
+  conflictByKey: Map<string, import("../../generated/prisma/client").TransactionConflict>;
+  isEnriched: (tx: AkahuTransaction) => tx is Extract<AkahuTransaction, { category: unknown }>;
+  merchants: Map<string, { id: string; name: string; website: string | null; logo: string | null }>;
+  categoryGroups: Map<string, string>;
+  categories: Map<string, { id: string; name: string; direction: string; groupId: string | null }>;
+  txOps: Prisma.PrismaPromise<unknown>[];
+  conflictOps: Prisma.PrismaPromise<unknown>[];
+  newIds: string[];
+  changes: FieldChangeEntry[];
+  db: ScopedDb;
+};
+
+/**
+ * Fold one transaction from a sync page into the page's pending writes.
+ *
+ * Builds the row, reconciles the fields the user owns against what Akahu now
+ * says, and collects the merchants, categories and groups the row references so
+ * they can be backed before it. Nothing is written here — everything lands in
+ * `ctx` and the caller commits the page as one batch.
+ */
+function reconcileTransaction(tx: AkahuTransaction, ctx: ReconcileContext): void {
+  const {
+    priorById,
+    conflictByKey,
+    isEnriched,
+    merchants,
+    categoryGroups,
+    categories,
+    txOps,
+    conflictOps,
+    newIds,
+    changes,
+    db,
+  } = ctx;
+
+  const date = new Date(tx.date);
+  const enriched = isEnriched(tx) ? tx : undefined;
+  // Only reference a merchant we can also store, so `merchantId` never points at
+  // a Merchant row that was never created.
+  const merchant = enriched?.merchant;
+  const merchantId = merchant?._id && merchant.name ? merchant._id : null;
+  if (merchantId) {
+    merchants.set(merchantId, {
+      id: merchantId,
+      name: merchant!.name,
+      website: merchant!.website ?? null,
+      logo: enriched?.meta?.logo ?? null,
+    });
+  }
+
+  // Akahu nests the group under a scheme key (`personal_finance`); the value
+  // holds the *real* group id and name. An uncategorised inflow carries no
+  // group, so it falls back to the invented "Other Income" group — except a
+  // transfer, which is money moving between the user's own accounts, not
+  // income, so it gets no invented group (only a real one Akahu supplies).
+  // `linkTransferLegs` clears the group on manually-linked transfers for the
+  // same reason.
+  const groupEntry = enriched?.category?.groups
+    ? Object.values(enriched.category.groups)[0]
+    : undefined;
+  const incomeFallback = tx.amount > 0 && tx.type !== "TRANSFER";
+  const categoryGroupId =
+    groupEntry?._id ?? (incomeFallback ? OTHER_INCOME_GROUP._id : null);
+  const categoryGroupName =
+    groupEntry?.name ?? (incomeFallback ? OTHER_INCOME_GROUP.name : null);
+  if (categoryGroupId && categoryGroupName) {
+    categoryGroups.set(categoryGroupId, categoryGroupName);
+  }
+  // Back the category too, with `direction` inferred from the amount sign.
+  const category = enriched?.category;
+  if (category?._id && category.name) {
+    categories.set(category._id, {
+      id: category._id,
+      name: category.name,
+      direction: tx.amount < 0 ? "debit" : "credit",
+      groupId: categoryGroupId,
+    });
+  }
+
+  const conversion = enriched?.meta?.conversion;
+  const row = {
+    accountId: tx._account,
+    connectionId: tx._connection,
+    date,
+    description: tx.description,
+    amount: tx.amount,
+    balance: tx.balance ?? null,
+    type: tx.type,
+    hash: tx.hash ?? null,
+    merchantId,
+    categoryId: enriched?.category?._id ?? null,
+    categoryGroupId,
+    particulars: enriched?.meta?.particulars ?? null,
+    code: enriched?.meta?.code ?? null,
+    reference: enriched?.meta?.reference ?? null,
+    otherAccount: enriched?.meta?.other_account ?? null,
+    cardSuffix: enriched?.meta?.card_suffix ?? null,
+    conversionAmount: conversion?.amount ?? null,
+    conversionCurrency: conversion?.currency ?? null,
+    conversionRate: conversion?.rate ?? null,
+    logo: enriched?.meta?.logo ?? null,
+    createdAt: tx.created_at ? new Date(tx.created_at) : null,
+    updatedAt: tx.updated_at ? new Date(tx.updated_at) : null,
+  };
+
+  // A user-owned field is left exactly as the user set it: drop it from the
+  // update payload, and instead reconcile it into a conflict. `source` itself is
+  // never written here — only the server action promotes a field to `user`, and a
+  // new row defaults to `akahu`.
+  const prior = priorById.get(tx._id);
+  const update: Record<string, unknown> = { ...row };
+
+  if (defended(prior?.categorySource)) {
+    delete update.categoryId;
+    delete update.categoryGroupId;
+    const op = reconcileConflict(
+      db,
+      "category",
+      tx._id,
+      prior!.categorySource,
+      prior!.categoryId,
+      prior!.category?.name ?? null,
+      row.categoryId,
+      enriched?.category?.name ?? null,
+      conflictByKey.get(`${tx._id}:category`),
+    );
+    if (op) conflictOps.push(op);
+  } else if (prior && prior.categoryId !== row.categoryId) {
+    // Not a refused write, an accepted one: the field was Akahu's to set and
+    // Akahu changed its mind. The conflict above is the other outcome — the
+    // write we declined — and declining to write is not a change, so it logs
+    // nothing here. The user's own edit is already in the log, and is what
+    // explains how the conflict came to exist.
+    changes.push({
+      transactionId: tx._id,
+      field: "category",
+      fromId: prior.categoryId,
+      fromLabel: prior.category?.name ?? null,
+      toId: row.categoryId,
+      toLabel: enriched?.category?.name ?? null,
+    });
+  }
+
+  if (defended(prior?.merchantSource)) {
+    delete update.merchantId;
+    const op = reconcileConflict(
+      db,
+      "merchant",
+      tx._id,
+      prior!.merchantSource,
+      prior!.merchantId,
+      prior!.merchant?.name ?? null,
+      row.merchantId,
+      merchant?.name ?? null,
+      conflictByKey.get(`${tx._id}:merchant`),
+    );
+    if (op) conflictOps.push(op);
+  } else if (prior && prior.merchantId !== row.merchantId) {
+    changes.push({
+      transactionId: tx._id,
+      field: "merchant",
+      fromId: prior.merchantId,
+      fromLabel: prior.merchant?.name ?? null,
+      toId: row.merchantId,
+      toLabel: merchant?.name ?? null,
+    });
+  }
+
+  if (!prior) newIds.push(tx._id);
+  txOps.push(
+    db.transaction.upsert({
+      where: { id: tx._id },
+      create: { id: tx._id, workspaceId: db.$workspaceId, ...row },
+      update: update as Prisma.TransactionUpdateInput,
+    }),
+  );
+}
+
 export async function syncTransactions(
   db: ScopedDb,
   link: { id: string; workspaceId: string },
@@ -136,159 +335,32 @@ export async function syncTransactions(
     // recorded by the row itself (`syncedAt`, and a `source` of `akahu`).
     const changes: FieldChangeEntry[] = [];
 
+    const ctx: ReconcileContext = {
+      priorById,
+      conflictByKey,
+      isEnriched,
+      merchants,
+      categoryGroups,
+      categories,
+      txOps,
+      conflictOps,
+      newIds,
+      changes,
+      db,
+    };
+
     for (const tx of page.items) {
-      // A transaction can outlive the account it belonged to; inserting it
-      // would violate the foreign key, so drop it rather than fail the run.
-      if (!knownAccountIds.has(tx._account)) {
+      // A transaction can outlive the account it belonged to; inserting it would
+      // violate the foreign key, so drop it rather than fail the run.
+      if (knownAccountIds.has(tx._account)) {
+        reconcileTransaction(tx, ctx);
+        synced++;
+        syncedIds.push(tx._id);
+        const date = new Date(tx.date);
+        if (!newest || date > newest) newest = date;
+      } else {
         skipped++;
-        continue;
       }
-
-      const date = new Date(tx.date);
-      if (!newest || date > newest) newest = date;
-
-      const enriched = isEnriched(tx) ? tx : undefined;
-      // Only reference a merchant we can also store, so `merchantId` never points
-      // at a Merchant row that was never created.
-      const merchant = enriched?.merchant;
-      const merchantId = merchant?._id && merchant.name ? merchant._id : null;
-      if (merchantId) {
-        merchants.set(merchantId, {
-          id: merchantId,
-          name: merchant!.name,
-          website: merchant!.website ?? null,
-          logo: enriched?.meta?.logo ?? null,
-        });
-      }
-
-      // Akahu nests the group under a scheme key (`personal_finance`); the value
-      // holds the *real* group id and name. An uncategorised inflow carries no
-      // group, so it falls back to the invented "Other Income" group — except a
-      // transfer, which is money moving between the user's own accounts, not
-      // income, so it gets no invented group (only a real one Akahu supplies).
-      // `linkTransferLegs` clears the group on manually-linked transfers for the
-      // same reason.
-      const groupEntry = enriched?.category?.groups
-        ? Object.values(enriched.category.groups)[0]
-        : undefined;
-      const incomeFallback = tx.amount > 0 && tx.type !== "TRANSFER";
-      const categoryGroupId =
-        groupEntry?._id ?? (incomeFallback ? OTHER_INCOME_GROUP._id : null);
-      const categoryGroupName =
-        groupEntry?.name ?? (incomeFallback ? OTHER_INCOME_GROUP.name : null);
-      if (categoryGroupId && categoryGroupName) {
-        categoryGroups.set(categoryGroupId, categoryGroupName);
-      }
-      // Back the category too, with `direction` inferred from the amount sign.
-      const category = enriched?.category;
-      if (category?._id && category.name) {
-        categories.set(category._id, {
-          id: category._id,
-          name: category.name,
-          direction: tx.amount < 0 ? "debit" : "credit",
-          groupId: categoryGroupId,
-        });
-      }
-
-      const conversion = enriched?.meta?.conversion;
-      const row = {
-        accountId: tx._account,
-        connectionId: tx._connection,
-        date,
-        description: tx.description,
-        amount: tx.amount,
-        balance: tx.balance ?? null,
-        type: tx.type,
-        hash: tx.hash ?? null,
-        merchantId,
-        categoryId: enriched?.category?._id ?? null,
-        categoryGroupId,
-        particulars: enriched?.meta?.particulars ?? null,
-        code: enriched?.meta?.code ?? null,
-        reference: enriched?.meta?.reference ?? null,
-        otherAccount: enriched?.meta?.other_account ?? null,
-        cardSuffix: enriched?.meta?.card_suffix ?? null,
-        conversionAmount: conversion?.amount ?? null,
-        conversionCurrency: conversion?.currency ?? null,
-        conversionRate: conversion?.rate ?? null,
-        logo: enriched?.meta?.logo ?? null,
-        createdAt: tx.created_at ? new Date(tx.created_at) : null,
-        updatedAt: tx.updated_at ? new Date(tx.updated_at) : null,
-      };
-
-      // A user-owned field is left exactly as the user set it: drop it from the
-      // update payload, and instead reconcile it into a conflict. `source` itself
-      // is never written here — only the server action promotes a field to
-      // `user`, and a new row defaults to `akahu`.
-      const prior = priorById.get(tx._id);
-      const update: Record<string, unknown> = { ...row };
-
-      if (defended(prior?.categorySource)) {
-        delete update.categoryId;
-        delete update.categoryGroupId;
-        const op = reconcileConflict(
-          db,
-          "category",
-          tx._id,
-          prior!.categorySource,
-          prior!.categoryId,
-          prior!.category?.name ?? null,
-          row.categoryId,
-          enriched?.category?.name ?? null,
-          conflictByKey.get(`${tx._id}:category`),
-        );
-        if (op) conflictOps.push(op);
-      } else if (prior && prior.categoryId !== row.categoryId) {
-        // Not a refused write, an accepted one: the field was Akahu's to set and
-        // Akahu changed its mind. The conflict above is the other outcome — the
-        // write we declined — and declining to write is not a change, so it logs
-        // nothing here. The user's own edit is already in the log, and is what
-        // explains how the conflict came to exist.
-        changes.push({
-          transactionId: tx._id,
-          field: "category",
-          fromId: prior.categoryId,
-          fromLabel: prior.category?.name ?? null,
-          toId: row.categoryId,
-          toLabel: enriched?.category?.name ?? null,
-        });
-      }
-
-      if (defended(prior?.merchantSource)) {
-        delete update.merchantId;
-        const op = reconcileConflict(
-          db,
-          "merchant",
-          tx._id,
-          prior!.merchantSource,
-          prior!.merchantId,
-          prior!.merchant?.name ?? null,
-          row.merchantId,
-          merchant?.name ?? null,
-          conflictByKey.get(`${tx._id}:merchant`),
-        );
-        if (op) conflictOps.push(op);
-      } else if (prior && prior.merchantId !== row.merchantId) {
-        changes.push({
-          transactionId: tx._id,
-          field: "merchant",
-          fromId: prior.merchantId,
-          fromLabel: prior.merchant?.name ?? null,
-          toId: row.merchantId,
-          toLabel: merchant?.name ?? null,
-        });
-      }
-
-      synced++;
-      syncedIds.push(tx._id);
-      if (!prior) newIds.push(tx._id);
-      txOps.push(
-        db.transaction.upsert({
-          where: { id: tx._id },
-          create: { id: tx._id, workspaceId: db.$workspaceId, ...row },
-          update: update as Prisma.TransactionUpdateInput,
-        }),
-      );
     }
 
     // Resolve the dated ingestion label the first time a page brings new rows, so

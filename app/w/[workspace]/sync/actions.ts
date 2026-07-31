@@ -6,6 +6,7 @@ import { getDb } from "@/lib/server/db/request";
 import { enqueueSync } from "@/lib/server/queue";
 import { hasSealKey, sealSecret, tokenAad } from "@/lib/server/seal";
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
+import { text } from "@/lib/form-data";
 import { NOT_SAVED, type ConnectBankState } from "./types";
 
 /**
@@ -36,7 +37,7 @@ export async function connectBank(
   // from editors is not (T9).
   const ctx = await requireRole({ bankLink: ["create"] });
 
-  const name = String(formData.get("name") ?? "").trim();
+  const name = text(formData, "name");
   if (!name) return fail("Give this connection a name.");
 
   const pair = readPair(formData);
@@ -108,7 +109,7 @@ export async function replaceBankTokens(
 ): Promise<ConnectBankState> {
   await requireRole({ bankLink: ["create"] });
 
-  const linkId = String(formData.get("linkId") ?? "").trim();
+  const linkId = text(formData, "linkId");
   if (!linkId) return fail("Which connection?");
 
   const pair = readPair(formData);
@@ -148,8 +149,8 @@ type Pair = { appToken: string; userToken: string };
  * unfamiliar token shape should be stored and tried, not refused by us.
  */
 function readPair(formData: FormData): Pair | ConnectBankState {
-  const appToken = String(formData.get("appToken") ?? "").trim();
-  const userToken = String(formData.get("userToken") ?? "").trim();
+  const appToken = text(formData, "appToken");
+  const userToken = text(formData, "userToken");
 
   if (!appToken || !userToken) return fail("Both tokens are required.");
   if (appToken.startsWith("user_token") || userToken.startsWith("app_token")) {

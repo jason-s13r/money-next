@@ -1,9 +1,14 @@
-import "server-only";
-import { descriptionTokens } from "../../matching/matching";
+import { descriptionTokens } from "../../matching/tokens";
 
 // Turning one correct, hand-classified transaction into a durable rule: derive a
 // match predicate from its stable text (the same tokenisation that powers the
 // "similar transactions" list — see `descriptionTokens`).
+//
+// No `import "server-only"`: the chat's rules tools derive predicates too, and they
+// sit in a module graph the worker's budget inference loads, where `server-only`
+// throws. Nothing here touches a request — it is string work on a description — so
+// the guard was never doing anything but marking the file's neighbourhood. The
+// tokeniser moved to matching/tokens.ts for the same reason.
 
 // Common banking boilerplate that carries no identity — stripped so the predicate
 // keys on the distinctive part of a description ("countdown", "i.r.d") rather than

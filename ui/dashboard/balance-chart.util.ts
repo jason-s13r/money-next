@@ -28,7 +28,7 @@ export const DEFAULT_RANGE = "9M";
 
 // Entity → colour. A subset of the app's validated categorical slots, one per
 // entity, never cycled: net worth cool, an up day green, a down day orange.
-// Projections are not here — each forecast scenario carries its own stored
+// Projections are not here — each forecast budget carries its own derived
 // colour, so it keeps it when a neighbour is added or deleted.
 export const C_WORTH = "var(--viz-1)";
 export const C_UP = "var(--viz-2)";

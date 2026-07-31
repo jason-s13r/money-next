@@ -1,6 +1,6 @@
-import { getDb } from "../../db/request";
 import { INCOME_GROUP_IDS, INCOME_GROUP_NAMES } from "../../../categories";
-import { displayConverter, getDisplayCurrency } from "../../currency";
+import { displayFxFor } from "../../budget/fx";
+import type { ScopedDb } from "../../db";
 import { money, moneySum } from "../../money";
 import { fetchCutoff, periodKey, periodWindow, type Period } from "../../../periods";
 import {
@@ -39,13 +39,21 @@ const blank = (key: string, currentKey: string): PeriodBreakdown => ({
   partial: key === currentKey,
 });
 
+/**
+ * The comparison, against a passed-in scoped client rather than the request's.
+ *
+ * The db is a parameter because this no longer runs only under a request: a chat turn
+ * is detached from the one that started it (see lib/server/chat/run.ts), so by the time
+ * a model asks for these figures there is no ambient request to resolve a client from.
+ * The pages pass `getDb()` — see ./index.
+ */
 export async function buildComparison(
+  db: ScopedDb,
   period: Period,
   count: number,
   offset = 0,
   now: Date = new Date(),
 ): Promise<Comparison> {
-  const db = await getDb();
   // Only the window's rows are ever bucketed — every other row falls through the
   // `periods.get(key)` miss below — so don't read them. The bound is deliberately
   // generous and `offset` is folded into the count so that paging back still
@@ -73,11 +81,9 @@ export async function buildComparison(
     },
   });
 
-  const display = await getDisplayCurrency();
-  const toDisplay = await displayConverter(
-    display,
-    rows.map((r) => r.account.currency),
-  );
+  // The worker-safe converter, which makes the same display-currency choice and applies
+  // the same nearest-rate-on-or-before-the-day rule as the request-side one it replaced.
+  const { toDisplay } = await displayFxFor(db);
 
   const groupRows = await db.categoryGroup.findMany({ select: { id: true, name: true } });
   const groupName = new Map(groupRows.map((g) => [g.id, g.name]));

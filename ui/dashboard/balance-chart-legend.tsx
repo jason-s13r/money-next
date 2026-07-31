@@ -15,11 +15,13 @@ export type LegendItem = {
   popover?: { note: string; rows: LegendPopoverRow[] };
 };
 
-// The active segment keeps the app-wide "inverted pill" treatment (foreground on
-// background) rather than the toggle's default muted fill — on a near-white card
-// muted-on-white barely reads, and every other filter row in the app marks its
-// selection this way. tailwind-merge lets these win over the variant's defaults.
-const ACTIVE_SEGMENT = "aria-pressed:bg-foreground aria-pressed:text-background";
+// The active segment keeps the app-wide filled-pill treatment rather than the toggle's
+// default muted fill — on a near-white card muted-on-white barely reads, and every other
+// filter row in the app marks its selection this way. `primary` rather than the
+// `foreground`/`background` inversion it used to be: what is selected is the same kind
+// of statement as the current nav item, and should be the same colour as it.
+// tailwind-merge lets these win over the variant's defaults.
+const ACTIVE_SEGMENT = "aria-pressed:bg-primary aria-pressed:text-primary-foreground";
 
 export function BalanceChartLegend({
   legend,

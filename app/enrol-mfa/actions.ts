@@ -1,10 +1,10 @@
 "use server";
 
-import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { auth } from "@/lib/server/auth";
+import { apiErrorMessage, raw, text } from "@/lib/form-data";
 
 /**
  * TOTP enrolment, in two server actions.
@@ -21,7 +21,8 @@ export type EnrolState = {
 
 /** Step 1: mint a secret and backup codes. Nothing is enforced until step 2. */
 export async function start(_prev: EnrolState, formData: FormData): Promise<EnrolState> {
-  const password = String(formData.get("password") ?? "");
+  // `raw`: verified against the stored hash, so it must arrive as typed.
+  const password = raw(formData, "password");
 
   try {
     const data = await auth.api.enableTwoFactor({
@@ -36,12 +37,7 @@ export async function start(_prev: EnrolState, formData: FormData): Promise<Enro
     const secret = new URL(data.totpURI).searchParams.get("secret") ?? "";
     return { error: null, started: { secret, codes: data.backupCodes } };
   } catch (error) {
-    // Asking for the password is Better Auth's rule and a good one: it means a
-    // borrowed unlocked laptop cannot quietly add an attacker's authenticator.
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not start enrolment.", started: null };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not start enrolment."), started: null };
   }
 }
 
@@ -53,23 +49,21 @@ export async function start(_prev: EnrolState, formData: FormData): Promise<Enro
  * someone out of their own account.
  */
 export async function confirm(_prev: EnrolState, formData: FormData): Promise<EnrolState> {
-  const code = String(formData.get("code") ?? "").trim();
+  const code = text(formData, "code");
 
   // Carried through the round trip so a failed code doesn't lose the codes the
-  // user is midway through writing down.
-  const secret = String(formData.get("secret") ?? "");
+  // user is midway through writing down. `raw`, because it is the TOTP shared
+  // secret going back out into a QR code — it round-trips untouched or not at all.
+  const secret = raw(formData, "secret");
   const codes = formData.getAll("codes").map(String);
 
   try {
     await auth.api.verifyTOTP({ headers: await headers(), body: { code } });
   } catch (error) {
-    if (error instanceof APIError) {
-      return {
-        error: error.body?.message ?? "That code didn't work. Check your app's clock.",
-        started: { secret, codes },
-      };
-    }
-    throw error;
+    return {
+      error: apiErrorMessage(error, "That code didn't work. Check your app's clock."),
+      started: { secret, codes },
+    };
   }
 
   redirect("/");

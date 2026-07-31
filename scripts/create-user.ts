@@ -34,6 +34,7 @@
 import { ROLES, isRole, type Role } from "../lib/server/auth/roles";
 import { addMembership, resolveWorkspace } from "./membership";
 import { readPasswordTwice } from "./read-secret";
+import { runScript } from "./_bootstrap";
 
 /** Set once the database is actually imported, so `--help` never opens a client. */
 let disconnect: (() => Promise<void>) | null = null;
@@ -126,13 +127,4 @@ async function main() {
   console.log(`${args.role} of "${workspace.name}" — /w/${workspace.slug}`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // This script owns its process, so it owns the disconnect. (A server action
-    // must never do this — see docs/multi-user.md.)
-    await disconnect?.();
-  });
+runScript(main, () => disconnect?.());

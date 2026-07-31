@@ -1,12 +1,12 @@
 "use server";
 
-import { APIError } from "better-auth/api";
 import { headers } from "next/headers";
 import { revalidatePath } from "next/cache";
 
 import { auth } from "@/lib/server/auth";
 import { authDb } from "@/lib/server/db";
 import { requireUser } from "@/lib/server/auth/session";
+import { apiErrorMessage, raw, text } from "@/lib/form-data";
 import { IDLE, type AccountState, type ProfileState } from "./types";
 
 /**
@@ -27,8 +27,11 @@ import { IDLE, type AccountState, type ProfileState } from "./types";
  * the form turns into a confirmation.
  */
 export async function changePassword(_prev: AccountState, formData: FormData): Promise<AccountState> {
-  const currentPassword = String(formData.get("currentPassword") ?? "");
-  const newPassword = String(formData.get("newPassword") ?? "");
+  // `raw`, not `text`: whitespace at either end of a password is part of it. The
+  // current one must reach the verifier exactly as it was typed when the hash was
+  // made, and the new one must be stored as typed rather than quietly altered.
+  const currentPassword = raw(formData, "currentPassword");
+  const newPassword = raw(formData, "newPassword");
 
   try {
     await auth.api.changePassword({
@@ -44,12 +47,7 @@ export async function changePassword(_prev: AccountState, formData: FormData): P
       },
     });
   } catch (error) {
-    // The wrong current password, and the 12-character policy on the new one,
-    // both arrive here — both the user's to fix, so they belong on the page.
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not change your password.", ok: false };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not change your password."), ok: false };
   }
 
   return { ...IDLE, ok: true };
@@ -76,8 +74,8 @@ export async function changePassword(_prev: AccountState, formData: FormData): P
 export async function updateProfile(_prev: ProfileState, formData: FormData): Promise<ProfileState> {
   const user = await requireUser();
 
-  const name = String(formData.get("name") ?? "").trim();
-  const email = String(formData.get("email") ?? "").trim().toLowerCase();
+  const name = text(formData, "name");
+  const email = text(formData, "email").toLowerCase();
 
   if (!name) return { error: "A name is required.", ok: false };
   if (!email) return { error: "An email address is required.", ok: false };
@@ -90,12 +88,7 @@ export async function updateProfile(_prev: ProfileState, formData: FormData): Pr
       await auth.api.changeEmail({ headers: await headers(), body: { newEmail: email } });
     }
   } catch (error) {
-    // A malformed address and the "same email" refusal both land here — both the
-    // user's to fix, so they belong on the page.
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not update your details.", ok: false };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not update your details."), ok: false };
   }
 
   // The header greeting and the form's own defaults are rendered from the user
@@ -118,7 +111,7 @@ export async function updateProfile(_prev: ProfileState, formData: FormData): Pr
 export async function revokeSession(_prev: AccountState, formData: FormData): Promise<AccountState> {
   const user = await requireUser();
 
-  const sessionId = String(formData.get("sessionId") ?? "");
+  const sessionId = text(formData, "sessionId");
 
   const target = await authDb.session.findFirst({
     where: { id: sessionId, userId: user.id },
@@ -129,10 +122,7 @@ export async function revokeSession(_prev: AccountState, formData: FormData): Pr
   try {
     await auth.api.revokeSession({ headers: await headers(), body: { token: target.token } });
   } catch (error) {
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not sign that device out.", ok: false };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not sign that device out."), ok: false };
   }
 
   revalidatePath("/account");
@@ -154,10 +144,7 @@ export async function revokeOtherSessions(
   try {
     await auth.api.revokeOtherSessions({ headers: await headers() });
   } catch (error) {
-    if (error instanceof APIError) {
-      return { error: error.body?.message ?? "Could not sign the other devices out.", ok: false };
-    }
-    throw error;
+    return { error: apiErrorMessage(error, "Could not sign the other devices out."), ok: false };
   }
 
   revalidatePath("/account");

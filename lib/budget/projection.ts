@@ -2,8 +2,8 @@
 //
 // Pure, like its neighbours here: numbers in, numbers out, no database and no
 // request context. That split is what lets the arithmetic be tested directly —
-// `lib/server/metrics/budget/forecast.ts` is the half that reads the scenarios
-// and expands their budgets, and it has nothing to say about the shape of the
+// `lib/server/metrics/budget/forecast.ts` is the half that reads the forecast
+// budgets and expands them, and it has nothing to say about the shape of the
 // answer that this file does not.
 
 /** The average calendar month, for turning a daily walk into a monthly rate. */
@@ -20,10 +20,11 @@ export const DAYS_PER_MONTH = 365.25 / 12;
 export const PROJECTION_DAYS = 730;
 
 /**
- * The palette new forecasts are assigned from, in order.
+ * The palette forecast budgets are coloured from, in order.
  *
- * Stored on the row at creation (see `Forecast.color`) rather than derived from
- * position, so deleting one does not recolour the rest.
+ * Colour is derived from a budget's position in the forecast list at read time,
+ * not stored on the row, so the palette is kept here as the single source of
+ * truth for both the projection engine and the UI legend.
  */
 export const SCENARIO_COLORS = [
   "var(--viz-1)",
@@ -51,11 +52,10 @@ export type ProjectionPoint = { day: number; worth: number };
 
 export type ProjectionScenario = {
   id: string;
-  slug: string;
   name: string;
   /** The `--viz-*` token for this forecast's line, swatch and tile. */
   color: string;
-  /** The budget this forecast projects, by name, so the legend can say where a
+  /** The budget this scenario projects, by name, so the legend can say where a
    *  spike came from. An array of one — kept plural so the legend formatting that
    *  joined several names still reads, and so a future multi-budget view is a data
    *  change, not a type change. */

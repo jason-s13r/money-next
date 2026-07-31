@@ -26,24 +26,27 @@ export async function linkTransfer(sourceId: string, targetId: string) {
 
   const db = await getDb();
 
-  // The log call lives here rather than inside `linkTransferLegs`, which is
-  // shared with the rules auto-linker and so cannot know whether a person or a
-  // rule is asking — and `source` is the whole point of the log. Each caller
-  // attributes its own; the shared function stays mechanical.
+  // What the log entries say is decided here rather than inside
+  // `linkTransferLegs`, which is shared with the rules auto-linker and so cannot
+  // know whether a person or a rule is asking — and `source` is the whole point
+  // of the log. Each caller attributes its own; the shared function stays
+  // mechanical. Handed *down* as a callback so the entries commit in the same
+  // transaction as the grouping they describe.
   const legs = await db.transaction.findMany({
     where: { id: { in: [sourceId, targetId] } },
     select: { id: true, description: true },
   });
   const describe = (id: string) => legs.find((l) => l.id === id)?.description ?? null;
 
-  if (!(await linkTransferLegs(db, sourceId, targetId))) return;
-
   // Both legs, because a transfer is a fact about both of them: opening either
   // transaction should show how it came to be part of this transfer.
-  await recordUserChanges(db, [
-    { transactionId: sourceId, field: "transfer", toLabel: describe(targetId) },
-    { transactionId: targetId, field: "transfer", toLabel: describe(sourceId) },
-  ]);
+  const linked = await linkTransferLegs(db, sourceId, targetId, (tx) =>
+    recordUserChanges(tx, [
+      { transactionId: sourceId, field: "transfer", toLabel: describe(targetId) },
+      { transactionId: targetId, field: "transfer", toLabel: describe(sourceId) },
+    ]),
+  );
+  if (!linked) return;
 
   await revalidateWorkspacePath(`/transactions/${sourceId}`);
   await revalidateWorkspacePath(`/transactions/${targetId}`);
@@ -122,33 +125,41 @@ export async function unlinkTransfer(transactionId: string) {
 
   // A one-leg "transfer" is meaningless: release the straggler and drop the group.
   const releasesOthers = others.length <= 1;
-  // One atomic transaction with the RLS variable set once (see withScopedTx).
-  await withScopedTx(db, async (tx) => {
-    await tx.transaction.update({ where: { id: transactionId }, data: { transferGroupId: null } });
+  // One atomic transaction with the RLS variable set once (see withScopedTx). The
+  // log goes in it too: a row saying a leg left a transfer, written after the
+  // release that failed to commit, is a lie the log has no way to retract.
+  await withScopedTx(db, async (scoped) => {
+    await scoped.transaction.update({
+      where: { id: transactionId },
+      data: { transferGroupId: null },
+    });
     if (releasesOthers) {
-      await tx.transaction.updateMany({ where: { transferGroupId: groupId }, data: { transferGroupId: null } });
-      await tx.transferGroup.delete({ where: { id: groupId } });
+      await scoped.transaction.updateMany({
+        where: { transferGroupId: groupId },
+        data: { transferGroupId: null },
+      });
+      await scoped.transferGroup.delete({ where: { id: groupId } });
     }
-  });
 
-  // The unlinked leg, plus any straggler this released — a leg that falls out of
-  // a transfer because the group collapsed did have its field changed, even
-  // though nobody clicked on it, and the log's job is to explain exactly that
-  // kind of change when someone later asks why.
-  await recordUserChanges(db, [
-    {
-      transactionId,
-      field: "transfer",
-      fromLabel: others.map((o) => o.description).join(", ") || null,
-    },
-    ...(releasesOthers
-      ? others.map((o) => ({
-          transactionId: o.id,
-          field: "transfer" as const,
-          fromLabel: tx.description,
-        }))
-      : []),
-  ]);
+    // The unlinked leg, plus any straggler this released — a leg that falls out
+    // of a transfer because the group collapsed did have its field changed, even
+    // though nobody clicked on it, and the log's job is to explain exactly that
+    // kind of change when someone later asks why.
+    await recordUserChanges(scoped, [
+      {
+        transactionId,
+        field: "transfer",
+        fromLabel: others.map((o) => o.description).join(", ") || null,
+      },
+      ...(releasesOthers
+        ? others.map((o) => ({
+            transactionId: o.id,
+            field: "transfer" as const,
+            fromLabel: tx.description,
+          }))
+        : []),
+    ]);
+  });
 
   await revalidateWorkspacePath(`/transactions/${transactionId}`);
   for (const o of others) await revalidateWorkspacePath(`/transactions/${o.id}`);

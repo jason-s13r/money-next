@@ -18,6 +18,7 @@
  * stays out of shell history and the process list (same as create-user.ts).
  */
 import { readPasswordTwice } from "./read-secret";
+import { runScript } from "./_bootstrap";
 
 /** Set once the database is actually imported, so `--help` never opens a client. */
 let disconnect: (() => Promise<void>) | null = null;
@@ -91,14 +92,4 @@ async function main() {
   console.log(`Password set for ${user.email}. Any other sessions keep working — sign them out separately if that matters.`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // This script owns its process, so it owns the disconnect — but only if a
-    // client was ever opened. (A server action must never do this — see
-    // docs/multi-user.md.)
-    await disconnect?.();
-  });
+runScript(main, () => disconnect?.());

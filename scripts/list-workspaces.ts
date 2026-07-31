@@ -32,6 +32,7 @@
 // global scope and collide with the identically-named ones in its sibling
 // scripts. This makes it a module and does nothing else.
 export {};
+import { runScript } from "./_bootstrap";
 
 /** Set once the database is actually imported, so `--help` never opens a client. */
 let disconnect: (() => Promise<void>) | null = null;
@@ -105,11 +106,4 @@ async function main() {
   }
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await disconnect?.();
-  });
+runScript(main, () => disconnect?.());

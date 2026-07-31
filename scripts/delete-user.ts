@@ -32,6 +32,7 @@
  * worse than stopping.
  */
 import { promptSession } from "./read-secret";
+import { runScript } from "./_bootstrap";
 
 /** Set once the database is actually imported, so `--help` never opens a client. */
 let disconnect: (() => Promise<void>) | null = null;
@@ -133,11 +134,4 @@ async function main() {
   console.log(`Deleted ${user.email}.`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await disconnect?.();
-  });
+runScript(main, () => disconnect?.());

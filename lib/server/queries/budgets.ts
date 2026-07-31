@@ -2,6 +2,7 @@ import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
 
+import { requireWorkspace } from "../auth/session";
 import { getDb } from "../db/request";
 import { convert, FALLBACK_DISPLAY_CURRENCY as DISPLAY_CURRENCY, loadRates } from "../currency";
 import { money } from "../money";
@@ -44,16 +45,17 @@ export type BudgetItemView = {
 };
 
 /** A base or layer this budget relates to, for the detail page's links. */
-export type BudgetRelative = { slug: string; name: string };
+export type BudgetRelative = { id: string; name: string };
 
 export type BudgetView = {
   id: string;
-  slug: string;
   name: string;
   startsOn: Date | null;
   endsOn: Date | null;
   repeatsAnnually: boolean;
   origin: string;
+  /** Whether this base budget is projected forward on the dashboard. */
+  forecast: boolean;
   /** Null when this budget is itself a base; set to the base it layers onto. */
   baseBudgetId: string | null;
   /** The base's name, when this is a layer, for the "Layer of …" line. */
@@ -168,7 +170,6 @@ function monthlyTotals(items: BudgetItemView[], lifespan: Lifespan, now: Date) {
 
 export type BudgetSummary = {
   id: string;
-  slug: string;
   name: string;
   origin: string;
   /** Null when this budget is a base; set to the base it layers onto, so the index
@@ -177,6 +178,8 @@ export type BudgetSummary = {
   startsOn: Date | null;
   endsOn: Date | null;
   repeatsAnnually: boolean;
+  /** Whether this base budget is projected forward on the dashboard. */
+  forecast: boolean;
   items: number;
   /** Average per month over the coming year, in the display currency. */
   monthlyIn: number;
@@ -200,13 +203,13 @@ export const getBudgets = cache(async (now: Date = new Date()): Promise<BudgetSu
     orderBy: [{ startsOn: { sort: "asc", nulls: "first" } }, { name: "asc" }],
     select: {
       id: true,
-      slug: true,
       name: true,
       origin: true,
       baseBudgetId: true,
       startsOn: true,
       endsOn: true,
       repeatsAnnually: true,
+      forecast: true,
       items: { select: itemSelect },
     },
   });
@@ -225,13 +228,13 @@ export const getBudgets = cache(async (now: Date = new Date()): Promise<BudgetSu
 
     return {
       id: budget.id,
-      slug: budget.slug,
       name: budget.name,
       origin: budget.origin,
       baseBudgetId: budget.baseBudgetId,
       startsOn: budget.startsOn,
       endsOn: budget.endsOn,
       repeatsAnnually: budget.repeatsAnnually,
+      forecast: budget.forecast,
       items: budget.items.length,
       monthlyIn: income,
       monthlyOut: spend,
@@ -240,30 +243,29 @@ export const getBudgets = cache(async (now: Date = new Date()): Promise<BudgetSu
   });
 });
 
-/** One budget by its slug, with every item. Null when the slug names none. */
-export const getBudget = cache(async (slug: string): Promise<BudgetView | null> => {
+/** One budget by its id, with every item. Null when the id names none — including
+ *  when it names another workspace's, which the scoped client makes the same thing. */
+export const getBudget = cache(async (id: string): Promise<BudgetView | null> => {
   await connection();
   const db = await getDb();
 
-  // findFirst, not findUnique: the slug is unique only *within* a workspace, and
-  // the scoped client supplies the other half of that key.
   const budget = await db.budget.findFirst({
-    where: { slug },
+    where: { id },
     select: {
       id: true,
-      slug: true,
       name: true,
       startsOn: true,
       endsOn: true,
       repeatsAnnually: true,
       origin: true,
+      forecast: true,
       baseBudgetId: true,
       // The base this layers onto (for a layer), and this base's own layers (for a
       // base) — the links the detail page draws between the two.
-      base: { select: { slug: true, name: true } },
+      base: { select: { id: true, name: true } },
       layers: {
         orderBy: [{ startsOn: { sort: "asc", nulls: "first" } }, { name: "asc" }],
-        select: { slug: true, name: true },
+        select: { id: true, name: true },
       },
       items: {
         orderBy: [{ categoryGroup: { name: "asc" } }, { name: "asc" }],
@@ -297,7 +299,11 @@ export type InferenceRunView = {
   error: string | null;
   /** The budget being refreshed, for a re-infer; null for a create still in flight. */
   budgetName: string | null;
-  budgetSlug: string | null;
+  budgetId: string | null;
+  /** The conversation the run is writing its log into, when it is *this* person's to
+   *  read. Null for a run someone else asked for, and for one old enough to predate
+   *  the log — the run row is shared with the household, the log is not. */
+  logThreadId: string | null;
 };
 
 /**
@@ -309,6 +315,7 @@ export type InferenceRunView = {
  */
 export const getBudgetInferenceRuns = cache(async (): Promise<InferenceRunView[]> => {
   await connection();
+  const { user } = await requireWorkspace();
   const db = await getDb();
   const rows = await db.budgetInferenceRun.findMany({
     where: { status: { in: ["queued", "running", "failed"] } },
@@ -318,7 +325,9 @@ export const getBudgetInferenceRuns = cache(async (): Promise<InferenceRunView[]
       status: true,
       startedAt: true,
       error: true,
-      budget: { select: { name: true, slug: true } },
+      userId: true,
+      threadId: true,
+      budget: { select: { id: true, name: true } },
     },
   });
   return rows.map((r) => ({
@@ -327,7 +336,12 @@ export const getBudgetInferenceRuns = cache(async (): Promise<InferenceRunView[]
     startedAt: r.startedAt.getTime(),
     error: r.error,
     budgetName: r.budget?.name ?? null,
-    budgetSlug: r.budget?.slug ?? null,
+    budgetId: r.budget?.id ?? null,
+    // The same rule the thread itself is under: a chat belongs to the person who
+    // caused it, and the rest of the household sees the run without the link. Handing
+    // out the id would only produce a 404 from `getChatThread` anyway — this is so the
+    // page does not offer a link that cannot work.
+    logThreadId: r.userId === user.id ? r.threadId : null,
   }));
 });
 

@@ -4,7 +4,7 @@ import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
 import { enqueueRules } from "@/lib/server/queue";
-import { defaultDecisionGraph } from "@/lib/server/rules/engine";
+import { editRuleGraph } from "@/lib/server/rules/document";
 import {
   deriveMatch,
   upsertLearnedRule,
@@ -12,61 +12,23 @@ import {
   setTransferAutoLink,
   type Graph,
 } from "@/lib/server/rules/learning";
-import { slugify } from "@/lib/slug";
 import type { GenerateRuleResult } from "./types";
 
-// Server actions behind `/rules`. The rules *engine* lives in lib/server/rules.ts
-// and the graph read/write helpers in lib/server/rule-learning.ts; this file is
-// the thin request-side layer that loads the one active decision document,
-// mutates its graph, and revalidates the page.
+// Server actions behind `/rules`. The rules *engine* lives in lib/server/rules/engine
+// and the graph read/write helpers in lib/server/rules/learning; this file is the thin
+// request-side layer that mutates the one active decision document and revalidates the
+// page.
+//
+// Finding (and creating) that document moved to lib/server/rules/document.ts once the
+// chat's rules tools became a second writer — a chat turn is detached from its request
+// and holds its own scoped client, so it cannot use a helper that reaches for an
+// ambient one. The revalidation stays here: it is `server-only`, and it is the half
+// that is genuinely about being in a request.
 
-/** A slug unique across documents, `-2`/`-3`… appended on collision. */
-async function uniqueSlug(name: string): Promise<string> {
-  const db = await getDb();
-  const base = slugify(name) || "rules";
-  let slug = base;
-  for (let n = 2; ; n++) {
-    // findFirst, not findUnique: a slug is only unique within a workspace now,
-    // and the scoped client supplies the workspace half of that key.
-    if (!(await db.ruleDocument.findFirst({ where: { slug } }))) return slug;
-    slug = `${base}-${n}`;
-  }
-}
-
-/**
- * The single active rule document, created (and activated) on first use so the
- * feature works from a standing start. Only one document is ever active; the app
- * no longer exposes multiple, but the schema still allows them, so this also
- * demotes any stragglers when it creates one.
- */
-async function getOrCreateActiveDocument() {
-  const db = await getDb();
-  const existing = await db.ruleDocument.findFirst({ where: { active: true } });
-  if (existing) return existing;
-
-  const doc = await db.ruleDocument.create({
-    data: {
-      workspaceId: db.$workspaceId,
-      name: "Automations",
-      slug: await uniqueSlug("Automations"),
-      content: JSON.stringify(defaultDecisionGraph()),
-      active: true,
-    },
-  });
-  await db.ruleDocument.updateMany({
-    where: { id: { not: doc.id }, active: true },
-    data: { active: false },
-  });
-  return doc;
-}
-
-/** Load the active graph, hand it to `mutate`, and persist the result. */
+/** Load the active graph, hand it to `mutate`, persist it, and refresh the page. */
 async function editActiveGraph(mutate: (graph: Graph) => void) {
   const db = await getDb();
-  const doc = await getOrCreateActiveDocument();
-  const graph = JSON.parse(doc.content) as Graph;
-  mutate(graph);
-  await db.ruleDocument.update({ where: { id: doc.id }, data: { content: JSON.stringify(graph) } });
+  await editRuleGraph(db, mutate);
   await revalidateWorkspacePath("/rules");
 }
 
@@ -147,14 +109,14 @@ export async function generateRuleFromTransaction(
     };
   }
 
-  const doc = await getOrCreateActiveDocument();
-  const graph = JSON.parse(doc.content) as Graph;
-  const { merged } = upsertLearnedRule(graph, match, {
-    categoryId: tx.categoryId,
-    merchantId: tx.merchantId,
-    label: tx.merchant?.name ?? tx.category?.name ?? undefined,
+  let merged = false;
+  await editRuleGraph(db, (graph) => {
+    merged = upsertLearnedRule(graph, match, {
+      categoryId: tx.categoryId,
+      merchantId: tx.merchantId,
+      label: tx.merchant?.name ?? tx.category?.name ?? undefined,
+    }).merged;
   });
-  await db.ruleDocument.update({ where: { id: doc.id }, data: { content: JSON.stringify(graph) } });
 
   // `mode: "insensitive"` is what makes this count *true*, not just consistent.
   // The rule itself matches on `contains(lower(description), …)` (see

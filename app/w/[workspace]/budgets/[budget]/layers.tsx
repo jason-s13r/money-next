@@ -16,7 +16,7 @@ import { NO_ERROR, type BudgetActionState } from "../types";
 // live. Shown on the base's own page, because that is where "and on top of this,
 // each December…" belongs.
 
-export type LayerRef = { slug: string; name: string };
+export type LayerRef = { id: string; name: string };
 
 export function BudgetLayers({ baseId, layers }: { baseId: string; layers: LayerRef[] }) {
   const canEdit = useCanEdit();
@@ -28,15 +28,15 @@ export function BudgetLayers({ baseId, layers }: { baseId: string; layers: Layer
       <h2 className="text-sm font-medium">Layers</h2>
       <p className="mt-1 text-xs text-muted">
         Extra spending stacked on top of this base while its own dates are live — and
-        included in any forecast of this base.
+        included when this base is used as a forecast.
       </p>
 
       {layers.length > 0 ? (
         <ul className="mt-3 flex flex-col divide-y divide-border">
           {layers.map((layer) => (
-            <li key={layer.slug}>
+            <li key={layer.id}>
               <Link
-                href={`/budgets/${layer.slug}`}
+                href={`/budgets/${layer.id}`}
                 className="flex items-center justify-between py-2 text-sm hover:opacity-80"
               >
                 <span className="truncate">{layer.name}</span>

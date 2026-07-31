@@ -27,6 +27,7 @@
  */
 import type { Auth } from "../lib/server/auth";
 import { assertSlug, chooseSlug, slugBase, slugify, suggestName } from "./slug";
+import { runScript } from "./_bootstrap";
 
 /** Set once the database is actually imported, so `--help` never opens a client. */
 let disconnect: (() => Promise<void>) | null = null;
@@ -137,15 +138,4 @@ async function main() {
   console.log(`  pnpm link:token --workspace ${slug} --name "<link name>"`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    // This script owns its process, so it owns the disconnect — but only if a
-    // client was ever opened. `--help` and a usage error never reach the
-    // database, and importing it here just to disconnect it would undo the
-    // lazy import above.
-    await disconnect?.();
-  });
+runScript(main, () => disconnect?.());

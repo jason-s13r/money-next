@@ -96,25 +96,24 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
       {/* Balance over time. The line is the accessible balance reconstructed from
           the transaction flow (BalanceSnapshot history is only days old); the bars
           are each day's net flow — the line's own deltas — and each dashed line
-          walks one forecast scenario's budgets forward to where the money runs
-          out. */}
+          walks one forecast budget forward to where the money runs out. */}
       <Card>
         <CardHeader>
           <CardTitle>Balance over time</CardTitle>
         </CardHeader>
         <CardContent>
           <BalanceChart series={series} />
-          {/* Said plainly rather than silently: with no forecast there is no
+          {/* Said plainly rather than silently: with no forecast budget there is no
               forward line at all. Nothing here creates one — a page that
               bootstrapped a plan on render would put figures in front of someone
               they never agreed to. */}
           {!series.scenariosConfigured ? (
             <p className="mt-3 text-xs text-muted">
-              No forecast yet, so the chart stops at today.{" "}
-              <Link href="/forecasts" className="underline underline-offset-2 hover:text-foreground">
-                Create a forecast
+              No forecast budget yet, so the chart stops at today.{" "}
+              <Link href="/budgets" className="underline underline-offset-2 hover:text-foreground">
+                Mark a budget as a forecast
               </Link>{" "}
-              to project a budget forward day by day.
+              to project it forward day by day.
             </p>
           ) : null}
         </CardContent>

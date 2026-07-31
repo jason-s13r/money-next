@@ -52,6 +52,7 @@
 import { askYesNo, promptSession } from "./read-secret";
 import type { Auth } from "../lib/server/auth";
 import type { ScopedDb } from "../lib/server/db";
+import { runScript } from "./_bootstrap";
 
 /** The ids the bootstrap migration hard-codes. This tool exists to erase them. */
 const BOOTSTRAP_WORKSPACE_ID = "ws_bootstrap";
@@ -184,11 +185,4 @@ async function main() {
   if (link) console.log(`  bank link: ${newLinkId}`);
 }
 
-main()
-  .catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await disconnect?.();
-  });
+runScript(main, () => disconnect?.());

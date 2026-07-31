@@ -2,6 +2,7 @@ import "server-only";
 import { connection } from "next/server";
 import { cache } from "react";
 import { getDb } from "../db/request";
+import { scopedBatch } from "../db";
 import { convert, FALLBACK_DISPLAY_CURRENCY as DISPLAY_CURRENCY, loadRates } from "../currency";
 import { accountMoney, moneySum, transactionMoney } from "../money";
 import {
@@ -67,7 +68,9 @@ export const getLabels = cache(async () => {
 export const getLabelsWithCounts = cache(async () => {
   await connection();
   const db = await getDb();
-  const [labels, joins] = await Promise.all([
+  // One batch rather than a `Promise.all`: two scoped queries side by side are two
+  // transactions, each with its own BEGIN/set_config/COMMIT (see `scopedBatch`).
+  const [labels, joins] = await scopedBatch(db, [
     db.label.findMany({ orderBy: { name: "asc" }, select: { id: true, name: true } }),
     db.transactionLabel.findMany({
       select: {
@@ -75,7 +78,7 @@ export const getLabelsWithCounts = cache(async () => {
         transaction: { select: { amount: true, account: { select: { currency: true } } } },
       },
     }),
-  ]);
+  ] as const);
 
   const currencies = new Set<string>([DISPLAY_CURRENCY]);
   for (const j of joins) {
@@ -131,7 +134,7 @@ export const getMerchantsWithCounts = cache(async () => {
   if (merchantIds.length === 0) return [];
 
   const accountIds = [...new Set(grouped.map((g) => g.accountId))];
-  const [merchants, accounts] = await Promise.all([
+  const [merchants, accounts] = await scopedBatch(db, [
     db.merchant.findMany({
       where: { id: { in: merchantIds } },
       select: { id: true, name: true, logo: true, workspaceId: true },
@@ -140,7 +143,7 @@ export const getMerchantsWithCounts = cache(async () => {
       where: { id: { in: accountIds } },
       select: { id: true, currency: true },
     }),
-  ]);
+  ] as const);
   const currencyById = new Map(accounts.map((a) => [a.id, a.currency]));
   const rates = await loadRates([...accounts.map((a) => a.currency), DISPLAY_CURRENCY]);
 
@@ -237,10 +240,10 @@ export async function getRulesForTransaction(tx: {
   // Resolve just the ids the matching rules reference.
   const categoryIds = matches.map((r) => r.categoryId).filter((v): v is string => v != null);
   const merchantIds = matches.map((r) => r.merchantId).filter((v): v is string => v != null);
-  const [categories, merchants] = await Promise.all([
+  const [categories, merchants] = await scopedBatch(db, [
     db.category.findMany({ where: { id: { in: categoryIds } }, select: { id: true, name: true } }),
     db.merchant.findMany({ where: { id: { in: merchantIds } }, select: { id: true, name: true } }),
-  ]);
+  ] as const);
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
   const merchantName = new Map(merchants.map((m) => [m.id, m.name]));
 

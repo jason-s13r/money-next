@@ -16,7 +16,7 @@ export function PeriodSelector({ period, href }: { period: Period; href: string 
           aria-current={option === period ? "page" : undefined}
           className={`shrink-0 whitespace-nowrap rounded-md px-2.5 py-1.5 ${
             option === period
-              ? "bg-foreground text-background"
+              ? "bg-primary text-primary-foreground"
               : "text-secondary hover:bg-current/5"
           }`}
         >

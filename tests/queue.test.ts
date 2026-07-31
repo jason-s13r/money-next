@@ -60,8 +60,8 @@ before(async () => {
     await catalogDb.bankLink.create({ data: { id, workspaceId: WS, name: id } });
   }
   // Two budgets, so a re-infer run has a real `budgetId` to point at (the FK).
-  for (const [id, slug] of [[BUDGET_A, "b-a"], [BUDGET_B, "b-b"]]) {
-    await catalogDb.budget.create({ data: { id, workspaceId: WS, name: id, slug } });
+  for (const id of [BUDGET_A, BUDGET_B]) {
+    await catalogDb.budget.create({ data: { id, workspaceId: WS, name: id } });
   }
 });
 

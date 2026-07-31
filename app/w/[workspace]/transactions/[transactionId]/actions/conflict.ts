@@ -4,6 +4,7 @@ import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { recordUserChanges } from "@/lib/server/changes";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
+import { withScopedTx } from "@/lib/server/db";
 
 /**
  * Keep the user's value and stop nagging about this divergence. The conflict is
@@ -53,6 +54,15 @@ export async function keepUserValue(conflictId: number) {
  * been refused this write for as long as the conflict stood. The conflict row
  * already holds both sides, so this is the one writer needing no extra read to
  * know what the field was.
+ *
+ * Not routed through `applyEnrichment` despite the family resemblance, and the
+ * three differences are each the point of this action rather than incidental: the
+ * value written is Akahu's and the `source` it is stamped with is computed above
+ * (`applyEnrichment` always stamps `user`, which is what makes it the *manual*
+ * setter); the conflict is resolved by its own id rather than by field, so
+ * settling one leaves any other alone; and the prior value is read off the
+ * conflict row instead of the transaction. What it does share is the requirement
+ * that all of it commit together, which is the transaction below.
  */
 export async function acceptAkahuValue(conflictId: number) {
   await requireRole({ enrichment: ["update"] });
@@ -64,42 +74,41 @@ export async function acceptAkahuValue(conflictId: number) {
   const { transactionId, field, akahuValueId, heldSource } = conflict;
   const source = heldSource === "rule" ? "user" : "akahu";
 
-  if (field === "category") {
-    const category = akahuValueId
-      ? await db.category.findUnique({ where: { id: akahuValueId } })
+  // Resolved before the transaction opens: a catalog read that the write doesn't
+  // touch has no business holding the connection.
+  const category =
+    field === "category" && akahuValueId
+      ? await db.category.findUnique({ where: { id: akahuValueId }, select: { groupId: true } })
       : null;
-    await db.transaction.update({
-      where: { id: transactionId },
-      data: {
-        categoryId: akahuValueId,
-        categoryGroupId: category?.groupId ?? null,
-        categorySource: source,
-      },
-    });
-  } else {
-    await db.transaction.update({
-      where: { id: transactionId },
-      data: {
-        merchantId: akahuValueId,
-        merchantSource: source,
-      },
-    });
-  }
 
-  if (conflict.userValueId !== akahuValueId) {
-    await recordUserChanges(db, [
-      {
-        transactionId,
-        field: field === "category" ? "category" : "merchant",
-        fromId: conflict.userValueId,
-        fromLabel: conflict.userValueLabel,
-        toId: akahuValueId,
-        toLabel: conflict.akahuValueLabel,
-      },
-    ]);
-  }
+  await withScopedTx(db, async (tx) => {
+    await tx.transaction.update({
+      where: { id: transactionId },
+      data:
+        field === "category"
+          ? {
+              categoryId: akahuValueId,
+              categoryGroupId: category?.groupId ?? null,
+              categorySource: source,
+            }
+          : { merchantId: akahuValueId, merchantSource: source },
+    });
 
-  await db.transactionConflict.delete({ where: { id: conflictId } });
+    if (conflict.userValueId !== akahuValueId) {
+      await recordUserChanges(tx, [
+        {
+          transactionId,
+          field: field === "category" ? "category" : "merchant",
+          fromId: conflict.userValueId,
+          fromLabel: conflict.userValueLabel,
+          toId: akahuValueId,
+          toLabel: conflict.akahuValueLabel,
+        },
+      ]);
+    }
+
+    await tx.transactionConflict.delete({ where: { id: conflictId } });
+  });
 
   await revalidateWorkspacePath(`/transactions/${transactionId}`);
 }

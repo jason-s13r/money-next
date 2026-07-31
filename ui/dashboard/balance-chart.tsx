@@ -29,10 +29,10 @@ import {
 // accessible balance (net worth minus locked KiwiSaver/investments). The resolution
 // is always one day; each day is a bar rising (money in) or dropping (money out)
 // from the $0 line by that day's net transaction flow, riding a daily balance line,
-// with one forward projection per forecast scenario. Those bend: a scenario is a
-// set of budgets walked forward day by day, so an expensive December steps down
-// where a burn rate would have run straight. Because a bar *is* the line's step for
-// that day, both share one dollar axis. The range buttons set how many days fill
+// with one forward projection per forecast budget. Those bend: a forecast budget is
+// walked forward day by day together with its layers, so an expensive December steps
+// down where a burn rate would have run straight. Because a bar *is* the line's step
+// for that day, both share one dollar axis. The range buttons set how many days fill
 // the width (the zoom); the rest scrolls. Marks follow the house data-viz rules:
 // thin lines, a recessive grid, text in ink tokens, colour for identity.
 // Layout, palette, scale math and types live in `balance-chart.util.ts`; the SVG
@@ -310,7 +310,7 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
 }
 
 /**
- * What a forecast's legend popover says about where its line came from.
+ * What a forecast budget's legend popover says about where its line came from.
  *
  * Naming the budget is what makes a spike legible — a step down in December is
  * mysterious until the line says "Christmas". And the uncovered-day count is said

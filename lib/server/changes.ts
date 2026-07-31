@@ -12,7 +12,7 @@
 // to compute rather than read.
 
 import type { Prisma } from "../generated/prisma/client";
-import type { ScopedDb } from "./db";
+import type { ScopedTx } from "./db";
 
 /**
  * The attributable fields: the enrichment a writer can disagree with a previous
@@ -108,9 +108,15 @@ export function changeRows(
  * Rows still carry `null` when there is no session, which stays honest: it means
  * "written before this instance knew who anyone was", and the rows written
  * before phase 3 say exactly that.
+ *
+ * Takes a `ScopedTx` rather than a `ScopedDb` so it can be called from inside an
+ * open transaction — which is where `applyEnrichment` calls it, so that the log
+ * rows commit with the write they describe. `ScopedTx` is `ScopedDb` minus
+ * `$transaction`, so every caller holding the full client still typechecks; what
+ * the narrower type says is that this function does not open one of its own.
  */
 export async function recordUserChanges(
-  db: ScopedDb,
+  db: ScopedTx,
   entries: readonly FieldChangeEntry[],
 ): Promise<void> {
   if (entries.length === 0) return;

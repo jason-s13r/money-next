@@ -60,10 +60,10 @@ export default async function BudgetBreakdownPage(
   // building a throwaway comparison first — that would run the whole historic
   // aggregation twice for every page load, to learn a list of names.
   //
-  // The slug from the URL is resolved against this list rather than trusted, so an
-  // unknown slug falls back to the first base.
+  // The id from the URL is resolved against this list rather than trusted, so an
+  // unknown one falls back to the first base.
   const available = await budgetsInWindow(period, WINDOW, offset, now);
-  const base = available.find((b) => b.slug === wantedBase) ?? available[0] ?? null;
+  const base = available.find((b) => b.id === wantedBase) ?? available[0] ?? null;
 
   // The base plus the layers of it live in this window — the ids the view sums.
   const selectedIds = base
@@ -82,7 +82,7 @@ export default async function BudgetBreakdownPage(
     params.set("period", period);
     params.set("view", over.view ?? view);
 
-    const chosen = over.base ?? base?.slug;
+    const chosen = over.base ?? base?.id;
     if (chosen) params.set("base", chosen);
 
     const start = over.from === undefined ? rawFrom : over.from;
@@ -110,7 +110,7 @@ export default async function BudgetBreakdownPage(
         <BudgetSelector
           available={available}
           selectedId={base?.id ?? null}
-          href={(b) => query({ base: b.slug })}
+          href={(b) => query({ base: b.id })}
         />
       </div>
 

@@ -24,7 +24,7 @@ type Geom = {
   worthPath: string;
   worthArea: string;
   nowX: number;
-  /** One dashed line per forecast scenario, in legend order. */
+  /** One dashed line per forecast budget, in legend order. */
   projections: { id: string; color: string; path: string }[];
 };
 
@@ -88,7 +88,7 @@ export function BalanceChartSvg({
           role="img"
           aria-label={`Available balance over time, currently ${money(
             currentWorth,
-          )}, with daily net-flow bars and one projected line per forecast scenario. Scroll horizontally for history.`}
+          )}, with daily net-flow bars and one projected line per forecast budget. Scroll horizontally for history.`}
           onMouseMove={onMove}
           onMouseLeave={onLeave}
         >
@@ -134,7 +134,7 @@ export function BalanceChartSvg({
 
           {/* Projections — dashed, so the plan never reads as recorded history.
               Colour is the only thing telling them apart, which is why each
-              scenario stores its own rather than taking one by position. */}
+              forecast budget keeps its derived colour. */}
           {geom.projections.map((p) => (
             <path
               key={p.id}

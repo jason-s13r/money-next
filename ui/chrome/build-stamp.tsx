@@ -1,5 +1,3 @@
-"use client";
-
 import type { BuildInfo } from "@/lib/server/build-info";
 import { formatDateTime } from "@/lib/format";
 
@@ -12,10 +10,15 @@ import { formatDateTime } from "@/lib/format";
 // enough. Hidden when the rail collapses to icons, for the same reason the
 // search box is — there is no glyph that means "commit a1b2c3d".
 //
-// A client component only because both rails are client trees; the values are
-// read on the server (lib/server/build-info) and passed down as props. The
-// `import type` is erased at compile time, so the `server-only` module it names
-// is never pulled into the browser bundle.
+// No `"use client"`, which is not the same as being a server component: both
+// rails that render this are client modules, so it is compiled into the client
+// bundle either way. The directive marks a *boundary* — the module a server tree
+// hands off at — and this is not one; it is imported from inside a client tree
+// and nowhere else. Dropping it says that.
+//
+// The values are read on the server (lib/server/build-info) and arrive as props.
+// The `import type` is erased at compile time, so the `server-only` module it
+// names is never pulled into the browser bundle.
 //
 // `formatDateTime` pins a display timezone rather than using the viewer's, so
 // the server and client renders agree and there is no hydration mismatch.

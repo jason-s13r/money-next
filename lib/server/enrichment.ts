@@ -1,0 +1,173 @@
+// Setting a transaction's category or merchant by hand — the one path all seven
+// callers go through.
+//
+// There were seven copies of this before: the single setter and the "apply to
+// similar" bulk on the detail page, the two selection bulks on the listing, and
+// the merchant-create variant. They agreed on the shape — read what the field
+// was, write the new value, log the rows that actually changed, settle any
+// conflict outstanding on the field — and disagreed on the details, which is the
+// failure mode of copied code rather than a design. The diff-before-logging rule
+// in particular is load-bearing (see lib/server/changes.ts) and was restated at
+// every site, each one an opportunity to get it subtly wrong.
+//
+// The other reason to have one of these: those steps have to commit together.
+// Separately they are three statements, and under the scoped client each is its
+// own transaction (see lib/server/db/scoped.ts), so a failure between them leaves
+// the field changed with nothing in the log to say so, and a settled disagreement
+// still on screen. The log is the feature that exists to answer "why does this
+// row say that?" — it cannot be the part that goes missing.
+//
+// No `import "server-only"`: nothing here reaches for a request, and the rules
+// engine's own writer (rules/engine/apply.ts) is the sort of caller that might
+// reasonably share it later. What keeps this honest is the scoped client the
+// caller passes in, not the module's location.
+
+import { recordUserChanges, type FieldChangeEntry } from "./changes";
+import { withScopedTx, type ScopedDb, type ScopedTx } from "./db";
+
+/**
+ * The two fields a person can set by hand *and* Akahu can disagree with — which
+ * is why they are the two that need a conflict settled, and the two that live
+ * here. Labels are neither (nothing mirrors them), so they are plain writes; see
+ * the note in the label action.
+ */
+export type EnrichmentField = "category" | "merchant";
+
+/** The resolved target of the edit: a row proven to be in this workspace, or
+ *  `null` for clearing the field. `groupId` is category-only — the denormalised
+ *  `Transaction.categoryGroupId` has to move with it or the metrics that group by
+ *  it drift. */
+type Value = { id: string; name: string; groupId?: string | null } | null;
+
+/**
+ * Prove the id names a row this workspace can see, and read the label the log
+ * will need.
+ *
+ * The scoped client is what makes this a permission check and not just a
+ * spelling check: an id belonging to another workspace simply isn't found, so it
+ * throws here rather than being written and rejected later by RLS. A `null`
+ * `valueId` is "clear the field", which needs no lookup.
+ */
+async function resolveValue(
+  db: ScopedDb,
+  field: EnrichmentField,
+  valueId: string | null,
+): Promise<Value> {
+  if (valueId === null) return null;
+
+  if (field === "category") {
+    const category = await db.category.findUnique({
+      where: { id: valueId },
+      select: { id: true, name: true, groupId: true },
+    });
+    if (!category) throw new Error(`Unknown category: ${valueId}`);
+    return category;
+  }
+
+  const merchant = await db.merchant.findUnique({
+    where: { id: valueId },
+    select: { id: true, name: true },
+  });
+  if (!merchant) throw new Error(`Unknown merchant: ${valueId}`);
+  return merchant;
+}
+
+/** What the field was, per row, in the shape the log wants. One read for the
+ *  whole batch: `updateMany` is a single statement and the log must not turn it
+ *  into N round trips. Rows from another workspace aren't returned — and so
+ *  aren't logged either, which matches exactly what the update will refuse to
+ *  touch. */
+async function readPriors(tx: ScopedTx, field: EnrichmentField, ids: string[]) {
+  if (field === "category") {
+    const rows = await tx.transaction.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, categoryId: true, category: { select: { name: true } } },
+    });
+    return rows.map((row) => ({ id: row.id, valueId: row.categoryId, label: row.category?.name ?? null }));
+  }
+
+  const rows = await tx.transaction.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, merchantId: true, merchant: { select: { name: true } } },
+  });
+  return rows.map((row) => ({ id: row.id, valueId: row.merchantId, label: row.merchant?.name ?? null }));
+}
+
+/**
+ * Set `field` to `valueId` (or clear it) on every transaction named, as one
+ * transaction.
+ *
+ * The field is stamped `user`-owned, which is what stops the next Akahu sync
+ * overwriting it — the sync raises a `TransactionConflict` instead. See the notes
+ * on `Transaction.categorySource` in the schema.
+ *
+ * Revalidation is deliberately not here. Which paths a given edit invalidates is
+ * the caller's business — the detail page revalidates itself, the bulk bar
+ * revalidates the listing it was invoked from — and a helper guessing at it would
+ * be wrong for half of them.
+ *
+ * Returns how many of the named transactions were actually in this workspace and
+ * therefore written. That number is the caller's to interpret, because the two
+ * kinds of caller want opposite things from it: a bulk action is *defined* by
+ * tolerating ids it can't see (the selection is filtered, not rejected), while a
+ * single-row setter handed an id it can't see has been handed a bad id and should
+ * say so rather than report success. Returning it instead of deciding here is
+ * what keeps `setTransactionCategory` from silently no-op'ing on a probe.
+ */
+export async function applyEnrichment(
+  db: ScopedDb,
+  field: EnrichmentField,
+  transactionIds: string[],
+  valueId: string | null,
+): Promise<number> {
+  if (transactionIds.length === 0) return 0;
+
+  // Outside the transaction: it is a read of a catalog row that the edit does not
+  // touch, and resolving it inside would hold the connection for a lookup that
+  // can just as well fail before one is taken out.
+  const value = await resolveValue(db, field, valueId);
+
+  return withScopedTx(db, async (tx) => {
+    // Read inside the transaction, not before it. The priors are what the log
+    // will claim the field *was*, so they have to be the same snapshot the update
+    // writes over — read outside, a concurrent edit between the two makes the log
+    // assert a change that never happened.
+    const priors = await readPriors(tx, field, transactionIds);
+
+    await tx.transaction.updateMany({
+      where: { id: { in: transactionIds } },
+      data:
+        field === "category"
+          ? {
+              categoryId: value?.id ?? null,
+              categoryGroupId: value?.groupId ?? null,
+              categorySource: "user",
+            }
+          : { merchantId: value?.id ?? null, merchantSource: "user" },
+    });
+
+    // Log the change, not the click: re-picking the value a row already has is a
+    // no-op, and logging it would drown the rows that did change.
+    const entries: FieldChangeEntry[] = priors
+      .filter((prior) => prior.valueId !== (value?.id ?? null))
+      .map((prior) => ({
+        transactionId: prior.id,
+        field,
+        fromId: prior.valueId,
+        fromLabel: prior.label,
+        toId: value?.id ?? null,
+        toLabel: value?.name ?? null,
+      }));
+    await recordUserChanges(tx, entries);
+
+    // The user just made an authoritative choice for this field: any outstanding
+    // disagreement with Akahu about it is settled by that.
+    await tx.transactionConflict.deleteMany({
+      where: { transactionId: { in: transactionIds }, field },
+    });
+
+    // The rows the scoped read could see, which is exactly the set `updateMany`
+    // wrote — both are filtered by the same client.
+    return priors.length;
+  });
+}

@@ -25,11 +25,11 @@ export const statements = {
   /// a person can change about a transaction that the bank did not tell us.
   enrichment: ["update"],
 
-  /// Budgets, their items, and the forecast scenarios built from them. Its own
-  /// statement rather than part of `enrichment`, because that one is explicitly
-  /// about a *transaction* — what a person can change about a row the bank told
-  /// us about. A budget is not a claim about the past at all; it is the user's
-  /// plan, and the two can sensibly be granted apart (a bookkeeper who may
+  /// Budgets and their items, including which budgets are used as forward
+  /// projections. Its own statement rather than part of `enrichment`, because that
+  /// one is explicitly about a *transaction* — what a person can change about a row
+  /// the bank told us about. A budget is not a claim about the past at all; it is
+  /// the user's plan, and the two can sensibly be granted apart (a bookkeeper who may
   /// recategorise need not be able to rewrite the household's plan).
   budget: ["update"],
 
@@ -41,6 +41,18 @@ export const statements = {
   /// relationship with Akahu, and revoking it is the consumer-control lever
   /// accreditation requires.
   bankLink: ["create", "revoke"],
+
+  /// Talking to the local model about the household's money. Held by every role,
+  /// viewer included, which raises the obvious question of why it exists at all
+  /// given the note above about reading not being a permission.
+  ///
+  /// Two reasons. It is not purely a read: a chat turn spends the machine's model
+  /// for minutes at a time, and an instance that wanted to withhold that from a
+  /// guest has nowhere else to say so. And the chat's *write* tools are gated on
+  /// `budget: ["update"]` separately, so this statement is the one that answers
+  /// "may you open a conversation", not "may you change anything in it" — a viewer
+  /// gets a chat that can read and explain and cannot touch a budget item.
+  chat: ["use"],
 } as const;
 
 export const ac = createAccessControl(statements);
@@ -53,17 +65,20 @@ export const owner = ac.newRole({
   budget: ["update"],
   sync: ["run"],
   bankLink: ["create", "revoke"],
+  chat: ["use"],
 });
 
 export const editor = ac.newRole({
   enrichment: ["update"],
   budget: ["update"],
   sync: ["run"],
+  chat: ["use"],
 });
 
-/// Read and export only — so, no statements at all. See the note above: reading
-/// is membership, not a permission.
-export const viewer = ac.newRole({});
+/// Read and export only — plus `chat`, which every role holds. See the note above:
+/// reading is membership, not a permission, and `chat.use` is here because opening a
+/// conversation is the one read-shaped thing an instance might still want to withhold.
+export const viewer = ac.newRole({ chat: ["use"] });
 
 /** The roles a `Membership.role` may hold, and the only strings an invite may carry. */
 export const ROLES = ["owner", "editor", "viewer"] as const;

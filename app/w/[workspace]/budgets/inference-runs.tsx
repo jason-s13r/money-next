@@ -5,7 +5,7 @@ import { useFormStatus } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { AutoRefresh } from "@/ui/primitives/auto-refresh";
-import { useCanEdit } from "@/ui/chrome/workspace-context";
+import { Link, useCanEdit } from "@/ui/chrome/workspace-context";
 import { clearInferenceRun, retryInferenceRun } from "./actions";
 import { NO_ERROR, type BudgetActionState } from "./types";
 import type { InferenceRunView } from "@/lib/server/queries/budgets";
@@ -57,15 +57,33 @@ export function InferenceRuns({ runs }: { runs: InferenceRunView[] }) {
               </span>
             </span>
 
-            {canEdit ? (
-              <span className="flex shrink-0 items-center gap-1">
-                {/* Retry only makes sense once a run has actually failed; Clear is
-                    offered on any of them, so a run stalled with no worker — or one
-                    wedged because a worker died — can be taken off the list too. */}
-                {run.status === "failed" ? <Retry runId={run.id} /> : null}
-                <Clear runId={run.id} />
-              </span>
-            ) : null}
+            <span className="flex shrink-0 items-center gap-1">
+              {/* The run writes what it is doing into a chat thread as it goes, so
+                  "working…" is followed by something to read rather than only waited
+                  out. Absent for a run someone else in the household asked for: the
+                  log is theirs. */}
+              {run.logThreadId ? (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  nativeButton={false}
+                  className="text-muted hover:text-foreground"
+                  render={<Link href={`/chat/${run.logThreadId}`} />}
+                >
+                  Show log
+                </Button>
+              ) : null}
+
+              {canEdit ? (
+                <>
+                  {/* Retry only makes sense once a run has actually failed; Clear is
+                      offered on any of them, so a run stalled with no worker — or one
+                      wedged because a worker died — can be taken off the list too. */}
+                  {run.status === "failed" ? <Retry runId={run.id} /> : null}
+                  <Clear runId={run.id} />
+                </>
+              ) : null}
+            </span>
           </li>
         ))}
       </ul>
