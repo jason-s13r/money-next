@@ -11,8 +11,9 @@ export type LegendItem = {
   dashed?: boolean;
   label: string;
   /** When present, the label becomes a hover/tap affordance revealing how the
-   *  scenario's monthly figure is built — the same breakdown as the runway tile. */
-  popover?: { note: string; rows: LegendPopoverRow[] };
+   *  scenario's monthly figure is built — the same breakdown as the runway tile.
+   *  `note` is a caveat about the figures, and only some scenarios have one. */
+  popover?: { note: string | null; rows: LegendPopoverRow[] };
 };
 
 // The active segment keeps the app-wide filled-pill treatment rather than the toggle's
@@ -53,7 +54,7 @@ export function BalanceChartLegend({
                   }
                 />
                 <PopoverContent className="flex max-w-64 flex-col gap-2 text-left">
-                  <span className="text-secondary">{l.popover.note}</span>
+                  {l.popover.note ? <span className="text-secondary">{l.popover.note}</span> : null}
                   <span className="flex flex-col gap-1">
                     {l.popover.rows.map((row) => (
                       <span

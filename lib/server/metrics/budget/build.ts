@@ -128,7 +128,6 @@ export async function buildBudgetComparison(
     budgets.flatMap((b) => b.items.map((i) => i.currency)),
   );
 
-  const contributors = new Map<string, string[]>(keys.map((key) => [key, []]));
   const merchantIds = new Map<string, string>();
   const merchantLogos = new Map<string, string>();
   const incomeGroupOf = new Map<string, string | null>();
@@ -203,9 +202,6 @@ export async function buildBudgetComparison(
 
         const value = Math.abs(toDisplay(item.amount, item.currency, date));
         addTo(bucket, item, value);
-
-        const names = contributors.get(key)!;
-        if (!names.includes(budget.name)) names.push(budget.name);
       }
     }
   }
@@ -283,7 +279,6 @@ export async function buildBudgetComparison(
     // history really stops — see getBudgetVsActual.
     through: null,
     hasOlder: false,
-    contributors,
   };
 }
 

@@ -133,13 +133,7 @@ export default async function BudgetBreakdownPage(
           </p>
 
           <div className="mt-4">
-            <ComparisonTable
-              comparison={shown}
-              format={view === "variance" ? "variance" : "money"}
-              // Only the budget view needs to say which budgets made a column;
-              // in the other two the question does not arise.
-              contributors={view === "budget" ? data.budget.contributors : undefined}
-            />
+            <ComparisonTable comparison={shown} format={view === "variance" ? "variance" : "money"} />
           </div>
 
           <div className="mt-4">

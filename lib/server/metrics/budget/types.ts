@@ -12,19 +12,9 @@ import type { Comparison } from "../comparison/types";
 // standing invitation for the budget column and the actual column to disagree
 // about what a row means.
 
-/**
- * A budget breakdown: a `Comparison` plus a note of which budgets fed each
- * period.
- *
- * `contributors` exists because layering makes a total unattributable otherwise.
- * When December is twice November, the reader's first question is "why", and the
- * answer — "the Christmas budget also applies this month" — is not recoverable
- * from any figure in the table.
- */
-export type BudgetComparison = Comparison & {
-  /** Period key → the names of the budgets active in it, in display order. */
-  contributors: Map<string, string[]>;
-};
+/** A budget breakdown. Structurally the historic view's `Comparison`, built from
+ *  a plan instead of from transactions. */
+export type BudgetComparison = Comparison;
 
 /** A budget in the selector: enough to name it and link to it. The id is the link
  *  — a budget has no slug (see `Budget.id`). */

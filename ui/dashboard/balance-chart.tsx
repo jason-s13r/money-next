@@ -269,7 +269,7 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
             ? `${s.name} · ${money(s.monthlyBurn)}/mo`
             : `${s.name} · ${money(-s.monthlyBurn)}/mo spare`,
       popover: {
-        note: scenarioNote(s.budgets, s.blendedDays),
+        note: scenarioNote(s.blendedDays),
         rows: [
           { label: "Planned expenses", value: `${money(s.monthlyOut)}/mo` },
           ...(s.monthlyIn > 0
@@ -312,16 +312,13 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
 /**
  * What a forecast budget's legend popover says about where its line came from.
  *
- * Naming the budget is what makes a spike legible — a step down in December is
- * mysterious until the line says "Christmas". And the uncovered-day count is said
- * out loud on purpose: a forecast mostly filled in from history is barely a plan,
- * and the reader deserves that before trusting its date.
+ * Only the uncovered-day count, and it is said out loud on purpose: a forecast
+ * mostly filled in from history is barely a plan, and the reader deserves that
+ * before trusting its date. Naming the budget is left to the legend label the
+ * popover hangs off — repeating it here, layers and all, said nothing the reader
+ * had not just clicked on.
  */
-function scenarioNote(budgets: string[], blendedDays: number): string {
-  const gaps =
-    blendedDays > 0
-      ? ` ${blendedDays.toLocaleString("en-NZ")} days ahead aren't covered by it and run at your historic rate.`
-      : "";
-
-  return `Projects ${budgets.join(" + ")}.${gaps}`;
+function scenarioNote(blendedDays: number): string | null {
+  if (blendedDays === 0) return null;
+  return `${blendedDays.toLocaleString("en-NZ")} days ahead aren't covered by this budget and run at your historic rate.`;
 }

@@ -46,19 +46,16 @@ function TotalRow({
 /**
  * The values behind every bar, for anyone the colours fail.
  *
- * `format` and `contributors` are both optional and both exist for the budget
- * views, which reuse this table rather than growing a second one: a variance
- * needs signed cells, and a layered budget needs to say *which* budgets made a
- * column what it is. Neither changes anything for the historic view.
+ * `format` is optional and exists for the budget views, which reuse this table
+ * rather than growing a second one: a variance needs signed cells. It changes
+ * nothing for the historic view.
  */
 export function ComparisonTable({
   comparison,
   format = "money",
-  contributors,
 }: {
   comparison: Comparison;
   format?: CellFormat;
-  contributors?: Map<string, string[]>;
 }) {
   const { periods, spendCategories, period } = comparison;
   const partialKey = periods.find((p) => p.partial)?.key;
@@ -75,14 +72,6 @@ export function ComparisonTable({
               <th key={p.key} scope="col" className={HEAD}>
                 {formatPeriodShort(p.key, period)}
                 {p.key === partialKey ? <span className="text-muted"> *</span> : null}
-                {/* Which budgets made this column what it is. Without it a
-                    December that doubles is unexplainable from the table: the
-                    reason is a second budget applying, and no figure says so. */}
-                {contributors ? (
-                  <span className="block text-xs font-normal text-muted">
-                    {contributors.get(p.key)?.join(" + ") || "—"}
-                  </span>
-                ) : null}
               </th>
             ))}
           </tr>

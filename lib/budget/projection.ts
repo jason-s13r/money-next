@@ -55,11 +55,6 @@ export type ProjectionScenario = {
   name: string;
   /** The `--viz-*` token for this forecast's line, swatch and tile. */
   color: string;
-  /** The budget this scenario projects, by name, so the legend can say where a
-   *  spike came from. An array of one — kept plural so the legend formatting that
-   *  joined several names still reads, and so a future multi-budget view is a data
-   *  change, not a type change. */
-  budgets: string[];
   /** The line, oldest first. Implicitly starts at (0, the current balance). */
   points: ProjectionPoint[];
   /** The NZ day the balance first goes negative, or null within the horizon. */

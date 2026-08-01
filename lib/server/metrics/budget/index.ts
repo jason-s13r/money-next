@@ -258,7 +258,7 @@ export async function getBudgetVsActual(
     // Paging is the history's business: it is the only side that knows whether
     // anything happened before this window. The budget view borrows the answer so
     // the pager does not change meaning when the view does.
-    budget: { ...budget, ...shared, hasOlder: actual.hasOlder, contributors: budget.contributors },
+    budget: { ...budget, ...shared, hasOlder: actual.hasOlder },
     actual: { ...actual, ...shared },
     variance: {
       ...shared,

@@ -165,10 +165,8 @@ export async function getForecastProjections(
     }
 
     // Expand a budget's items into the day arrays, each occurrence gated by that
-    // budget's own lifespan. Returns whether it landed anything in the horizon, so
-    // a layer that never fires in the next two years stays out of the legend.
-    const expand = (budget: BudgetRow): boolean => {
-      let contributed = false;
+    // budget's own lifespan.
+    const expand = (budget: BudgetRow) => {
       for (const item of budget.items) {
         for (const date of occurrencesIn(
           {
@@ -186,15 +184,13 @@ export async function getForecastProjections(
           nets[i] += value;
           if (value > 0) ins[i] += value;
           else outs[i] += -value;
-          contributed = true;
         }
       }
-      return contributed;
     };
 
-    // The base anchors the legend even if it happens to be empty; a layer earns its
-    // place only by actually contributing within the horizon.
-    const contributors = [base.name, ...layers.filter(expand).map((l) => l.name)];
+    // The scenario is the base with its seasonal layers already added on, which is
+    // what the budget view shows too — so the two agree about what a plan costs.
+    for (const layer of layers) expand(layer);
     expand(base);
 
     // The blend rule. A forecast over only a Christmas budget covers three weeks of
@@ -218,7 +214,6 @@ export async function getForecastProjections(
       id: row.id,
       name: row.name,
       color: SCENARIO_COLORS[index % SCENARIO_COLORS.length],
-      budgets: contributors,
       blendedDays,
       ...walkProjection(nets, outs, ins, balances.accessible, from),
     };
