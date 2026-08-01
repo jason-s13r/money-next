@@ -114,7 +114,10 @@ function csp(nonce: string) {
   // Set INSECURE_HTTP=1 for a plain-http deployment (e.g. on a trusted LAN with
   // no TLS). It drops `upgrade-insecure-requests` below, which would otherwise
   // rewrite every subresource to https:// and fail against an http-only origin.
-  const insecureHttp = process.env.INSECURE_HTTP === "1";
+  // `true` is accepted as well, because next.config.ts gates HSTS on the same
+  // variable and the two must never disagree about what it says.
+  const insecureHttp =
+    process.env.INSECURE_HTTP === "1" || process.env.INSECURE_HTTP === "true";
 
   return [
     "default-src 'self'",

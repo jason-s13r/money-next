@@ -1,5 +1,9 @@
 import type { NextConfig } from "next";
 
+// A plain-http deployment (a trusted LAN with no TLS). Kept in step with the
+// same read in proxy.ts, which drops `upgrade-insecure-requests` from the CSP.
+const INSECURE_HTTP = process.env.INSECURE_HTTP === "1" || process.env.INSECURE_HTTP === "true";
+
 const nextConfig: NextConfig = {
   // Traced, minimal server output for the container image (see Dockerfile). This
   // copies only the server plus the node_modules actually reached — but NOT
@@ -30,8 +34,10 @@ const nextConfig: NextConfig = {
           // Pin HTTPS for one year in production. Gated on the env so the
           // `INSECURE_HTTP` dev/test path (a plain-HTTP container on localhost)
           // does not send a header that would lock a browser to a scheme the
-          // next request cannot use.
-          ...(process.env.NODE_ENV === "production" && process.env.INSECURE_HTTP !== "true"
+          // next request cannot use. Both spellings are accepted because this
+          // gate and proxy.ts's CSP gate must agree — a deployment that dropped
+          // `upgrade-insecure-requests` but still got HSTS would be unreachable.
+          ...(process.env.NODE_ENV === "production" && !INSECURE_HTTP
             ? [{ key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" }]
             : []),
           // A finance app has no legitimate use of camera, microphone, or

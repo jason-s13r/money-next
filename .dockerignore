@@ -11,19 +11,16 @@ node_modules
 .env
 .env.*
 
-# Personal financial data — must never be copied into an image.
-*.db
-*.db.*
-*.db-journal
-*.db-wal
-*.db-shm
-classify.rules.json
+# Personal financial data — must never be copied into an image. `*.dump` is
+# pg_dump output, which is the whole financial history in one file.
+*.dump
 
 # Local-only and non-source.
 .DS_Store
 .claude
+.agents
 .pnpm-store
-docs
+internal
 tests
 *.tsbuildinfo
 *.log

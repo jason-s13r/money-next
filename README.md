@@ -8,12 +8,17 @@ Built with [Next.js](https://nextjs.org) 16, React 19, TypeScript, Tailwind CSS 
 
 - **Dashboard** — net worth split into accessible, liquid, and locked balances; emergency and forecasted runway; a credit-facility meter; and a warning banner for uncategorised spending.
 - **Income and spending breakdown** — compare periods (day, week, month, quarter, year, or NZ tax year) with stacked bars and a drillable table down to category, subcategory, and merchant.
+- **Money flow** — the same period as a Sankey, left to right: who paid you, what that income was, the groups it went out through, what it was spent on, and who finally received it. A "Savings" node absorbs a surplus or funds a deficit so the two sides balance, and anything too small to name folds into an "Other" bucket that still goes on to name its merchants.
 - **Budgets** — plan expected income and spending as recurring items, or infer a starting budget from your own history (deterministically, or with an optional local LLM). A budget is a **base** — the ongoing plan — with optional seasonal **layers** that add on top only within their own window (a Christmas layer that applies each December). The budget-vs-actual view anchors on a base and folds in its active layers, comparing the plan against what actually happened.
-- **Forecasts** — project a base budget and its active layers forward as named scenarios, drawn as forward runway lines on the dashboard.
-- **Transactions** — recent, searchable, and filterable by account, category group, category, merchant, card suffix, or Akahu type. Each transaction has a detail page for editing merchant/category, linking transfers, and teaching automation rules.
+- **Forecasts** — a base budget flagged as a forecast is walked forward day by day, together with its active layers, and drawn as a forward runway line on the dashboard.
+- **Chat** — ask the local model about your money, in a thread it can read from and (with permission) write budgets, categories, labels and rules through. Threads are private to their author.
+- **Transactions** — a searchable recent list, plus a listing of its own keyed by account, category group, category, merchant, label, card suffix, or Akahu type, all rendering through the same table. Bulk actions apply a category, merchant or label to a whole selection. Each transaction has a detail page for editing merchant/category, linking transfers, tagging, teaching automation rules, and reading its own change history. Pending (not-yet-settled) rows are mirrored alongside the settled ones.
+- **Uncategorised queue** — everything the sync and the rules could not file, as a working list.
+- **Merchants and labels** — an index of every merchant that tags at least one transaction (with the ones you minted yourself flagged), and of your own free-text labels, each with its own listing.
 - **Accounts** — list of connected accounts with balances, available funds, and transaction counts; per-account transaction history with running balances.
 - **Rules** — a GoRules Zen decision graph that auto-enriches transactions (category, merchant, transfer linking). Rules are taught from a single classified transaction and run automatically on every sync.
 - **Sync history** — audit log of every ingest run, with manual refresh and full historical sync buttons.
+- **Workspaces and members** — data lives in a workspace; people are invited into one with an owner/editor/viewer role, and Postgres Row-Level Security is what actually keeps one workspace out of another's rows.
 
 ## Data model
 
@@ -21,19 +26,29 @@ The local Postgres mirror is the source of truth for the UI. Akahu ids are used 
 
 Money is stored as `numeric(19, 4)` so sums are exact, and converted to plain numbers at the read boundary ([lib/server/money.ts](lib/server/money.ts)) — nothing above the query layer handles a `Decimal`.
 
+Every tenant table carries a `workspaceId` column — a plain column, not a
+relation, because the RLS policy is a predicate on a column and cannot follow a
+relation to find one.
+
 Key tables:
 
+- `Workspace`, `Membership`, `Invite` — the tenant, who is in it and with what role, and the invite links that put them there.
+- `User`, `Session`, `AuthAccount`, `Verification`, `TwoFactor` — Better Auth's tables: accounts, sessions, password/reset state, and TOTP enrolment.
+- `BankLink` — one workspace's connection to Akahu, holding either a pointer to the instance-wide `AKAHU_*` pair (`tokenSource: "env"`) or its own encrypted token pair.
 - `Account`, `Connection` — mirrored from Akahu `/accounts`.
 - `Transaction` — mirrored from Akahu `/transactions`, with nullable enrichment fields (merchant, category, conversion, card suffix, etc.).
-- `Merchant`, `Category` — mirrored enrichment catalogs.
+- `PendingTransaction` — the not-yet-settled rows, replaced wholesale for a workspace on each sync rather than reconciled; they have no stable Akahu id to key on.
+- `Merchant`, `Category`, `CategoryGroup` — mirrored enrichment catalogs. A group is stored once and referenced, not copied onto every row.
+- `Label`, `TransactionLabel` — your own free-text tags, and their join to transactions. The join is explicit rather than an implicit Prisma m-n so it can carry its own `workspaceId` for RLS.
 - `TransferGroup` — user-linked legs of internal transfers; excluded from income/spend metrics.
 - `FxRate` — ECB reference rates from [frankfurter.dev](https://frankfurter.dev), used to value multi-currency transactions and balances.
 - `BalanceSnapshot` — point-in-time balances captured on each sync.
-- `Budget`, `BudgetItem` — a plan and its recurring line items. A budget is either a base (`baseBudgetId` null) or a layer that adds onto one; deleting a base cascades to its layers. Items carry provenance (`inferred`, `inferredSource`, `basis`) so a still-guessed figure is marked as such.
-- `Forecast` — a named forward projection pinned to a single base budget.
+- `Budget`, `BudgetItem` — a plan and its recurring line items. A budget is either a base (`baseBudgetId` null) or a layer that adds onto one; deleting a base cascades to its layers. A base with `forecast` set is one of the forward projections drawn on the dashboard — this replaced a separate `Forecast` table, whose name and colour now come from the budget itself. Items carry provenance (`inferred`, `inferredSource`, `basis`) so a still-guessed figure is marked as such.
 - `BudgetInferenceRun` — the queue and audit log for background budget inference; drained by the same worker as syncs and rules (see [Sync](#sync)).
-- `RuleDocument`, `RuleRun`, `RuleApplication` — decision graphs and an audit log of what they changed.
+- `RuleDocument`, `RuleRun` — decision graphs and the runs over them.
+- `FieldChange` — append-only log of every change to a transaction's category, merchant or transfer link, with what made it (`akahu` | `user` | `rule`) and who or which run. Supersedes `RuleApplication`, which only logged the rules engine's third of that.
 - `TransactionConflict` — raised when a user-set enrichment field diverges from a later Akahu sync.
+- `ChatThread`, `ChatMessage` — conversations with the local model, including the transcript an unattended budget inference writes as it runs.
 - `SyncState`, `SyncRun` — incremental sync high-water mark and run history.
 
 Categories follow the [NZFCC](https://nzfcc.org) standard. Spending groups are mapped to essential/discretionary in [lib/categories.ts](lib/categories.ts).
@@ -48,8 +63,13 @@ pnpm install
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env and add your Akahu credentials from https://my.akahu.nz
-# DATABASE_URL defaults to the local Postgres started in step 3
+# Set, at minimum:
+#   BETTER_AUTH_SECRET          openssl rand -base64 32
+#   APP_DB_PASSWORD             \ any two values; step 4 applies them to the
+#   SYNC_DB_PASSWORD            / money_app and money_sync roles
+#   AKAHU_APP_ID_TOKEN          \ from https://my.akahu.nz
+#   AKAHU_USER_ACCESS_TOKEN     /
+# DATABASE_URL already points at the local Postgres started in step 3.
 
 # 3. Start Postgres (Docker or Podman)
 pnpm db:up
@@ -74,8 +94,15 @@ Open [http://localhost:3000](http://localhost:3000) and sign in.
 
 Everyone after the first user arrives through an invite link from
 `/w/<slug>/members`. A workspace that wants its own bank connection (rather than
-the instance-wide `AKAHU_*` pair) connects one from the app, or from the shell
-with `pnpm link:token`.
+the instance-wide `AKAHU_*` pair) connects one from the app — which needs
+`TOKEN_PUBLIC_KEY` set, from `pnpm link:keypair` — or from the shell with
+`pnpm link:token`.
+
+Nothing syncs and no budget is inferred unless a worker is draining the queues, so
+either keep `pnpm worker:start` running alongside `pnpm dev`, or pass `--drain` to
+`pnpm worker:sync` as step 6 does. The chat and the LLM budget inference need
+`LLM_API` pointed at a local model; without one the budget button falls back to
+the deterministic seeder and `/chat` says no model is reachable.
 
 ## Commands
 
@@ -169,46 +196,82 @@ A token is verified against Akahu before `link:token` stores it — it calls
 `/accounts` and prints what it can see, which is a better check than typing the
 token twice.
 
+## Deployment
+
+Two supported shapes, both running the whole stack in containers with Postgres
+published nowhere:
+
+- **Compose** — [compose.prod.yaml](compose.prod.yaml): postgres, a one-shot
+  `migrate`, the `app`, a `worker` draining the queues, and a `cron` that enqueues
+  a sync every `SYNC_INTERVAL_SECONDS`. `docker compose -f compose.prod.yaml up -d --build`.
+- **Rootless Podman Quadlet** — [deploy/quadlet/](deploy/quadlet/): the same five
+  services as user-level systemd units in one pod, installed by `install.sh`. See
+  [its README](deploy/quadlet/README.md).
+
+Both split the database identity three ways — the schema owner runs migrations,
+the app connects as `money_app`, the worker and cron as `money_sync` — and both
+deliberately blank `TOKEN_ENCRYPTION_KEY` and `TOKEN_PRIVATE_KEY` on the app
+service. The web role has not called Akahu since it started enqueuing runs for the
+worker, so it holds ciphertext it cannot open; the connect-a-bank form seals with
+`TOKEN_PUBLIC_KEY` and cannot read back what it stored.
+
+The `cron` service only enqueues. With no worker running, syncs and budget
+inferences queue up and never happen.
+
 ## Project structure
 
 ```
-app/                  Next.js App Router pages and server actions
+app/                  App Router pages and server actions. Everything tenant-scoped
+                      lives under app/w/[workspace]/; /account, /login and /invite
+                      do not.
+proxy.ts              Next.js proxy (middleware): session gate, workspace routing,
+                      and the nonce'd Content-Security-Policy
 lib/
   categories.ts       NZFCC spending groups and necessity mapping
   format.ts           Currency and date formatting
   periods.ts          Time bucketing (day/week/month/quarter/year/taxyear) in NZ time
-  search-params.ts    Search-param helpers
-  slug.ts             URL slug helpers
+  sankey.ts           Money-flow layout (hand-rolled — fixed columns)
+  ids.ts              Minting app-namespaced ids (see ID_NAMESPACE)
+  budget/             Recurrence, month math and projection shared by client and server
+  chat/               Thread shaping, context elision, and slash commands
   server/
     akahu.ts          Akahu client setup
-    currency.ts       Multi-currency conversion using cached ECB rates
-    data.ts           Server data fetchers used by pages
-    db.ts             Prisma client (Postgres via @prisma/adapter-pg)
+    seal.ts           Sealing/opening stored Akahu tokens (asymmetric + legacy AES)
+    secrets.ts        Reading secrets from the environment or a file
     money.ts          Decimal -> number boundary for money columns
+    currency.ts       Multi-currency conversion using cached ECB rates
     fx.ts             ECB FX rate fetcher
-    matching.ts       Similar-transaction and transfer-candidate matching
-    nzfcc.ts          NZFCC category catalog fetcher
-    rules.ts          GoRules Zen engine runner
-    rule-learning.ts  Derive and edit learned rules in the decision graph
-    sync.ts           Akahu ingest pipeline
-    transfers.ts      Link/unlink transfer legs
-    conflicts.ts      Reconcile user edits vs. later Akahu syncs
-    budget/
-      infer.ts        Deterministic budget inference from history
-      llm.ts          Optional local-LLM inference (falls back to infer.ts)
-      run.ts          Background inference run, drained by the worker
-    metrics/
-      balance.ts      Net-worth summaries
-      spend.ts        Spending forecasts and review queue
-      runway.ts       Emergency/forecasted runway math
-      comparison.ts   Period-over-period income/spending breakdown
-      budget/         Budget-vs-actual and forward projections (base + layers)
+    changes.ts        Writing the FieldChange log
+    enrichment.ts     Applying a category/merchant to transactions
+    labels.ts         Creating, renaming and applying labels
+    workspace.ts      Resolving the current workspace from the route
+    queue.ts          Enqueuing runs; run-queue.ts claims, retries and reaps them
+    build-info.ts     Which commit is serving (stamped into the runner image)
+    db/               Prisma client, and scopedDb() — the workspace-bound client
+                      every query goes through, with RLS beneath it
+    auth/             Better Auth setup, sessions, roles and memberships
+    ingest/           The Akahu ingest pipeline: accounts, transactions, pending,
+                      the NZFCC and FX catalogs, and conflict reconciliation
+    queries/          Server data fetchers used by pages
+    matching/         Similar-transaction and transfer-candidate matching
+    rules/            GoRules Zen graphs: engine/ runs them, learning/ derives them
+                      from a single classified transaction
+    budget/           infer.ts (deterministic seeding), llm/ (the headless model
+                      conversation), run.ts (the run the worker drains)
+    chat/             client.ts (the shared model connection), run.ts (a detached
+                      turn), tools/ (the registry both conversations use)
+    metrics/          balance, runway, comparison (incl. the Sankey), spend, and
+                      budget/ for budget-vs-actual and forward projections
 ui/                   React components (server and client)
+components/ui/        shadcn primitives
 prisma/               Schema and migrations
+deploy/quadlet/       Rootless Podman self-host: units, install.sh, money.env.example
 scripts/              Every `pnpm` command above (see the Commands section)
   ingest.ts           worker:sync — enqueues a sync run per active link
-  worker.ts           worker:start — drains the queue and calls Akahu
+  worker.ts           worker:start — drains the queues
   drain.ts            the queue machinery both share
+tests/                node --test suite; isolation.test.ts connects as money_app
+                      and proves RLS holds
 ```
 
 ## Key design notes
@@ -219,13 +282,14 @@ scripts/              Every `pnpm` command above (see the Commands section)
 - **Transfer handling.** Akahu tags rows as `TRANSFER` but never links the legs. The app lets you manually link legs (same- or cross-currency), and can auto-link unambiguous opposite legs via rules.
 - **NZ timezone.** Period bucketing uses `Pacific/Auckland`, because many transactions are stamped at midday UTC and land in a different NZ month.
 - **Native addon.** `@gorules/zen-engine` is a native Node addon; it is kept out of the Next.js bundle via `serverExternalPackages` in [next.config.ts](next.config.ts).
-- **Local-only AI.** Two things talk to the model, and both talk to the same one: the budget inference, and the chat. If `LLM_API` points at a model on the same machine (Ollama's OpenAI-compatible endpoint, spoken to with the `openai` client), they share a registry of tools — `list_spending_areas`, `get_transactions`, `get_period_breakdown`, `list_budgets`, `get_budget`, `list_accounts`, and, for the chat only, the seven that write: a budget, a layer on one, either of their windows and names, and the items inside them. Not MCP: every tool is a Prisma call that has to run under the caller's own `scopedDb(workspaceId)` with RLS beneath it, so the tools live in-process and the authorization is the caller's, with nothing to carry across a wire.
+- **Row-Level Security.** Every query in the app goes through `scopedDb(workspaceId)`, which sets `app.workspace_id` for the transaction; Postgres policies do the filtering. The app connects as `money_app` and the worker as `money_sync`, both non-owner roles RLS actually applies to — the schema owner runs migrations and nothing else. [tests/isolation.test.ts](tests/isolation.test.ts) connects as `money_app` and asserts the isolation holds rather than trusting the query layer. Roles (`owner`/`editor`/`viewer`) are declared as capabilities in [lib/server/auth/roles.ts](lib/server/auth/roles.ts), not a string ordering, because the capabilities do not nest: `sync.run` is an editor power a viewer arguably wants and an owner might withhold.
+- **Local-only AI.** Two things talk to the model, and both talk to the same one: the budget inference, and the chat. `LLM_API` points at an OpenAI-compatible endpoint on the same machine — Ollama's, typically — reached through the AI SDK's `@ai-sdk/openai-compatible` provider. They share a registry of tools ([lib/server/chat/tools/](lib/server/chat/tools/)) defined once as plain objects with hand-written JSON schemas, because the models this talks to are small enough that a faithful generated schema confuses them. The reads cover the spending map, transactions and search, accounts, budgets, labels and rules; the writes are split into two permission scopes — `budget` (create and edit budgets, layers and items) and `enrichment` (categorise, set a merchant, tag, write and apply rules) — and a caller is only ever offered the ones their role holds, then refused again at the call. Not MCP: every tool is a Prisma call that has to run under the caller's own `scopedDb(workspaceId)` with RLS beneath it, so the tools live in-process and the authorization is the caller's, with nothing to carry across a wire.
 
   **Budget inference** builds a whole budget in one headless conversation: the model reads the map, pages through an area, calls `propose_items` to commit what it found there, and `finish` when it has been through them all. `propose_items` resolves each row against the real catalog on the spot and answers with what was rejected and why, so the model corrects itself mid-conversation. With no endpoint, or one that won't answer, the button still works: it falls back to the deterministic seeder, as does any area the model never got to.
 
   **Chat** (`/chat`) is the same loop with you in it, streamed over a route handler at `/w/<slug>/chat/<id>/turn` — newline-delimited JSON read by a `fetch` reader, no WebSocket and no custom server. Every message is persisted as it completes, so closing the tab costs you the view of a turn and not the turn. Threads are **private to their author**, which is the one thing in this app membership of a workspace does not entitle you to; RLS only knows the workspace, so the `userId` filter that enforces it is application code and lives in one module. A viewer gets a chat that reads and explains and is never offered a tool that writes. There is **one composer**, used by the new-chat page, a conversation and a run's log alike; which controls it shows is a matter of which handlers it is given, so choosing the model is offered before the first question is asked and Compact only where there is something to summarise. What it writes stays labelled: a figure a model arrived at in conversation is stored `inferredSource: "ai"` with the reason it gave, so the budget page badges it exactly as a seeded one — but not `inferred`, because it was agreed out loud and a re-infer must not overwrite it.
 
-  The model only ever sees and returns *names*, re-mapped to real ids and re-validated before anything is saved. The endpoint is meant to be `127.0.0.1` — a household's whole transaction history is the payload, and it must not leave the machine. Both kinds of run keep their transcript in the same place: a chat's transcript is its thread, and an unattended inference writes one too, a thread marked `ChatThread.unattended` that fills in as the worker works and is linked from "Being created" on the budgets page. It is private to whoever asked for the run, like any other thread, and it replaces the opt-in log files this used to write.
+  The model only ever sees and returns *names*, re-mapped to real ids and re-validated before anything is saved. The endpoint is meant to be `127.0.0.1` — a household's whole transaction history is the payload, and it must not leave the machine — and that is enforced, not just advised: `LLM_API` is resolved and checked for a loopback or private address before any request is issued, and a public one is refused unless `LLM_ALLOW_REMOTE=true` says otherwise deliberately. Both kinds of run keep their transcript in the same place: a chat's transcript is its thread, and an unattended inference writes one too, a thread marked `ChatThread.unattended` that fills in as the worker works and is linked from "Being created" on the budgets page. It is private to whoever asked for the run, like any other thread, and it replaces the opt-in log files this used to write.
 
   **A background run can be talked to, and its log carried on.** The run is in the worker, so there is no registry to reach it through and no signal to send it — the thread both processes can see is the whole channel. Typing on a log's page appends a message the loop drains at the top of its next round; stopping asks it (`BudgetInferenceRun.stopRequestedAt`) to build the budget from what it has proposed so far, and the areas it never reached are named rather than quietly filled in by the deterministic seeder. Both land between steps, not during one, which is the honest bound on anything crossing a process boundary through a database. Once the run is over the log can be **continued** in place: `unattended` clears, `continuedAt` marks where the worker stopped writing and a person started talking, and the model is told as much each turn — its tools have changed, and the budget it was proposing has already been saved.
 
@@ -233,30 +297,46 @@ scripts/              Every `pnpm` command above (see the Commands section)
 
 Copy `.env.example` to `.env` and fill in:
 
-```env
-DATABASE_URL="postgresql://money:money@127.0.0.1:5432/money?schema=public"
-BETTER_AUTH_SECRET=        # openssl rand -base64 32; signs session tokens
-BETTER_AUTH_URL=           # this app's own origin, e.g. http://localhost:3000
-REQUIRE_MFA=               # optional; "true" forces TOTP enrolment before any data
-APP_DB_PASSWORD=           # the `money_app` role, set by `pnpm db:roles`
-SYNC_DB_PASSWORD=          # the `money_sync` role, likewise
-AKAHU_APP_ID_TOKEN=        # from Akahu app settings
-AKAHU_USER_ACCESS_TOKEN=   # from https://my.akahu.nz
-TOKEN_ENCRYPTION_KEY=      # optional; the older symmetric scheme for stored tokens
-TOKEN_PUBLIC_KEY=          # optional; from `pnpm link:keypair` — app included
-TOKEN_PRIVATE_KEY=         # optional; worker and CLI only, never the app
-ID_NAMESPACE=              # optional; labels ids this app mints. Defaults to "app"
+Required:
 
-# Budget inference (all optional; unset ⇒ deterministic seeder only)
-LLM_API=                   # a local OpenAI-compatible endpoint, e.g. 127.0.0.1:11434 (Ollama). Local machine only.
-LLM_API_KEY=               # bearer token, only if the endpoint wants one (Ollama does not)
-LLM_MODEL=                 # model to ask for; defaults to "llama3.1"
-LLM_TIMEOUT=               # per-call ms; default 300000, clamped 30000–600000
-LLM_MAX_MONTHS=            # how far back to read; default/cap is the deterministic window
-LLM_MAX_TOOL_ROWS=         # most transactions one tool result may hold; default 400
-LLM_MAX_STEPS=             # tool-loop rounds before a run or a chat turn is cut off; default 150
-LLM_CONTEXT_TOOL_BUDGET=   # chars of tool output a chat still carries; default 60000
-```
+| Variable | Purpose |
+| --- | --- |
+| `DATABASE_URL` | Postgres. Defaults to the local one `pnpm db:up` starts. |
+| `BETTER_AUTH_SECRET` | Signs session tokens. `openssl rand -base64 32`; no default on purpose. |
+| `BETTER_AUTH_URL` | This app's own origin — the URL you actually browse to, not a container's internal address. |
+| `APP_DB_PASSWORD` | The `money_app` role's password, applied by `pnpm db:roles`. |
+| `SYNC_DB_PASSWORD` | The `money_sync` role's, likewise. |
+| `AKAHU_APP_ID_TOKEN` | From Akahu app settings. |
+| `AKAHU_USER_ACCESS_TOKEN` | From [my.akahu.nz](https://my.akahu.nz). |
+
+Optional:
+
+| Variable | Purpose |
+| --- | --- |
+| `REQUIRE_MFA` | `"true"` forces TOTP enrolment before any data. |
+| `INSECURE_HTTP` | `1` for a plain-http LAN deployment: drops `upgrade-insecure-requests` from the CSP and suppresses HSTS, both of which would otherwise make an http-only origin unreachable. |
+| `TOKEN_PUBLIC_KEY` | From `pnpm link:keypair`. Seals a stored Akahu token; the app gets this half. |
+| `TOKEN_PRIVATE_KEY` | Opens one. Worker and CLI only, never the app. |
+| `TOKEN_ENCRYPTION_KEY` | The older symmetric scheme for the same rows. Retireable via `pnpm link:upgrade --apply`. |
+| `ID_NAMESPACE` | Prefixes ids this app mints. Defaults to `app`. |
+| `LLM_API` | A local OpenAI-compatible endpoint, e.g. `127.0.0.1:11434` (Ollama). Unset ⇒ deterministic seeder only, and `/chat` reports no model. |
+| `LLM_API_KEY` | Bearer token, only if the endpoint wants one (Ollama does not). |
+| `LLM_MODEL` | Model to ask for; defaults to `llama3.1`. |
+| `LLM_ALLOW_REMOTE` | `"true"` to permit a non-local `LLM_API`. Read the note below first. |
+| `LLM_TIMEOUT` | Per-call ms; default 300000, clamped 30000–600000. |
+| `LLM_MAX_MONTHS` | How far back the tools may read; default and cap are the deterministic window. |
+| `LLM_MAX_TOOL_ROWS` | Most transactions one tool result may hold; default 400. |
+| `LLM_MAX_STEPS` | Tool-loop rounds before a run or chat turn is cut off; default 150. |
+| `LLM_CONTEXT_TOOL_BUDGET` | Chars of tool output a chat still carries; default 60000. |
+| `WORKER_POLL_SECONDS` | Queue short-poll interval; default 5. |
+| `WORKER_MAX_ATTEMPTS` | Tries before a run is failed for good; default 3. |
+| `WORKER_BACKOFF_SECONDS` | Base of the retry backoff; default 30. |
+| `WORKER_STALE_MINUTES` | When a `running` row is reaped as abandoned; default 15. |
+| `SYNC_WATCH_POLL_SECONDS` | How often `worker:sync --watch` re-reads; default 2. |
+
+Compose and the quadlet units additionally read `POSTGRES_USER`, `POSTGRES_PASSWORD`,
+`POSTGRES_DB`, `APP_PORT` and `SYNC_INTERVAL_SECONDS` from the same file; `next dev`
+ignores them.
 
 The `AKAHU_*` pair is instance-wide, so it really serves one person's accounts. A
 second workspace that wants its own bank connection connects one from the app, or
@@ -267,8 +347,17 @@ the sync worker and CLI run, never on the web app. `TOKEN_ENCRYPTION_KEY` is the
 older symmetric scheme for the same rows; `pnpm link:upgrade --apply` converts
 them so it can be retired. No key of either kind belongs in the database it opens.
 
+`LLM_API` is checked for a loopback or private address before anything is sent to
+it, because what gets sent is the household's transaction history. A single-label
+hostname, a `.local`/`.internal`/`.localhost` name, or an RFC 1918 address all
+pass; anything internet-routable is refused unless `LLM_ALLOW_REMOTE=true`. In the
+Podman deployment every container shares one network namespace, so a model on the
+*host* is `host.containers.internal`, not `127.0.0.1`.
+
 `pnpm db:up` starts the Postgres in [compose.yaml](compose.yaml), whose credentials
-match the string above. See [.env.example](.env.example) for the full annotated set.
+match the default `DATABASE_URL`. See [.env.example](.env.example) for the full
+annotated set, and [deploy/quadlet/money.env.example](deploy/quadlet/money.env.example)
+for the self-host one.
 
 ## License
 

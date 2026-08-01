@@ -1,24 +1,11 @@
 # See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
 
-# dependencies
+# dependencies — pnpm only (see pnpm-workspace.yaml / pnpm-lock.yaml)
 /node_modules
-/.pnp
-.pnp.*
-.yarn/*
-!.yarn/patches
-!.yarn/plugins
-!.yarn/releases
-!.yarn/versions
-
-# testing
-/coverage
+/.pnpm-store/
 
 # next.js
 /.next/
-/out/
-
-# production
-/build
 
 # misc
 .DS_Store
@@ -26,8 +13,6 @@
 
 # debug
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 .pnpm-debug.log*
 
 # LLM inference transcripts left over from before a run logged itself into a chat
@@ -38,32 +23,21 @@ logs/
 # env files (can opt-in for committing if needed)
 .env*
 !.env.example
+# deploy/quadlet/money.env — the filled-in copy of money.env.example
 money.env
-
-# vercel
-.vercel
 
 # typescript
 *.tsbuildinfo
 next-env.d.ts
 
-# classifier rule seed — names your employer, your banks, and you.
-# The ClassificationRule table (in the ignored database) is the source of truth.
-classify.rules.json
-
 # prisma
-# the sqlite database holds personal financial data — never commit it
-*.db
-*.db.*
-*.db-journal
-*.db-wal
-*.db-shm
-# generated prisma client, recreated by `pnpm db:generate`
+# generated client, recreated by `pnpm db:generate`
 /lib/generated/
-.claude/
-.pnpm-store/
+# pg_dump output — a dump of this database is the whole financial history
 *.dump
-/logs/
+
+# local tooling
+.claude/
 
 # vendored agent skill docs — third-party, not ours to redistribute
 .agents/
