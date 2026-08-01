@@ -24,7 +24,12 @@ afterEach(() => {
  * typed as a fixed union by @types/node, hence the cast on the way in — the
  * whole object is being swapped, not the property assigned.
  */
-function stamp(env: { APP_GIT_SHA?: string; APP_BUILT_AT?: string; NODE_ENV?: string }) {
+function stamp(env: {
+  APP_GIT_SHA?: string;
+  APP_BUILT_AT?: string;
+  APP_GIT_REMOTE?: string;
+  NODE_ENV?: string;
+}) {
   process.env = { ...saved, NODE_ENV: "production", ...env } as NodeJS.ProcessEnv;
 }
 
@@ -32,11 +37,16 @@ const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
 
 describe("buildInfo", () => {
   test("reports the stamped commit, abbreviated for display", () => {
-    stamp({ APP_GIT_SHA: SHA, APP_BUILT_AT: "2026-07-24T02:30:00Z" });
+    stamp({
+      APP_GIT_SHA: SHA,
+      APP_BUILT_AT: "2026-07-24T02:30:00Z",
+      APP_GIT_REMOTE: "git@github.com:owner/repo.git",
+    });
     const build = buildInfo();
 
     assert.equal(build.sha, SHA);
     assert.equal(build.short, "a1b2c3d");
+    assert.equal(build.commitUrl, `https://github.com/owner/repo/commit/${SHA}`);
     assert.equal(build.dirty, false);
     assert.equal(build.builtAt, "2026-07-24T02:30:00Z");
     assert.equal(build.mode, "production");
@@ -77,6 +87,7 @@ describe("buildInfo", () => {
       assert.equal(build.short, null);
       assert.equal(build.dirty, false);
       assert.equal(build.builtAt, null);
+      assert.equal(build.commitUrl, null);
     }
   });
 
@@ -92,5 +103,92 @@ describe("buildInfo", () => {
     // The file read can't tell whether the tree is clean; only install.sh can.
     assert.equal(build.dirty, false);
     assert.equal(build.builtAt, null);
+  });
+
+  // Same fallback, one field over: the link in dev comes from .git/config, which
+  // is the branch's own remote. Asserted loosely because it is *this* checkout's
+  // remote — a fork or an ssh-vs-https clone must both still produce a link.
+  test("derives the commit link from the working tree's remote in development", () => {
+    stamp({ NODE_ENV: "development" });
+    const build = buildInfo();
+
+    assert.equal(build.commitUrl, `https://github.com/owner/money-next/commit/${build.sha}`);
+  });
+});
+
+/**
+ * The link under the sha. It exists so a deploy stamp can be clicked through to
+ * the code that's running, and it is derived from the remote precisely so that a
+ * fork, a rename, or a move to another forge keeps working — a hard-coded
+ * repository would quietly point at someone else's commits.
+ */
+describe("the commit link", () => {
+  const url = (remote: string, sha = SHA) => {
+    stamp({ APP_GIT_SHA: sha, APP_GIT_REMOTE: remote });
+    return buildInfo().commitUrl;
+  };
+  const commit = `commit/${SHA}`;
+
+  // The same repository is spelled four ways depending on how it was cloned, and
+  // all four have to land on the same page.
+  test("resolves every spelling of a remote to the same web URL", () => {
+    const expected = `https://github.com/owner/repo/${commit}`;
+
+    assert.equal(url("git@github.com:owner/repo.git"), expected);
+    assert.equal(url("ssh://git@github.com/owner/repo.git"), expected);
+    assert.equal(url("https://github.com/owner/repo.git"), expected);
+    assert.equal(url("https://github.com/owner/repo"), expected);
+  });
+
+  // Nothing here knows what GitHub is: a self-hosted forge on its own host, and
+  // a repo nested in subgroups, are the same two substitutions.
+  test("keeps the host and the full repository path of the remote", () => {
+    assert.equal(
+      url("git@git.example.com:group/sub/repo.git"),
+      `https://git.example.com/group/sub/repo/${commit}`,
+    );
+    assert.equal(
+      url("https://git.example.com:8443/group/repo.git"),
+      `https://git.example.com:8443/group/repo/${commit}`,
+    );
+  });
+
+  // An ssh port is the ssh daemon's, not the web UI's — carrying it over would
+  // produce a link to a port that doesn't speak HTTP.
+  test("drops the port of an ssh remote", () => {
+    assert.equal(
+      url("ssh://git@git.example.com:2222/owner/repo.git"),
+      `https://git.example.com/owner/repo/${commit}`,
+    );
+  });
+
+  // A remote can carry a token in its userinfo. That must not end up in an href
+  // sitting in the DOM of every page.
+  test("strips credentials embedded in the remote", () => {
+    assert.equal(
+      url("https://user:ghp_secret@github.com/owner/repo.git"),
+      `https://github.com/owner/repo/${commit}`,
+    );
+  });
+
+  // No remote to derive from, or nothing web-addressable at the end of it: the
+  // sidebar renders plain text rather than a link that goes nowhere.
+  test("declines to invent a link it cannot derive", () => {
+    const unlinkable = ["", "   ", "/srv/git/repo.git", "file:///srv/git/repo.git", "../sibling-repo"];
+    for (const remote of unlinkable) {
+      assert.equal(url(remote), null);
+    }
+    stamp({ APP_GIT_REMOTE: "git@github.com:owner/repo.git" });
+    assert.equal(buildInfo().commitUrl, null, "a remote with no sha points at no commit");
+  });
+
+  // The sha is interpolated into a path and arrives from the environment, so it
+  // has to look like a sha first — and `+dirty` has already been split off it.
+  test("only links a sha-shaped commit", () => {
+    assert.equal(url("git@github.com:owner/repo.git", "../../etc"), null);
+    assert.equal(
+      url("git@github.com:owner/repo.git", `${SHA}+dirty`),
+      `https://github.com/owner/repo/${commit}`,
+    );
   });
 });

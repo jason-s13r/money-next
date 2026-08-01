@@ -47,10 +47,19 @@ if [[ "$build" == 1 ]]; then
   fi
   built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+  # Where this build came from, so the sidebar can link the sha to the commit.
+  # The branch's own remote (branch.<name>.remote) is the honest answer to that,
+  # falling back to origin for a detached HEAD or a branch that tracks nothing.
+  # Passed in git's spelling, ssh or https; the app derives the web URL from it.
+  git_branch="$(git -C "$repo_root" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+  git_remote_name="$(git -C "$repo_root" config "branch.$git_branch.remote" 2>/dev/null || true)"
+  git_remote="$(git -C "$repo_root" remote get-url "${git_remote_name:-origin}" 2>/dev/null || true)"
+
   echo "==> Building images from $repo_root (${git_sha:-no git}, $built_at)"
   podman build --target runner \
     --build-arg "GIT_SHA=$git_sha" \
     --build-arg "BUILT_AT=$built_at" \
+    --build-arg "GIT_REMOTE=$git_remote" \
     -t localhost/money-app:latest "$repo_root"
   podman build --target build  -t localhost/money-tooling:latest "$repo_root"
 fi

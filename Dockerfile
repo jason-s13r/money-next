@@ -69,10 +69,16 @@ COPY --from=build /app/public ./public
 # NEXT_PUBLIC_ inlined at build time: these change on every commit, so anything
 # above them would bust its cache layer — here they invalidate nothing, and
 # `next build` (in the `build` stage) never sees them at all.
+#
+# GIT_REMOTE is the remote the build came from, in whatever spelling git has it
+# (`git@host:owner/repo.git` or a URL). The app turns it into the commit link
+# under the sha, so the link follows the repository rather than naming one.
 ARG GIT_SHA=""
 ARG BUILT_AT=""
+ARG GIT_REMOTE=""
 ENV APP_GIT_SHA=$GIT_SHA
 ENV APP_BUILT_AT=$BUILT_AT
+ENV APP_GIT_REMOTE=$GIT_REMOTE
 
 # Run unprivileged; the `node` base image ships a `node` user. Nothing is written
 # to the filesystem at runtime, so read access to root-owned files is enough.

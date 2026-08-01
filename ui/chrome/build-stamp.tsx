@@ -4,11 +4,17 @@ import { formatDateTime } from "@/lib/format";
 // The "what's actually deployed?" line, sat at the foot of both rails
 // (app-sidebar and account-sidebar) directly above the user dropdown.
 //
-// Not a menu item and not a link: it isn't an action. A plain div also keeps the
-// sha selectable so it can be copied into a bug report, and `title` carries the
+// Not a menu item: it isn't an action, and the row stays a plain div so the text
+// is selectable and can be copied into a bug report. `title` carries the
 // unabbreviated sha and the raw ISO instant for when seven characters aren't
 // enough. Hidden when the rail collapses to icons, for the same reason the
 // search box is — there is no glyph that means "commit a1b2c3d".
+//
+// The sha itself is a link out to the commit when the build knows which remote
+// it came from (lib/server/build-info derives the URL; nothing about the forge
+// or the repository is written down here). It stays a bare span otherwise —
+// an unstamped image, or one built from a repo with no remote, has nowhere to
+// send you, and a dead link would be worse than plain text.
 //
 // No `"use client"`, which is not the same as being a server component: both
 // rails that render this are client modules, so it is compiled into the client
@@ -38,7 +44,18 @@ export function BuildStamp({ build }: { build: BuildInfo }) {
       className="truncate px-2 text-[0.7rem] leading-tight text-muted-foreground group-data-[collapsible=icon]:hidden"
       title={[build.sha, build.builtAt, build.mode].filter(Boolean).join("\n")}
     >
-      <span className="font-mono">{build.short ?? "unknown"}</span>
+      {build.commitUrl ? (
+        <a
+          href={build.commitUrl}
+          target="_blank"
+          rel="noreferrer noopener"
+          className="font-mono underline underline-offset-2 hover:text-foreground"
+        >
+          {build.short}
+        </a>
+      ) : (
+        <span className="font-mono">{build.short ?? "unknown"}</span>
+      )}
       {build.dirty ? <span> · modified</span> : null}
       {mode ? <span> · {mode}</span> : null}
       {builtLabel ? <span> · {builtLabel}</span> : null}
