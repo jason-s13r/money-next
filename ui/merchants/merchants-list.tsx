@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Link } from "@/ui/chrome/workspace-context";
+import { Logo } from "@/ui/primitives/logo";
 import { Badge } from "@/components/ui/badge";
 import { Toggle } from "@/components/ui/toggle";
 import { DEFAULT_CURRENCY, formatMoney } from "@/lib/format";
@@ -54,13 +55,7 @@ export function MerchantsList({ merchants }: { merchants: MerchantListItem[] }) 
                 className="flex items-center justify-between gap-3 py-3 hover:opacity-80"
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  {merchant.logo ? (
-                    <img
-                      src={merchant.logo}
-                      alt=""
-                      className="h-6 w-6 shrink-0 rounded object-contain"
-                    />
-                  ) : null}
+                  <Logo src={merchant.logo} className="h-6 w-6 shrink-0" />
                   <span className="truncate">{merchant.name}</span>
                 </span>
                 <span className="flex shrink-0 items-center gap-4">

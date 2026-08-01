@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { Listing } from "@/ui/transactions/listing";
+import { Logo } from "@/ui/primitives/logo";
 import { pageHref, paginate, parsePage } from "@/ui/primitives/pagination";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { getMerchant } from "@/lib/server/queries/lookups";
@@ -38,13 +39,7 @@ export default async function MerchantPage(props: PageProps<"/w/[workspace]/merc
     <Listing
       title={
         <span className="flex items-center gap-3">
-          {merchant.logo ? (
-            <img
-              src={merchant.logo}
-              alt=""
-              className="h-8 w-8 rounded object-contain"
-            />
-          ) : null}
+          <Logo src={merchant.logo} className="h-8 w-8" />
           {merchant.name}
         </span>
       }

@@ -2,6 +2,7 @@
 
 import { Link } from "@/ui/chrome/workspace-context";
 import { LabelsCell } from "@/ui/transactions/labels-cell";
+import { Logo } from "@/ui/primitives/logo";
 import type { TransactionListItem } from "@/lib/server/queries/transactions";
 import { formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
@@ -35,13 +36,7 @@ export function TransactionRowDetails({ tx }: { tx: TransactionListItem }) {
         <Detail label="Description">{tx.description}</Detail>
         <Detail label="Account">
           <span className="flex items-center gap-2">
-            {tx.account.connection?.logo ? (
-              <img
-                src={tx.account.connection.logo}
-                alt=""
-                className="h-5 w-5 rounded object-contain"
-              />
-            ) : null}
+            <Logo src={tx.account.connection?.logo} className="h-5 w-5" />
             <Link href={`/accounts/${tx.account.id}`} className={link}>
               {tx.account.name}
             </Link>

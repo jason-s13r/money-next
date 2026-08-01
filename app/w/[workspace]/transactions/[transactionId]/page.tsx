@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireWorkspace } from "@/lib/server/auth/session";
+import { Logo } from "@/ui/primitives/logo";
 import { SearchableSelect, type SelectOption } from "@/ui/primitives/searchable-select";
 import { positiveAmountClass } from "@/lib/ui/amount";
 import { getCategories, getLabels, getMerchants, getTransaction, getRulesForTransaction } from "@/lib/server/queries/lookups";
@@ -99,14 +100,10 @@ export default async function TransactionPage(
         <Field
           label="Bank"
           value={
-            account.connection?.logo ? (
-              <span className="flex items-center gap-2">
-                <img src={account.connection.logo} alt="" className="h-5 w-5 rounded object-contain" />
-                {account.connection.name}
-              </span>
-            ) : (
-              account.connection?.name ?? account.connectionId
-            )
+            <span className="flex items-center gap-2">
+              <Logo src={account.connection?.logo} className="h-5 w-5" />
+              {account.connection?.name ?? account.connectionId}
+            </span>
           }
         />
         <Field label="Account" value={account.name} href={`/accounts/${account.id}`} />

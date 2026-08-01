@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { Logo } from "@/ui/primitives/logo";
 import { pageHref, paginate, Pagination, parsePage } from "@/ui/primitives/pagination";
 import { StatList } from "@/ui/primitives/stat-list";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
@@ -35,13 +36,7 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
     <main className="mx-auto w-full max-w-5xl p-2">
       <header className="mb-6">
         <h1 className="flex items-center gap-3 text-2xl font-semibold">
-          {account.connection?.logo ? (
-            <img
-              src={account.connection.logo}
-              alt=""
-              className="h-8 w-8 rounded object-contain"
-            />
-          ) : null}
+          <Logo src={account.connection?.logo} className="h-8 w-8" />
           {account.name}
         </h1>
         <p className="mt-1 text-sm opacity-60">
