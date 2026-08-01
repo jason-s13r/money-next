@@ -4,6 +4,7 @@ import { formatMoneyWhole } from "@/lib/format";
 import {
   AXIS_W,
   C_DOWN,
+  C_PLANNED,
   C_UP,
   C_WORTH,
   H,
@@ -32,6 +33,8 @@ type ChartSvgProps = {
   scrollRef: React.RefObject<HTMLDivElement | null>;
   geom: Geom;
   nets: number[];
+  /** The forward bars: one averaged planned flow per day, index 0 = tomorrow. */
+  plannedNets: number[];
   worthBoundaries: number[];
   currentWorth: number;
   displayCurrency: string;
@@ -48,6 +51,7 @@ export function BalanceChartSvg({
   scrollRef,
   geom,
   nets,
+  plannedNets,
   worthBoundaries,
   currentWorth,
   displayCurrency,
@@ -88,7 +92,7 @@ export function BalanceChartSvg({
           role="img"
           aria-label={`Available balance over time, currently ${money(
             currentWorth,
-          )}, with daily net-flow bars and one projected line per forecast budget. Scroll horizontally for history.`}
+          )}, with daily net-flow bars, grey bars for the flow the forecast budgets plan on average each day ahead, and one projected line per forecast budget. Scroll horizontally for history.`}
           onMouseMove={onMove}
           onMouseLeave={onLeave}
         >
@@ -111,23 +115,28 @@ export function BalanceChartSvg({
           {/* Net-flow bars: each rises (in) or drops (out) from the $0 line by
               the day's net flow — the same amount the net-worth line steps. */}
           {nets.map((value, i) => {
-            const inset = Math.min(2.5, Math.max(0, bw * 0.15));
-            const w = Math.max(0.5, bw - inset * 2);
-            const y = fy(Math.max(0, value));
-            const barH = Math.max(0.6, Math.abs(fy(value) - fy(0)));
             const active = hover?.kind === "history" && hover.i === i;
             return (
               <rect
                 key={i}
-                x={fx(i) + inset}
-                y={y}
-                width={w}
-                height={barH}
-                rx={w >= 4 ? 1.5 : 0}
+                {...bar(value, fx(i), bw, fy)}
                 style={{ fill: value >= 0 ? C_UP : C_DOWN, opacity: active ? 1 : 0.9 }}
               />
             );
           })}
+
+          {/* The same bars past today, in the planned days: one grey bar per day
+              carrying the flow the forecast budgets average out to. Grey and
+              faint because it is a plan — the day it is drawn in green is the day
+              it is mistaken for a transaction that happened. It sits under the
+              lines, like its historic half does. */}
+          {plannedNets.map((value, i) => (
+            <rect
+              key={i}
+              {...bar(value, nowX + i * bw, bw, fy)}
+              style={{ fill: C_PLANNED, opacity: 0.55 }}
+            />
+          ))}
 
           {/* Net-worth line, on top of the candles */}
           <path d={worthPath} fill="none" style={{ stroke: C_WORTH }} strokeWidth={2} strokeLinejoin="round" />
@@ -230,4 +239,29 @@ export function BalanceChartSvg({
       </div>
     </div>
   );
+}
+
+/**
+ * A daily flow bar: rooted on $0, rising for money in and dropping for money
+ * out, inset from its day's slot so neighbouring days stay countable.
+ *
+ * One function for the recorded days and the planned ones. The colour is the
+ * caller's business and the only thing that differs — a plan drawn at a
+ * different width or off a different baseline would be claiming to measure
+ * something other than what history measures, which it isn't.
+ *
+ * The minimums keep a $3 day and a hair-wide zoom visible: a bar that rounds to
+ * nothing looks like a day with no transactions rather than a day with small
+ * ones.
+ */
+function bar(value: number, x: number, bw: number, fy: (v: number) => number) {
+  const inset = Math.min(2.5, Math.max(0, bw * 0.15));
+  const w = Math.max(0.5, bw - inset * 2);
+  return {
+    x: x + inset,
+    y: fy(Math.max(0, value)),
+    width: w,
+    height: Math.max(0.6, Math.abs(fy(value) - fy(0))),
+    rx: w >= 4 ? 1.5 : 0,
+  };
 }

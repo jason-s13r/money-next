@@ -19,6 +19,7 @@ import type { SpendSummary } from "../spend";
 // re-exported here so callers reach for the projection through the module that
 // produces one, rather than having to know which half a name lives in.
 export {
+  averageDailyNets,
   DAYS_PER_MONTH,
   PROJECTION_DAYS,
   SCENARIO_COLORS,
@@ -26,6 +27,18 @@ export {
   type ProjectionPoint,
   type ProjectionScenario,
 } from "../../../budget/projection";
+
+/**
+ * A scenario plus the daily flows it was walked from.
+ *
+ * The flows are a server-side intermediate, not part of the scenario: the chart
+ * draws one averaged set of bars rather than one per budget, so `dailyNets` is
+ * folded into that average by `getBalanceSeries` and never reaches the browser.
+ */
+export type ForecastProjection = ProjectionScenario & {
+  /** Planned net flow per day, index 0 = tomorrow. Positive is money in. */
+  dailyNets: number[];
+};
 
 // Walking a plan forward: what the balance does if the budget holds.
 //
@@ -84,7 +97,7 @@ export async function getForecastProjections(
   spend: SpendSummary,
   now: Date = new Date(),
   days: number = PROJECTION_DAYS,
-): Promise<ProjectionScenario[]> {
+): Promise<ForecastProjection[]> {
   const db = await getDb();
 
   // The same shape for the base and for each of its layers, so both expand through
@@ -215,6 +228,7 @@ export async function getForecastProjections(
       name: row.name,
       color: SCENARIO_COLORS[index % SCENARIO_COLORS.length],
       blendedDays,
+      dailyNets: nets,
       ...walkProjection(nets, outs, ins, balances.accessible, from),
     };
   });

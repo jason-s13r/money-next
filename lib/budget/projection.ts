@@ -86,6 +86,40 @@ const DAY_MS = 86_400_000;
 const isoDay = (date: Date) => date.toISOString().slice(0, 10);
 
 /**
+ * The one set of forward bars the chart draws: each future day's planned net
+ * flow, averaged across every forecast budget.
+ *
+ * Averaged rather than drawn per budget on purpose. The lines are already one
+ * per scenario and colour tells them apart, but bars root at the same $0 line
+ * and would overlap into a stack that reads as a total nobody planned. One grey
+ * bar per day says the honest thing instead: this is the flow the plans expect
+ * on that day, near enough.
+ *
+ * Days past a shorter scenario's horizon average only the scenarios that reach
+ * them, so a two-year plan beside a six-month one is not quietly halved after
+ * month six. Depletion is not a horizon: a scenario's flows are what it plans to
+ * spend, and they keep counting even after its balance line has hit zero and
+ * stopped being drawable.
+ */
+export function averageDailyNets(perScenario: number[][]): number[] {
+  const days = Math.max(0, ...perScenario.map((nets) => nets.length));
+  const out = new Array<number>(days);
+  for (let i = 0; i < days; i++) {
+    let sum = 0;
+    let n = 0;
+    for (const nets of perScenario) {
+      if (i >= nets.length) continue;
+      sum += nets[i];
+      n++;
+    }
+    // Whole cents: these are averages of already-approximate plans, and the
+    // series ships to the browser a day at a time.
+    out[i] = n === 0 ? 0 : Math.round((sum / n) * 100) / 100;
+  }
+  return out;
+}
+
+/**
  * Turn a scenario's daily net flows into the line, the depletion date and the
  * monthly rates.
  *

@@ -6,13 +6,18 @@ import { money } from "../money";
 import { periodKey, periodStart, periodWindow } from "../../periods";
 import type { BalanceSummary } from "./balance";
 import type { SpendSummary } from "./spend";
-import { getForecastProjections, type ProjectionScenario } from "./budget/forecast";
+import {
+  averageDailyNets,
+  getForecastProjections,
+  type ProjectionScenario,
+} from "./budget/forecast";
 
 // The dashboard's balance-over-time chart — a personal version of a stock price
 // chart. "Balance" here is accessible net worth (the spendable accounts, locked
 // KiwiSaver/investments left out). The resolution is always one day: a daily bar
 // is the amount the balance moved that day (its net transaction flow), riding a
-// daily balance line, with one forward projection per forecast scenario. The
+// daily balance line, with one forward projection per forecast scenario and the
+// bars carrying on past today in grey as the planned flows. The
 // client zooms
 // (how many days fill the width) and scrolls; the data here is the full daily
 // history.
@@ -46,6 +51,11 @@ export type BalanceSeries = {
   days: string[];
   /** Net transaction flow per day, oldest first, aligned with `days`. */
   nets: number[];
+  /** The forward half of `nets`: each planned day's net flow, averaged across the
+   *  forecast budgets. Index 0 is tomorrow, the first day past `days`. Empty when
+   *  nothing is forecast. See `averageDailyNets` for why one averaged set of bars
+   *  rather than one per scenario. */
+  projectedNets: number[];
   /** Accessible balance at each day *boundary*, oldest first — `days.length + 1`
    *  values. Boundary `i` is the balance entering day `i`; boundary `i+1` its close,
    *  and their difference is `nets[i]` — the bar. The last is `currentWorth`. */
@@ -133,8 +143,14 @@ export async function getBalanceSeries(
   // the chart draws no projection line — nothing is created here, because a read
   // that quietly wrote a forecast would make the dashboard's first load a write,
   // and would put a plan in front of someone they never agreed to.
-  const scenarios = await getForecastProjections(balances, spend, now);
-  const scenariosConfigured = scenarios.length > 0;
+  const projections = await getForecastProjections(balances, spend, now);
+  const scenariosConfigured = projections.length > 0;
+
+  // The forward bars are one averaged set, so each scenario's own daily flows are
+  // spent here and dropped rather than shipped: the client has no use for eight
+  // arrays it would only average again.
+  const projectedNets = averageDailyNets(projections.map((p) => p.dailyNets));
+  const scenarios: ProjectionScenario[] = projections.map(({ dailyNets, ...rest }) => rest);
 
   return {
     displayCurrency: display,
@@ -142,6 +158,7 @@ export async function getBalanceSeries(
     currentWorth,
     days,
     nets,
+    projectedNets,
     worthBoundaries,
     scenarios,
     scenariosConfigured,

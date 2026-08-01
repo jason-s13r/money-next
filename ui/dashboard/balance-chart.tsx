@@ -9,6 +9,7 @@ import { BalanceChartLegend, type LegendItem } from "./balance-chart-legend";
 import {
   AXIS_W,
   C_DOWN,
+  C_PLANNED,
   C_UP,
   C_WORTH,
   DAY_MS,
@@ -40,7 +41,8 @@ import {
 // `balance-chart-legend.tsx`.
 
 export function BalanceChart({ series }: { series: BalanceSeries }) {
-  const { displayCurrency, now, currentWorth, days, nets, worthBoundaries, scenarios } = series;
+  const { displayCurrency, now, currentWorth, days, nets, projectedNets, worthBoundaries, scenarios } =
+    series;
 
   const N = days.length;
 
@@ -94,10 +96,22 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
   );
   const totalUnits = N + futureDays;
 
+  // The planned bars only fill the days the drawing actually reaches: a chart
+  // whose every scenario runs out in month seven stops there, and bars for the
+  // remaining seventeen months would be flow attached to no line. Whole days
+  // only, so the last bar cannot poke past a fractional depletion edge.
+  const plannedNets = useMemo(
+    () => projectedNets.slice(0, Math.floor(futureDays)),
+    [projectedNets, futureDays],
+  );
+
   const geom = useMemo(() => {
     const viewportW = Math.max(320, containerW - AXIS_W);
     const range = RANGES.find((r) => r.key === rangeKey)!;
     // The range fixes how many days fill the width; "Max" fits the whole thing.
+    // Bar width is shared by the recorded and the planned days: a forward bar is
+    // the same daily unit as a historic one, and drawing it any other size would
+    // make the plan look like a different resolution.
     const bw = Math.max(0.4, viewportW / (range.days ?? (totalUnits || 1)));
     const plotW = totalUnits * bw;
 
@@ -106,11 +120,12 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     // extents (a big in/out day) are folded in too, keeping any bar from
     // clipping. The projected worths join them because a budget that plans to
     // save climbs above every figure history has — an axis fitted to the past
-    // would run that line off the top of the plot.
+    // would run that line off the top of the plot. The planned bars come in on the
+    // same terms as the historic ones — they root at $0 too.
     const projectedWorths = scenarios.flatMap((s) => s.points.map((p) => p.worth));
     const yScale = niceScale(
-      Math.min(0, ...worthBoundaries, ...nets, ...projectedWorths),
-      Math.max(0, ...worthBoundaries, ...nets, ...projectedWorths),
+      Math.min(0, ...worthBoundaries, ...nets, ...plannedNets, ...projectedWorths),
+      Math.max(0, ...worthBoundaries, ...nets, ...plannedNets, ...projectedWorths),
     );
 
     const fx = (unit: number) => unit * bw;
@@ -137,7 +152,17 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
       }));
 
     return { bw, plotW, viewportW, yScale, fx, fy, worthPath, worthArea, nowX, projections };
-  }, [containerW, rangeKey, totalUnits, worthBoundaries, nets, N, currentWorth, scenarios]);
+  }, [
+    containerW,
+    rangeKey,
+    totalUnits,
+    worthBoundaries,
+    nets,
+    plannedNets,
+    N,
+    currentWorth,
+    scenarios,
+  ]);
 
   const { bw, plotW, fx, nowX } = geom;
 
@@ -239,18 +264,54 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
       };
     }
     const date = new Date(now + (hover.unit - N) * DAY_MS);
+    const planned = plannedNets[Math.floor(hover.unit) - N];
     return {
       label: fullFmt.format(date),
       // One row per scenario still running at this date. A line that has already
       // hit zero drops out of the tooltip rather than reporting $0 for ever.
-      rows: scenarios.flatMap((s) => {
-        const worth = worthAt(s.points, hover.unit - N, currentWorth);
-        return worth === null
-          ? []
-          : [{ color: s.color, label: s.name, value: money(worth), y: worth }];
-      }),
+      rows: [
+        ...scenarios.flatMap((s) => {
+          const worth = worthAt(s.points, hover.unit - N, currentWorth);
+          return worth === null
+            ? []
+            : [{ color: s.color, label: s.name, value: money(worth), y: worth }];
+        }),
+        // What the grey bar under the cursor is worth. Named for the averaging
+        // when there is more than one forecast, because "planned in" over a row
+        // of per-budget balances would otherwise read as belonging to the last of
+        // them. Silent on a day nothing is planned: an explicit $0 in a list of
+        // real figures reads as a fact rather than as an empty day.
+        ...(planned
+          ? [
+              {
+                color: C_PLANNED,
+                label:
+                  scenarios.length > 1
+                    ? planned >= 0
+                      ? "Planned in · avg"
+                      : "Planned out · avg"
+                    : planned >= 0
+                      ? "Planned in"
+                      : "Planned out",
+                value: money(planned),
+              },
+            ]
+          : []),
+      ],
     };
-  }, [hover, days, worthBoundaries, nets, now, N, scenarios, currentWorth, fullFmt, money]);
+  }, [
+    hover,
+    days,
+    worthBoundaries,
+    nets,
+    plannedNets,
+    now,
+    N,
+    scenarios,
+    currentWorth,
+    fullFmt,
+    money,
+  ]);
 
   const legend: LegendItem[] = [
     { color: C_WORTH, label: "Available balance" },
@@ -295,6 +356,7 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
         scrollRef={scrollRef}
         geom={geom}
         nets={nets}
+        plannedNets={plannedNets}
         worthBoundaries={worthBoundaries}
         currentWorth={currentWorth}
         displayCurrency={displayCurrency}

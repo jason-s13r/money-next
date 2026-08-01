@@ -33,6 +33,10 @@ export const DEFAULT_RANGE = "9M";
 export const C_WORTH = "var(--viz-1)";
 export const C_UP = "var(--viz-2)";
 export const C_DOWN = "var(--viz-8)";
+// Planned days ahead: the de-emphasis grey, not a ninth categorical slot. A green
+// forward bar would claim a payday happened; grey says the same shape is a plan,
+// and leaves in/out to be read from which side of the $0 line the bar hangs on.
+export const C_PLANNED = "var(--viz-unknown)";
 
 /**
  * Money in axis shorthand: `$40K`, `-$1.2M`, `$850`.

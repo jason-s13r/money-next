@@ -36,7 +36,7 @@ import {
   detectRecurrence,
   isCurrent,
 } from "../lib/budget/detect";
-import { walkProjection } from "../lib/budget/projection";
+import { averageDailyNets, walkProjection } from "../lib/budget/projection";
 import { actualPerOccurrence, blendTowardActual, refinedAmount } from "../lib/budget/refine";
 
 /** A UTC-midnight date, which is how occurrences come back. */
@@ -805,6 +805,36 @@ describe("the monthly rate describes the plan, not the walk", () => {
     assert.ok(Math.abs(walk.monthlyBurn! - 200 * (365.25 / 12)) < 1e-9, `${walk.monthlyBurn}`);
     // And the three figures the legend shows add up, which is the same rule.
     assert.equal(walk.monthlyBurn, walk.monthlyOut - walk.monthlyIn);
+  });
+});
+
+// The forward bars on the balance chart are one grey bar a day, not one per
+// forecast budget: bars root at the same $0 line, so drawing four scenarios'
+// worth of them would stack into a figure nobody planned. `averageDailyNets` is
+// the arithmetic that makes them one, and the two things it has to get right are
+// that a day is averaged and not summed, and that a scenario which stops short
+// does not drag the days past its end toward zero.
+describe("the planned bars average the forecasts, one bar a day", () => {
+  test("a day is the mean of the scenarios' flows, not their total", () => {
+    const avg = averageDailyNets([
+      [-100, -200, 0],
+      [-300, 0, 0],
+    ]);
+    assert.deepEqual(avg, [-200, -100, 0]);
+  });
+
+  test("a day only the longer scenario reaches is that scenario's own flow", () => {
+    // The six-month plan beside the two-year one must not halve month seven
+    // onward: past its end there is nothing of its to average in.
+    const avg = averageDailyNets([
+      [-100, -100, -100],
+      [-300],
+    ]);
+    assert.deepEqual(avg, [-200, -100, -100]);
+  });
+
+  test("no forecasts at all is no bars, not a row of zeroes", () => {
+    assert.deepEqual(averageDailyNets([]), []);
   });
 });
 
