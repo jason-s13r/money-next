@@ -51,6 +51,17 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+
+  images: {
+    'remotePatterns': [
+      {
+        protocol: 'https',
+        hostname: 'cdn.akahu.nz',
+        port: '',
+        pathname: '/**',
+      },
+    ],
+  }
 };
 
 export default nextConfig;

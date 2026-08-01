@@ -1,7 +1,8 @@
 "use client";
 
+import Image from "next/image";
+
 import { Link } from "@/ui/chrome/workspace-context";
-import { Logo } from "@/ui/primitives/logo";
 import { useState } from "react";
 import { CELL, CHEVRON, Swatch, formatCell, type CellFormat } from "./comparison-table";
 
@@ -91,7 +92,17 @@ export function SpendRow({
 
             {row.color ? <Swatch color={row.color} /> : null}
 
-            <Logo src={row.logo} className="size-4 shrink-0" />
+            {row.logo ? (
+              <Image
+                src={row.logo}
+                alt=""
+                width={16}
+                height={16}
+                loading="lazy"
+                decoding="async"
+                className="size-4 shrink-0 rounded object-contain"
+              />
+            ) : null}
 
             {row.href ? (
               <Link href={row.href} className={link}>

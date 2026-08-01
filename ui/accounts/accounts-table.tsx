@@ -1,5 +1,6 @@
+import Image from "next/image";
+
 import { Link } from "@/ui/chrome/workspace-context";
-import { Logo } from "@/ui/primitives/logo";
 import { formatMoney } from "@/lib/format";
 
 // The accounts listing table. Structurally typed on just the fields it shows, so
@@ -71,10 +72,17 @@ export function AccountsTable({
               {/* Bank logo beside the account name (which wraps freely), then a
                   muted line of the transaction counts. */}
               <div className="flex items-start gap-2">
-                <Logo
-                  src={account.connection?.logo}
-                  className="mt-0.5 h-5 w-5 shrink-0"
-                />
+                {account.connection?.logo ? (
+                  <Image
+                    src={account.connection.logo}
+                    alt=""
+                    width={20}
+                    height={20}
+                    loading="lazy"
+                    decoding="async"
+                    className="mt-0.5 h-5 w-5 shrink-0 rounded object-contain"
+                  />
+                ) : null}
                 <Link href={`/accounts/${account.id}`} className={link}>
                   {account.name}
                 </Link>

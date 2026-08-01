@@ -1,6 +1,6 @@
+import Image from "next/image";
 import { notFound } from "next/navigation";
 import { requireWorkspace } from "@/lib/server/auth/session";
-import { Logo } from "@/ui/primitives/logo";
 import { SearchableSelect, type SelectOption } from "@/ui/primitives/searchable-select";
 import { positiveAmountClass } from "@/lib/ui/amount";
 import { getCategories, getLabels, getMerchants, getTransaction, getRulesForTransaction } from "@/lib/server/queries/lookups";
@@ -101,7 +101,17 @@ export default async function TransactionPage(
           label="Bank"
           value={
             <span className="flex items-center gap-2">
-              <Logo src={account.connection?.logo} className="h-5 w-5" />
+              {account.connection?.logo ? (
+                <Image
+                  src={account.connection.logo}
+                  alt=""
+                  width={20}
+                  height={20}
+                  loading="lazy"
+                  decoding="async"
+                  className="h-5 w-5 rounded object-contain"
+                />
+              ) : null}
               {account.connection?.name ?? account.connectionId}
             </span>
           }

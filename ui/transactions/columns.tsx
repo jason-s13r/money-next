@@ -1,9 +1,10 @@
 "use client";
 
 import type { ColumnDef } from "@tanstack/react-table";
+import Image from "next/image";
+
 import { Link } from "@/ui/chrome/workspace-context";
 import { LabelsCell } from "@/ui/transactions/labels-cell";
-import { Logo } from "@/ui/primitives/logo";
 import type { TransactionListItem } from "@/lib/server/queries/transactions";
 import {
   DEFAULT_CURRENCY as DISPLAY_CURRENCY,
@@ -80,7 +81,17 @@ export function buildTransactionColumns({
         const hasCategory = tx.categoryGroup && tx.category?.name;
         return (
           <div className="flex items-center gap-2">
-            <Logo src={tx.merchant?.logo} className="h-5 w-5" />
+            {tx.merchant?.logo ? (
+              <Image
+                src={tx.merchant.logo}
+                alt=""
+                width={20}
+                height={20}
+                loading="lazy"
+                decoding="async"
+                className="h-5 w-5 rounded object-contain"
+              />
+            ) : null}
             <div>
               <div>
                 {/* An open enrichment conflict is flagged where the row is read, not
@@ -155,7 +166,17 @@ export function buildTransactionColumns({
         const tx = row.original;
         return (
           <div className="flex items-center gap-2">
-            <Logo src={tx.account.connection?.logo} className="h-5 w-5" />
+            {tx.account.connection?.logo ? (
+              <Image
+                src={tx.account.connection.logo}
+                alt=""
+                width={20}
+                height={20}
+                loading="lazy"
+                decoding="async"
+                className="h-5 w-5 rounded object-contain"
+              />
+            ) : null}
             <Link href={`/accounts/${tx.account.id}`} className={link}>
               {tx.account.name}
             </Link>

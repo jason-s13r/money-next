@@ -1,5 +1,6 @@
+import Image from "next/image";
+
 import { Link } from "@/ui/chrome/workspace-context";
-import { Logo } from "@/ui/primitives/logo";
 import type { PendingTransactionItem } from "@/lib/server/queries/pending";
 import { DEFAULT_CURRENCY as DISPLAY_CURRENCY, formatDate, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
@@ -60,7 +61,17 @@ export function PendingTable({
                     <>
                       {" · "}
                       <span className="inline-flex items-center gap-1 align-middle">
-                        <Logo src={tx.account.connection?.logo} className="h-4 w-4" />
+                        {tx.account.connection?.logo ? (
+                          <Image
+                            src={tx.account.connection.logo}
+                            alt=""
+                            width={16}
+                            height={16}
+                            loading="lazy"
+                            decoding="async"
+                            className="h-4 w-4 rounded object-contain"
+                          />
+                        ) : null}
                         <Link href={`/accounts/${tx.account.id}`} className={link}>
                           {tx.account.name}
                         </Link>
