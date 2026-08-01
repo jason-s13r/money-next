@@ -1,3 +1,25 @@
+# Transitive dependencies pinned forward past a published advisory. Each of
+# these is a dependency of a package that is *already* on its latest release, so
+# there is nothing to upgrade to at the top level — the fix has to be forced
+# here. Drop an entry once the parent ships a release that resolves it anyway.
+overrides:
+  # next 16.2.12 pins postcss 8.4.31 exactly, which is behind three advisories
+  # (GHSA-6g55-p6wh-862q, GHSA-r28c-9q8g-f849, GHSA-qx2v-qp2m-jg93 — sourceMappingURL
+  # file disclosure and </style> XSS). 8.5.x is what shadcn and @tailwindcss/postcss
+  # already resolve to in this tree, so the version is well exercised here.
+  next>postcss: ^8.5.25
+  # next's optional sharp ^0.34.5 inherits four libvips CVEs (GHSA-f88m-g3jw-g9cj),
+  # fixed in 0.35.0. next only ever calls sharp(), .rotate/.resize/.avif/.webp/.png/
+  # .jpeg/.toBuffer and .concurrency(), none of which changed in 0.35, and 0.35 still
+  # ships a CJS entry for next's bare require('sharp'). Nothing here uses next/image,
+  # so this path is cold regardless.
+  next>sharp: ^0.35.3
+  # akahu 2.5.1 depends on uuid ^8.3.2 (GHSA-w5hq-g745-h8pq: missing bounds check on
+  # the optional buf argument to v3/v5/v6). akahu only calls uuid.v4() for its
+  # Idempotency-Key, so it never reached the bug — this is hygiene, not a live fix.
+  # Held at 11.x deliberately: akahu does require('uuid'), and uuid 13+ is ESM-only.
+  akahu>uuid: ^11.1.1
+
 allowBuilds:
   '@prisma/engines': true
   better-sqlite3: true
