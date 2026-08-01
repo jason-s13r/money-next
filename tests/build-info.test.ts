@@ -106,13 +106,17 @@ describe("buildInfo", () => {
   });
 
   // Same fallback, one field over: the link in dev comes from .git/config, which
-  // is the branch's own remote. Asserted loosely because it is *this* checkout's
-  // remote — a fork or an ssh-vs-https clone must both still produce a link.
+  // is the branch's own remote. Asserted by shape rather than by value, because it
+  // is *this* checkout's remote — naming a repository here would be asserting who
+  // cloned it, and a fork, a rename or an ssh-vs-https clone must all still
+  // produce a link. What has to hold is that there *is* one and it points at the
+  // commit this same call reported.
   test("derives the commit link from the working tree's remote in development", () => {
     stamp({ NODE_ENV: "development" });
     const build = buildInfo();
 
-    assert.equal(build.commitUrl, `https://github.com/owner/money-next/commit/${build.sha}`);
+    assert.match(build.commitUrl ?? "", /^https:\/\/[^/]+\/[^/]+\/[^/]+\/commit\/[0-9a-f]{40}$/);
+    assert.ok(build.commitUrl?.endsWith(`/commit/${build.sha}`));
   });
 });
 
