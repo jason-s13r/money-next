@@ -52,16 +52,34 @@ const nextConfig: NextConfig = {
     ];
   },
 
+  // `/img?url=…` in the address bar instead of `/_next/image?url=…`. `path` is
+  // only the prefix the *loader* stamps into each `<img src>`; the optimizer
+  // itself is still dispatched on the literal string `/_next/image` inside the
+  // server's router, which reads nothing from this config. So the rewrite below
+  // is not optional — without it the prettier URL 404s.
   images: {
-    'remotePatterns': [
+    path: "/img",
+    remotePatterns: [
       {
-        protocol: 'https',
-        hostname: 'cdn.akahu.nz',
-        port: '',
-        pathname: '/**',
+        protocol: "https",
+        hostname: "cdn.akahu.nz",
+        port: "",
+        pathname: "/**",
       },
     ],
-  }
+  },
+
+  // `beforeFiles`, because the optimizer is reached during the filesystem check
+  // (alongside `_next/static` and `public/`) — an `afterFiles` rewrite would run
+  // too late to ever be consulted. Query strings carry across untouched, so the
+  // `url`/`w`/`q` the loader wrote arrive as the optimizer expects them.
+  async rewrites() {
+    return {
+      beforeFiles: [{ source: "/img", destination: "/_next/image" }],
+      afterFiles: [],
+      fallback: [],
+    };
+  },
 };
 
 export default nextConfig;

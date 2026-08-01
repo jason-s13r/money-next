@@ -13,6 +13,7 @@ import {
 } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 import { positiveAmountClass } from "@/lib/ui/amount";
+import { MERCHANT_LOGO_FALLBACK } from "@/lib/ui/logo";
 import type { SortField } from "@/lib/transactions/sort";
 
 // The TanStack column model behind {@link TransactionTable}. Each cell renderer is
@@ -81,9 +82,12 @@ export function buildTransactionColumns({
         const hasCategory = tx.categoryGroup && tx.category?.name;
         return (
           <div className="flex items-center gap-2">
-            {tx.merchant?.logo ? (
+            {/* The guard is on the merchant, not its logo: a row with no merchant
+                at all is most of them, and a placeholder on each would be noise.
+                A row that *has* been enriched gets the icon either way. */}
+            {tx.merchant ? (
               <Image
-                src={tx.merchant.logo}
+                src={tx.merchant.logo ?? MERCHANT_LOGO_FALLBACK}
                 alt=""
                 width={20}
                 height={20}

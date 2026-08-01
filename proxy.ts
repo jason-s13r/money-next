@@ -229,7 +229,19 @@ export const config = {
   // (the android-chrome PNGs in public/) are public static assets — a browser
   // requests them for the tab and home screen without a session, so they skip the
   // proxy exactly as `favicon.ico` does rather than redirect to /login.
+  // `img` is the image optimizer, renamed from `_next/image` by `images.path` in
+  // next.config.ts and rewritten back before the filesystem check. It is excluded
+  // for the same reason `_next/image` was: a nonce'd CSP on an image response
+  // says nothing, and a logo request without a session would 307 to /login rather
+  // than fail visibly. (Prefix match, as every entry here is — there is no other
+  // route starting `img`.)
+  //
+  // `merchant-default.png` is the logo placeholder (lib/ui/logo.ts). It must be
+  // listed even though it is only ever rendered to a signed-in reader, because
+  // the optimizer fetches it back over this origin: left in, the fetch answered
+  // with the /login redirect and the optimizer returned 400 "not a valid image"
+  // for every logo-less merchant.
   matcher: [
-    "/((?!api/auth|_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|manifest.webmanifest|android-chrome-).*)",
+    "/((?!api/auth|_next/static|_next/image|img|favicon.ico|icon.png|apple-icon.png|manifest.webmanifest|android-chrome-|merchant-default.png).*)",
   ],
 };

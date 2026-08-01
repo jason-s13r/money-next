@@ -9,6 +9,7 @@ import { Badge } from "@/components/ui/badge";
 import { Toggle } from "@/components/ui/toggle";
 import { DEFAULT_CURRENCY, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
+import { MERCHANT_LOGO_FALLBACK } from "@/lib/ui/logo";
 
 // The merchants index list with its "custom only" filter. A client island: the
 // whole set is loaded once on the server (it is small) and the toggle filters it
@@ -56,17 +57,15 @@ export function MerchantsList({ merchants }: { merchants: MerchantListItem[] }) 
                 className="flex items-center justify-between gap-3 py-3 hover:opacity-80"
               >
                 <span className="flex min-w-0 items-center gap-2">
-                  {merchant.logo ? (
-                    <Image
-                      src={merchant.logo}
-                      alt=""
-                      width={24}
-                      height={24}
-                      loading="lazy"
-                      decoding="async"
-                      className="h-6 w-6 shrink-0 rounded object-contain"
-                    />
-                  ) : null}
+                  <Image
+                    src={merchant.logo ?? MERCHANT_LOGO_FALLBACK}
+                    alt=""
+                    width={24}
+                    height={24}
+                    loading="lazy"
+                    decoding="async"
+                    className="h-6 w-6 shrink-0 rounded object-contain"
+                  />
                   <span className="truncate">{merchant.name}</span>
                 </span>
                 <span className="flex shrink-0 items-center gap-4">

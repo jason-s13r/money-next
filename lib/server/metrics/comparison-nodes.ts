@@ -2,6 +2,7 @@ import type { Comparison } from "./comparison/types";
 import { UNCATEGORISED, UNKNOWN_MERCHANT } from "./comparison/types";
 import { isKnownGroup } from "@/lib/categories";
 import { slugify } from "@/lib/slug";
+import { MERCHANT_LOGO_FALLBACK } from "@/lib/ui/logo";
 import type { SpendNode } from "@/ui/dashboard/spend-row";
 
 // The pure data layer behind the comparison table: where each row links, and how
@@ -76,7 +77,10 @@ export function spendNode(comparison: Comparison, category: string): SpendNode {
       children: (merchantsOf?.get(label) ?? []).map((merchant) => ({
         label: merchant,
         href: merchantHref(comparison, merchant),
-        logo: comparison.merchantLogos.get(merchant),
+        // The fallback is applied here, not in SpendRow: `logo` is what marks a
+        // node as the merchant level, and the group and category rows above leave
+        // it unset. A default filled in at render time would decorate all three.
+        logo: comparison.merchantLogos.get(merchant) ?? MERCHANT_LOGO_FALLBACK,
         values: periods.map(
           (p) => p.spendDetail.get(category)?.get(label)?.merchants.get(merchant) ?? 0,
         ),
@@ -109,7 +113,8 @@ export function incomeNodes(comparison: Comparison): SpendNode[] {
     children: (incomeMerchants.get(label) ?? []).map((merchant) => ({
       label: merchant,
       href: merchantHref(comparison, merchant),
-      logo: comparison.merchantLogos.get(merchant),
+      // As above: only the merchant level carries a logo, so only it gets a default.
+      logo: comparison.merchantLogos.get(merchant) ?? MERCHANT_LOGO_FALLBACK,
       values: periods.map((p) => p.incomeDetail.get(label)?.merchants.get(merchant) ?? 0),
       children: [],
     })),

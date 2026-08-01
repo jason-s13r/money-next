@@ -14,7 +14,10 @@ export type SpendNode = {
   values: number[];
   /** Only the top level carries a colour; the levels below inherit its meaning. */
   color?: string;
-  /** Merchant logo URL, shown beside the label when present. */
+  /** Merchant logo URL, shown beside the label. Set only on the merchant level —
+   *  it is what distinguishes those rows from the groups and categories above, so
+   *  the placeholder for a logo-less merchant is filled in by whoever builds the
+   *  tree (comparison-nodes.ts) rather than defaulted here. */
   logo?: string | null;
   /** Empty when the breakdown would only restate the row: nothing to open. */
   children: SpendNode[];

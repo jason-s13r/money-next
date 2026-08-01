@@ -7,6 +7,7 @@ import { getMerchant } from "@/lib/server/queries/lookups";
 import { getMerchantTransactions } from "@/lib/server/queries/transactions";
 import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
+import { MERCHANT_LOGO_FALLBACK } from "@/lib/ui/logo";
 
 // Keyed by Akahu's `merchantId`, so the url is stable and unambiguous. One
 // business can arrive under two ids ("Kamo Vets" has two); this page is exactly
@@ -39,17 +40,15 @@ export default async function MerchantPage(props: PageProps<"/w/[workspace]/merc
     <Listing
       title={
         <span className="flex items-center gap-3">
-          {merchant.logo ? (
-            <Image
-              src={merchant.logo}
-              alt=""
-              width={32}
-              height={32}
-              loading="lazy"
-              decoding="async"
-              className="h-8 w-8 rounded object-contain"
-            />
-          ) : null}
+          <Image
+            src={merchant.logo ?? MERCHANT_LOGO_FALLBACK}
+            alt=""
+            width={32}
+            height={32}
+            loading="lazy"
+            decoding="async"
+            className="h-8 w-8 rounded object-contain"
+          />
           {merchant.name}
         </span>
       }
