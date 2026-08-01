@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { afterEach, describe, test } from "node:test";
 
 import { buildInfo } from "../lib/server/build-info";
@@ -34,6 +35,36 @@ function stamp(env: {
 }
 
 const SHA = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+
+/** One `git config` value, or null when it is unset (git exits non-zero). */
+function gitConfig(key: string) {
+  try {
+    return execFileSync("git", ["config", "--get", key], { encoding: "utf8" }).trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The remote URL this checkout's branch resolves to, by the same rule the module
+ * uses — `branch.<name>.remote`, or `origin` for a branch that tracks nothing —
+ * so the test and the code under test can't disagree about whether there is one.
+ * Shelled out to rather than parsed: the module hand-parses `.git/config` only
+ * because it runs on a request path, and a test has no such constraint.
+ */
+function trackedRemoteUrl() {
+  const branch = (() => {
+    try {
+      return execFileSync("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], {
+        encoding: "utf8",
+      }).trim();
+    } catch {
+      return null; // detached HEAD, which falls back to origin just as the module does
+    }
+  })();
+  const remote = (branch && gitConfig(`branch.${branch}.remote`)) || "origin";
+  return gitConfig(`remote.${remote}.url`);
+}
 
 describe("buildInfo", () => {
   test("reports the stamped commit, abbreviated for display", () => {
@@ -109,11 +140,17 @@ describe("buildInfo", () => {
   // is the branch's own remote. Asserted by shape rather than by value, because it
   // is *this* checkout's remote — naming a repository here would be asserting who
   // cloned it, and a fork, a rename or an ssh-vs-https clone must all still
-  // produce a link. What has to hold is that there *is* one and it points at the
-  // commit this same call reported.
+  // produce a link. Both directions of the contract are checked, because "no
+  // remote" is a real state a checkout can be in (a `git init` that was never
+  // pushed) and null is the documented answer for it, not a bug.
   test("derives the commit link from the working tree's remote in development", () => {
     stamp({ NODE_ENV: "development" });
     const build = buildInfo();
+
+    if (!trackedRemoteUrl()) {
+      assert.equal(build.commitUrl, null);
+      return;
+    }
 
     assert.match(build.commitUrl ?? "", /^https:\/\/[^/]+\/[^/]+\/[^/]+\/commit\/[0-9a-f]{40}$/);
     assert.ok(build.commitUrl?.endsWith(`/commit/${build.sha}`));
