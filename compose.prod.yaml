@@ -71,7 +71,7 @@ services:
       # whole .env, and this one variable is the key to every stored Akahu token.
       # The app has no use for it: since phase 7 the web role does not call Akahu
       # at all — it enqueues a SyncRun and the worker does the fetch — so the key
-      # is set only on `cron` and `worker` below. The app holds ciphertext it
+      # is set only on `worker` below. The app holds ciphertext it
       # cannot open, which turns a compromise of the internet-facing service into
       # something short of a live banking-read.
       #

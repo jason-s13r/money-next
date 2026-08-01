@@ -189,7 +189,7 @@ the shell. Passwords are always prompted for, never passed as a flag.
 | `pnpm link:token --link <id> --source env` | Revert a link to the instance-wide `AKAHU_*` pair. |
 | `pnpm link:keypair` | Print a fresh `TOKEN_PUBLIC_KEY` / `TOKEN_PRIVATE_KEY` pair for the app's connect-a-bank form. Writes nothing — where each half goes is a deployment decision. Run once per instance. |
 | `pnpm link:upgrade` | Report which stored tokens still use the symmetric scheme. |
-| `pnpm link:upgrade --apply` | Re-seal those to `TOKEN_PUBLIC_KEY`. Once no link reports `[symmetric]`, `TOKEN_ENCRYPTION_KEY` can come out of the worker and cron. |
+| `pnpm link:upgrade --apply` | Re-seal those to `TOKEN_PUBLIC_KEY`. Once no link reports `[symmetric]`, `TOKEN_ENCRYPTION_KEY` can come out of the worker and the CLI environment. |
 | `pnpm unhook-bootstrap-ids` | Give the bootstrap workspace and link generated ids (retires the `ws_bootstrap` / `link_bootstrap` placeholders). Run once; idempotent. |
 
 A token is verified against Akahu before `link:token` stores it — it calls
@@ -210,9 +210,10 @@ published nowhere:
 
 Both split the database identity three ways — the schema owner runs migrations,
 the app connects as `money_app`, the worker and cron as `money_sync` — and both
-deliberately blank `TOKEN_ENCRYPTION_KEY` and `TOKEN_PRIVATE_KEY` on the app
-service. The web role has not called Akahu since it started enqueuing runs for the
-worker, so it holds ciphertext it cannot open; the connect-a-bank form seals with
+deliberately blank `TOKEN_ENCRYPTION_KEY` and `TOKEN_PRIVATE_KEY` on the app and
+cron services, leaving the worker the only one that can open a stored token. The
+web role has not called Akahu since it started enqueuing runs for the worker, so
+it holds ciphertext it cannot open; the connect-a-bank form seals with
 `TOKEN_PUBLIC_KEY` and cannot read back what it stored.
 
 The `cron` service only enqueues. With no worker running, syncs and budget
