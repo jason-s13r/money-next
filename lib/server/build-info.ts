@@ -60,6 +60,29 @@ function readGit(path: string) {
 }
 
 /**
+ * The commit a ref points at. A ref lives in a file of its own until git decides
+ * to pack it — `git gc`, and every fresh `git clone`, move it into `packed-refs`
+ * and delete the file — so reading only the loose path finds nothing on a
+ * just-cloned checkout, which is precisely the state a new contributor is in.
+ *
+ * `packed-refs` is `<sha> <refname>` a line, with an optional leading `#` header
+ * and `^<sha>` peel lines for tags. Neither of those can match a `refs/heads/`
+ * lookup, so a plain suffix comparison is enough.
+ */
+function readRef(ref: string) {
+  const loose = readGit(ref);
+  if (loose) return loose;
+
+  const packed = readGit("packed-refs");
+  if (!packed) return null;
+  for (const line of packed.split("\n")) {
+    const [sha, name] = line.trim().split(" ");
+    if (name === ref) return sha;
+  }
+  return null;
+}
+
+/**
  * The commit and remote `next dev` is running against, read straight out of
  * `.git` so the stamp is useful before anything is containerised. A handful of
  * small file reads on a path that only runs in development — the deployed image
@@ -75,7 +98,7 @@ function fromWorkingTree() {
 
   const ref = head.slice(5).trim();
   return {
-    sha: readGit(ref),
+    sha: readRef(ref),
     remote: remoteFromConfig(ref.replace(/^refs\/heads\//, "")),
   };
 }
