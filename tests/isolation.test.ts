@@ -600,6 +600,63 @@ describe("Row-Level Security enforces isolation at the database, not just the ap
   });
 });
 
+describe("the email outbox is write-only to the app", () => {
+  // Not RLS — `EmailOutbox` has no workspace to write a policy against, so what
+  // fences it is the grant: the email_outbox migration revokes everything from
+  // money_app and hands back INSERT alone. A queued invite or reset carries a live
+  // bearer link, and the internet-facing role has no business reading them back.
+  //
+  // These run as money_app rather than the owner, which is the only way to see the
+  // grant at all: the owner bypasses it like it bypasses RLS.
+  const message = {
+    to: "outbox-grant@example.invalid",
+    subject: "grant check",
+    text: "grant check",
+    kind: "invite",
+    // Terminal on arrival, so a worker running against this database alongside the
+    // suite cannot claim the row and post it. Irrelevant to the permission itself
+    // — Postgres checks the columns, not their values.
+    status: "success",
+  };
+
+  after(async () => {
+    await catalogDb.emailOutbox.deleteMany({ where: { to: message.to } });
+  });
+
+  test("queuing a message works", async () => {
+    // `createMany` and not `create`, matching lib/server/email/outbox.ts. The
+    // distinction is the whole test: see the next case.
+    await rlsApp.emailOutbox.createMany({ data: message });
+    const stored = await catalogDb.emailOutbox.findMany({ where: { to: message.to } });
+    assert.equal(stored.length, 1, "money_app cannot queue mail at all — check the INSERT grant");
+  });
+
+  test("an INSERT that reads the row back is refused", async () => {
+    // Prisma's `create` compiles to `INSERT ... RETURNING` every column, and
+    // RETURNING is a read: Postgres checks SELECT and rejects the whole statement.
+    // This is not a hypothetical — it is what "permission denied for table
+    // EmailOutbox" was in production. Pinned here so the fix cannot be undone by
+    // someone reaching for the more natural-looking call.
+    await assert.rejects(
+      () => rlsApp.emailOutbox.create({ data: message }),
+      /permission denied/i,
+    );
+  });
+
+  test("the queue cannot be read, rewritten or emptied by the app", async () => {
+    // Each of these is a distinct attack on a compromised web role: SELECT
+    // harvests every unredeemed invite and reset link across workspaces it is not
+    // a member of, UPDATE redirects one to an attacker's address, DELETE suppresses
+    // an invite silently.
+    await assert.rejects(() => rlsApp.emailOutbox.findMany(), /permission denied/i);
+    await assert.rejects(
+      () => rlsApp.emailOutbox.updateMany({ where: { to: message.to }, data: { to: "elsewhere@example.invalid" } }),
+      /permission denied/i,
+    );
+    await assert.rejects(() => rlsApp.emailOutbox.deleteMany({ where: { to: message.to } }), /permission denied/i);
+  });
+});
+
 describe("writes are stamped with the scope, not the caller's claim", () => {
   test("a create is stamped with the client's workspace", async () => {
     const group = await dbA.transferGroup.create({ data: { workspaceId: A } });

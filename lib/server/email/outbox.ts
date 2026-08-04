@@ -35,7 +35,7 @@ export async function enqueueEmail(message: OutboxMessage): Promise<void> {
   if (!emailEnabled()) return;
 
   try {
-    await authDb.emailOutbox.create({
+    await authDb.emailOutbox.createMany({
       data: {
         to: message.to,
         subject: message.subject,
