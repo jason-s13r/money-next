@@ -25,6 +25,10 @@ Environment=TOKEN_ENCRYPTION_KEY=
 # The sealed scheme's private half, withheld on the same grounds: whichever key a
 # token is under, an enqueuer has no business opening it.
 Environment=TOKEN_PRIVATE_KEY=
+# And the relay credential: this unit queues syncs and sends no mail, so
+# money-worker stays the only container that authenticates to anything outside
+# the pod. Only the password — the rest of the SMTP settings are not secrets.
+Environment=SMTP_PASSWORD=
 Exec=sh -c "while true; do pnpm worker:sync || echo 'sync failed'; sleep ${SYNC_INTERVAL_SECONDS:-21600}; done"
 
 [Service]

@@ -30,8 +30,9 @@
  * (queued → running guarded by a conditional update), so `--drain` on a laptop
  * cannot take a row out from under a running worker.
  */
-import { catalogDb, scopedDb, type ScopedDb } from "../lib/server/db";
+import { authDb, catalogDb, scopedDb, type ScopedDb } from "../lib/server/db";
 import { akahuFor, TOKEN_LINK_SELECT } from "../lib/server/akahu";
+import { deliver } from "../lib/server/email/send";
 import { runSync, type SyncLink } from "../lib/server/ingest/sync";
 import { runRules } from "../lib/server/rules/engine";
 import { runBudgetInference } from "../lib/server/budget/run";
@@ -200,6 +201,44 @@ async function claimAndRunInference(db: ScopedDb): Promise<boolean> {
   return true;
 }
 
+// --- Email queue -----------------------------------------------------------
+
+/**
+ * Claim and send one queued message, if there is one.
+ *
+ * Unscoped and outside the per-workspace loop below, because an outbox row has no
+ * workspace: a password reset belongs to a person, and `/account` can ask for one
+ * with no workspace in scope at all.
+ *
+ * This is the only place in the stack that authenticates to the relay. The web app
+ * writes rows here and cannot even read them back — it holds INSERT and nothing
+ * else on the table — so a compromise of the internet-facing service can neither
+ * send mail as this domain nor harvest the live invite and reset links waiting in
+ * the queue.
+ */
+async function claimAndSendEmail(): Promise<boolean> {
+  const eligible = eligibleNow();
+  const next = await authDb.emailOutbox.findFirst({
+    where: { status: "queued", ...eligible },
+    orderBy: { startedAt: "asc" },
+  });
+  if (!next) return false;
+  if (!(await claim(authDb.emailOutbox, next.id, eligible))) return false;
+
+  try {
+    await deliver(next);
+    await authDb.emailOutbox.updateMany({
+      where: { id: next.id },
+      data: { status: "success", finishedAt: new Date(), error: null },
+    });
+    // The recipient, never the body: a reset message's text contains a live token.
+    console.log(`email (${next.kind}) sent to ${next.to}`);
+  } catch (error) {
+    await finalise(authDb.emailOutbox, "email", { id: next.id, attempts: next.attempts + 1 }, failureText(error));
+  }
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 
 /**
@@ -225,6 +264,15 @@ export async function drainOnce(workspaceIds?: string[]): Promise<number> {
   });
 
   let processed = 0;
+
+  // Mail first, and once for the whole tick rather than per workspace. An invite
+  // queued a moment ago is someone waiting on a link, and it costs a round trip to
+  // a relay rather than a run against Akahu — so it should not sit behind every
+  // workspace's sync. `workspaceIds` deliberately does not narrow it: a message has
+  // no workspace to be narrowed by.
+  await reapStale(authDb.emailOutbox, "email", "email");
+  while (await claimAndSendEmail()) processed++;
+
   for (const { id: workspaceId } of workspaces) {
     const db = scopedDb(workspaceId);
     // Recover anything a dead worker (or cron) left `running` before draining, so a

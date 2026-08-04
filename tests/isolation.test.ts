@@ -398,6 +398,15 @@ describe("the unscoped client stays unreachable", () => {
       // `authDb`; the link rename, being a tenant-table write, goes through
       // `scopedDb`.
       "scripts/unhook-bootstrap-ids.ts",
+      // Queuing mail, and the worker draining that queue. An `EmailOutbox` row has
+      // no workspace to scope it by: a password reset belongs to a person, and
+      // `/account` can ask for one with no workspace in scope at all. Control
+      // plane by the same logic as `Membership` and `Invite`, and carrying no
+      // financial data by standing rule — an address, a link and prose.
+      "lib/server/email/outbox.ts",
+      "scripts/drain.ts",
+      "scripts/list-emails.ts",
+      "scripts/retry-emails.ts",
       // This file.
       "tests/isolation.test.ts",
     ]);

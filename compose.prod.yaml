@@ -83,6 +83,15 @@ services:
       # would leave the property looking intact and being gone.
       TOKEN_ENCRYPTION_KEY: ""
       TOKEN_PRIVATE_KEY: ""
+      # And the SMTP credential, on the same argument. The app composes invite and
+      # reset messages and writes them to the EmailOutbox — an INSERT, the only
+      # statement money_app holds on that table — and `worker` is what connects to
+      # the relay. So a compromise here cannot send mail as this domain.
+      #
+      # Only the password: SMTP_HOST and the rest stay, because the app has to know
+      # whether a message it queues will actually be delivered in order to say so
+      # honestly. None of them is a secret.
+      SMTP_PASSWORD: ""
     ports:
       - "${APP_PORT:-3000}:3000"
     depends_on:
@@ -114,6 +123,9 @@ services:
       # Both keys, since a stored token may be under either scheme.
       TOKEN_ENCRYPTION_KEY: ""
       TOKEN_PRIVATE_KEY: ""
+      # Same for the relay credential: the cron enqueues syncs and sends no mail,
+      # so `worker` stays the only container that authenticates to anything.
+      SMTP_PASSWORD: ""
     depends_on:
       migrate:
         condition: service_completed_successfully

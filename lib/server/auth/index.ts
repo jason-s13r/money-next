@@ -7,8 +7,10 @@ import { nextCookies } from "better-auth/next-js";
 import { organization, twoFactor } from "better-auth/plugins";
 
 import { authDb } from "../db";
+import { inviteMessage, resetMessage } from "../email/messages";
+import { enqueueEmail } from "../email/outbox";
 import { ac, editor, owner, viewer } from "./roles";
-import { captureResetToken } from "./reset-capture";
+import { captureResetToken, RESET_TOKEN_TTL_SECONDS } from "./reset-capture";
 
 /** Required, with no generated fallback: a per-process secret would log everyone
  *  out on restart and two replicas would never agree on a session token. */
@@ -63,16 +65,25 @@ export const auth = betterAuth({
     // invite-only, so this is not a public form.
     minPasswordLength: 12,
 
-    // 1 hour, as seconds. A reset link is a bearer credential, so it is much
-    // shorter-lived than an invite: an owner generates one for someone locked
-    // out and about to use it, not to sit in an inbox.
-    resetPasswordTokenExpiresIn: 60 * 60,
+    // 1 hour. A reset link is a bearer credential, so it is much shorter-lived
+    // than an invite: an owner generates one for someone locked out and about to
+    // use it, not to sit in an inbox.
+    resetPasswordTokenExpiresIn: RESET_TOKEN_TTL_SECONDS,
 
-    // Delivery is ours: no SMTP. The token reaches the owner action that asked
-    // for it via `captureResetToken`; a reset triggered from anywhere else lands
-    // here, goes nowhere, and expires unused.
-    async sendResetPassword({ token }) {
-      captureResetToken(token);
+    // Delivery is ours. The token reaches the owner action that asked for it via
+    // `captureResetToken`, which surfaces it as a copyable link — the path that
+    // works on an instance with no relay configured, and still the one an owner
+    // sees.
+    //
+    // The message is queued as well, when SMTP is set up, and only for a reset
+    // this app itself initiated. `captureResetToken` returning false means the
+    // request was a bare POST to Better Auth's public
+    // `/api/auth/request-password-reset`; mailing those would turn an endpoint
+    // nobody built a form for into a working forgot-password flow. As before,
+    // such a token is generated, goes nowhere, and expires unused.
+    async sendResetPassword({ user, token }) {
+      if (!captureResetToken(token)) return;
+      await enqueueEmail(resetMessage({ to: user.email, token }));
     },
   },
 
@@ -112,10 +123,23 @@ export const auth = betterAuth({
 
       invitationExpiresIn: 60 * 60 * 24 * 3, // 3 days, as seconds.
 
-      // Delivery is ours: a copyable link, no SMTP. The plugin still owns the
-      // expiry, the role and the single-use redemption.
-      async sendInvitationEmail() {
-        // Intentionally nothing. `app/w/[workspace]/members` surfaces the link.
+      // Delivery is ours: `app/w/[workspace]/members` surfaces a copyable link,
+      // and the message below is queued as well when SMTP is configured. The
+      // plugin still owns the expiry, the role and the single-use redemption.
+      //
+      // The link is not the capability — accepting requires a session whose email
+      // matches the invite — so emailing it widens the window less than it looks.
+      // It does widen it: a link handed over directly is a narrower channel than
+      // one that rests in a mailbox at a third party indefinitely.
+      async sendInvitationEmail(data) {
+        await enqueueEmail(
+          inviteMessage({
+            to: data.email,
+            workspaceName: data.organization.name,
+            inviterName: data.inviter.user.name || null,
+            inviteId: data.id,
+          }),
+        );
       },
     }),
 

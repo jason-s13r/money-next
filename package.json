@@ -31,10 +31,14 @@
     "workspace:list": "tsx --env-file-if-exists=.env scripts/list-workspaces.ts",
     "workspace:member": "tsx --env-file-if-exists=.env scripts/add-member.ts",
     "workspace:delete": "tsx --env-file-if-exists=.env scripts/delete-workspace.ts",
+    "email:list": "tsx --env-file-if-exists=.env scripts/list-emails.ts",
+    "email:retry": "tsx --env-file-if-exists=.env scripts/retry-emails.ts",
+    "email:clear-failed": "tsx --env-file-if-exists=.env scripts/retry-emails.ts --clear-failed",
     "unhook-bootstrap-ids": "tsx --env-file-if-exists=.env scripts/unhook-bootstrap-ids.ts",
     "link:token": "tsx --env-file-if-exists=.env scripts/link-token.ts",
     "link:keypair": "tsx scripts/link-keypair.ts",
-    "link:upgrade": "tsx --env-file-if-exists=.env scripts/link-upgrade.ts"
+    "link:upgrade": "tsx --env-file-if-exists=.env scripts/link-upgrade.ts",
+    "help:commands": "cat package.json | jq -r '.scripts | keys[]?' | grep ':'"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"
@@ -54,6 +58,7 @@
     "lucide-react": "^1.28.0",
     "next": "^16.2.12",
     "next-themes": "^0.4.6",
+    "nodemailer": "^9.0.3",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-markdown": "^10.1.0",
@@ -69,6 +74,7 @@
     "@prisma/dev": "^0.24.17",
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^24.13.3",
+    "@types/nodemailer": "^8.0.1",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
     "eslint": "^9.39.5",

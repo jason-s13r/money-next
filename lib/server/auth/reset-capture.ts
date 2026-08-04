@@ -3,9 +3,10 @@ import { AsyncLocalStorage } from "node:async_hooks";
 /**
  * The reset token Better Auth would have emailed, handed to the caller instead.
  *
- * This instance sends no mail (see the `sendResetPassword` note in ./index): a
- * password-reset link is generated on demand by a workspace owner and delivered
- * by hand, the same posture as invites. But `requestPasswordReset` is
+ * The link is what this app hands its owner: a password-reset link is generated
+ * on demand and copied out of the members page, and mailing it as well is
+ * optional and secondary (see the `sendResetPassword` note in ./index). Either
+ * way the token has to be got hold of first, and `requestPasswordReset` is
  * deliberately enumeration-resistant — it answers identically whether or not the
  * email exists and returns nothing useful, exposing the freshly minted token
  * *only* to the `sendResetPassword` callback. So to surface the link we have to
@@ -26,10 +27,37 @@ import { AsyncLocalStorage } from "node:async_hooks";
  */
 const bucket = new AsyncLocalStorage<{ token?: string }>();
 
-/** Called from `sendResetPassword`. Stashes the token if a capture is active. */
-export function captureResetToken(token: string): void {
+/**
+ * How long a reset token stays valid, in seconds. Better Auth's setting, kept
+ * here rather than inline in ./index so that `pnpm email:retry` can import it
+ * without pulling in the whole auth config — a plain Node script cannot load
+ * `better-auth/next-js`. That script needs it to refuse to re-send a message
+ * whose link has already died, which is worse than not sending: the person
+ * clicks it, gets an error, and concludes the reset is broken.
+ */
+export const RESET_TOKEN_TTL_SECONDS = 60 * 60;
+
+/**
+ * Called from `sendResetPassword`. Stashes the token if a capture is active, and
+ * reports whether one was.
+ *
+ * That answer is load-bearing now that this instance can send mail. An active
+ * bucket means the reset was asked for through one of *this app's* paths — an
+ * owner on the members page, or `pnpm user:password` — because those are the only
+ * callers that open one. No bucket means the request came from a bare POST to
+ * `/api/auth/request-password-reset`, which Better Auth exposes publicly and this
+ * app deliberately does not build a form for.
+ *
+ * So the caller emails only when this returns true. Otherwise adding a mailer
+ * would have quietly turned that endpoint into a public forgot-password flow —
+ * unauthenticated, able to mail a live reset link to any address it can guess at,
+ * and shipped as a side effect of a delivery change rather than as a decision.
+ */
+export function captureResetToken(token: string): boolean {
   const store = bucket.getStore();
-  if (store) store.token = token;
+  if (!store) return false;
+  store.token = token;
+  return true;
 }
 
 /**

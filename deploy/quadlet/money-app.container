@@ -23,6 +23,13 @@ Environment=TOKEN_ENCRYPTION_KEY=
 # ("the app can store a token but never read one back") false with nothing in the
 # code to show it.
 Environment=TOKEN_PRIVATE_KEY=
+# And the SMTP credential. The app composes invite and reset messages and writes
+# them to the EmailOutbox — an INSERT, the only statement money_app holds on that
+# table — while money-worker is what connects to the relay, so a compromise here
+# cannot send mail as this domain. Only the password is withheld: the app needs
+# SMTP_HOST to know whether a message it queues will really be delivered, and
+# none of the other settings is a secret.
+Environment=SMTP_PASSWORD=
 
 [Service]
 Restart=always

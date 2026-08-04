@@ -1323,6 +1323,62 @@ model BudgetInferenceRun {
   @@index([userId])
 }
 
+/// Mail composed and waiting to be delivered, and the reason the web app cannot
+/// deliver it itself.
+///
+/// The app writes a row here and stops — INSERT is the only statement `money_app`
+/// holds on this table — and the `money_sync` worker sends it. That is the same
+/// split the Akahu tokens have: an SMTP credential that can send mail as this
+/// domain has no business in the internet-facing process.
+///
+/// The app is revoked SELECT here rather than merely never reading, because the
+/// *contents* matter as much as the credential. A queued invite or reset message
+/// carries a working bearer link, so a queue the web role could read would hand a
+/// compromise of it every unredeemed one at once — including for workspaces the
+/// attacker is not a member of, which is more than that role can reach through
+/// any ordinary path. The migration revokes it and the isolation test proves the
+/// revoke, since dev and tests connect as the owner and would never notice.
+///
+/// No `workspaceId`, deliberately. A password reset belongs to a person rather
+/// than a workspace (`/account` has no workspace at all), the worker drains this
+/// globally, and a row here is never tenant data: it holds an address, a subject,
+/// a link and prose, and by standing rule never an amount or a transaction.
+model EmailOutbox {
+  id String @id @default(cuid())
+
+  /// Recipient and message. `text` is not a courtesy — a message with no
+  /// plaintext part scores as spam with most filters, which for an invite
+  /// presents as exactly the silent non-delivery this queue exists to surface.
+  to      String
+  subject String
+  text    String
+  html    String?
+
+  /// `invite` | `reset`. For reading the queue and the logs; nothing branches on
+  /// it. Deliberately not the message body's source of truth — the body is
+  /// composed once, at enqueue, so what was queued is what is sent.
+  kind String
+
+  /// The run-queue protocol, identical to the sync and rules queues: `queued` |
+  /// `running` | `success` | `failed`, with `attempts` capping retries and
+  /// `nextAttemptAt` gating a re-queued row until its backoff elapses. A relay
+  /// that is down therefore backs off and eventually gives up, rather than
+  /// spinning, and a worker that dies holding a row is reaped by the same pass.
+  status        String    @default("queued")
+  attempts      Int       @default(0)
+  nextAttemptAt DateTime? @db.Timestamptz(3)
+
+  /// `startedAt` is the enqueue time until the worker claims the row and resets
+  /// it, which is also the reaper's lease anchor — the same arrangement, and the
+  /// same reason, as `SyncRun`.
+  startedAt  DateTime  @default(now()) @db.Timestamptz(3)
+  finishedAt DateTime? @db.Timestamptz(3)
+  error      String?
+
+  @@index([status, nextAttemptAt])
+  @@index([startedAt])
+}
+
 /// An append-only log of every change to an attributable enrichment field.
 ///
 /// One row per field per change, written by all three writers — the Akahu sync,
