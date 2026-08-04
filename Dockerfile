@@ -61,6 +61,9 @@ COPY --from=build /app/.next/standalone ./
 COPY --from=build /app/.next/static ./.next/static
 COPY --from=build /app/public ./public
 
+# `next/image` optimizes and caches images  in .next/cache/images.
+RUN mkdir -p .next/cache && chown node:node .next/cache
+
 # Which build this is, surfaced in the sidebar (lib/server/build-info.ts) so you
 # can tell at a glance what's actually serving. Stamped by
 # deploy/quadlet/install.sh; an unstamped build just says "unknown".
@@ -80,8 +83,9 @@ ENV APP_GIT_SHA=$GIT_SHA
 ENV APP_BUILT_AT=$BUILT_AT
 ENV APP_GIT_REMOTE=$GIT_REMOTE
 
-# Run unprivileged; the `node` base image ships a `node` user. Nothing is written
-# to the filesystem at runtime, so read access to root-owned files is enough.
+# Run unprivileged; the `node` base image ships a `node` user. Read access to the
+# root-owned files above is enough — .next/cache, chowned earlier, is the only
+# path it needs to write.
 USER node
 EXPOSE 3000
 CMD ["node", "server.js"]
