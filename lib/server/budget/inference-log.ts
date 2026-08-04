@@ -1,48 +1,41 @@
-// No `import "server-only"`: this runs in the worker (scripts/drain.ts → ./run.ts),
-// which is plain Node where `server-only` throws. It takes its scoped db as an
-// argument for the same reason.
+// No `import "server-only"`: this runs in the worker, which is plain Node
+// where `server-only` throws. It takes its scoped db as an argument for the
+// same reason.
 import type { ScopedDb } from "../db";
 import { appendMessage } from "../chat/thread";
 import { formatDateTime } from "../../format";
 
 // The log of one unattended budget inference, written as a conversation.
 //
-// A budget inference is a conversation — the model reads an area, proposes for it, and
-// moves on — held with nobody watching. It used to leave a transcript file under
-// `LLM_LOG_DIR`: opt-in, off by default, and in practice unread, because reading it
-// meant finding a directory on whichever machine the worker happened to run on. The
-// conversation now goes where the interactive chat's already does, as `ChatThread` and
-// `ChatMessage` rows, so "what did it actually read, and why did it budget that?" is a
-// link on the budgets page rather than an ssh session.
+// A budget inference is a conversation — the model reads an area, proposes for
+// it, and moves on — held with nobody watching. It goes where the interactive
+// chat's already does, as `ChatThread` and `ChatMessage` rows, so "what did it
+// actually read, and why did it budget that?" is a link on the budgets page
+// rather than an ssh session.
 //
-// **The log is the conversation, not a rendering of it.** Every message is stored in
-// the same shape a chat's is — an assistant row carrying its `tool_calls`, a `tool` row
-// per result — so the existing thread page renders a run with no work at all, and the
-// elision the run performs in flight is recorded as the same `elided` flag a chat uses.
-// The run's own commentary (what model, how much history, what it fell back to) is
-// `system`, which is the one role that is never sent to a model: it is this app talking
-// about the run, not anything that was said in it.
+// **The log is the conversation, not a rendering of it.** Every message is stored
+// in the same shape a chat's is, so the existing thread page renders a run with
+// no work at all. The run's own commentary (what model, how much history, what it
+// fell back to) is `system`, the one role never sent to a model.
 //
-// **It is owned.** A thread is private to its author, so the log belongs to whoever
-// asked for the run (`BudgetInferenceRun.userId`); with nobody to own it — an older run,
-// or one enqueued with no session behind it — `openInferenceLog` returns null and the
-// run is logged to the console only, as it always was.
+// **It is owned.** A thread is private to its author, so the log belongs to
+// whoever asked for the run (`BudgetInferenceRun.userId`); with nobody to own it
+// — an older run, or one enqueued with no session behind it —
+// `openInferenceLog` returns null and the run is logged to the console only.
 //
-// **And it is the way back in.** The log started as a transcript, written one way. But a
-// run in the worker is unreachable from the app — no registry to find it in, no signal to
-// send it, none of what makes the interactive chat's stop and steer work — and the log is
-// already a row both processes can see. So `heard` and `stopRequested` read the other
-// direction: what the person watching has typed into the thread, and whether they have
-// asked it to stop. The loop drains both between rounds (./llm.ts), which is why saying
-// something to a run lands after the step in flight rather than during it.
+// **And it is the way back in.** A run in the worker is unreachable from the
+// app — no registry to find it in, no signal to send it — and the log is already
+// a row both processes can see. So `heard` and `stopRequested` read the other
+// direction: what the person watching has typed into the thread, and whether they
+// have asked it to stop. The loop drains both between rounds.
 //
-// Nobody may take a *turn* in a running log — that would be two writers on one thread —
-// so what the person says goes in as a plain `user` row and the run picks it up. Once the
-// run is over the thread can be taken over outright: see `ChatThread.continuedAt`.
+// Nobody may take a *turn* in a running log — that would be two writers on one
+// thread — so what the person says goes in as a plain `user` row and the run
+// picks it up. Once the run is over the thread can be taken over outright: see
+// `ChatThread.continuedAt`.
 //
-// **A log write never breaks a run.** Every write below is best-effort. The inference is
-// the work; the log is the account of it, and losing a paragraph of the account is not a
-// reason to lose a household's budget.
+// **A log write never breaks a run.** Every write below is best-effort: the
+// inference is the work, the log is the account of it.
 
 /** One tool call, as the log needs it — the SDK's shape, narrowed. */
 export type LoggedCall = { id: string; name: string; input: unknown };
@@ -55,7 +48,7 @@ export type InferenceLog = {
   /** The thread the run is writing into. Recorded on the run row, so the budgets page
    *  can link to a log while it is still being written. */
   threadId: string;
-  /** The run talking about itself. Never sent to a model — see the note above. */
+  /** The run talking about itself. Never sent to a model. */
   note(text: string): Promise<void>;
   /** What the run asked the model: the opening brief, or a nudge mid-run. */
   asked(text: string): Promise<void>;
@@ -67,17 +60,13 @@ export type InferenceLog = {
   /** Mark served pages as dropped from the model's view, the same decision the run
    *  makes in the conversation itself. The rows keep their contents. */
   elide(callIds: string[]): Promise<void>;
-  /**
-   * Anything the person watching has said to the run since this was last called, in
-   * the order they said it. Empty almost always — a run is normally watched in
-   * silence, if at all.
-   *
-   * Their words are already rows (that is how they got here), so the caller pushes
-   * them into the model's conversation and does *not* log them again.
-   */
+  /** Anything the person watching has said to the run since this was last
+   *  called, in the order they said it. Empty almost always. Their words are
+   *  already rows, so the caller pushes them into the model's conversation and
+   *  does *not* log them again. */
   heard(): Promise<string[]>;
-  /** Whether somebody has asked this run to stop reading and build the budget from
-   *  what it has. Checked between rounds; see `BudgetInferenceRun.stopRequestedAt`. */
+  /** Whether somebody has asked this run to stop reading and build the budget
+   *  from what it has. Checked between rounds. */
   stopRequested(): Promise<boolean>;
   /** Release the claim, so the thread stops saying it is working. */
   close(): Promise<void>;
@@ -127,14 +116,11 @@ export async function openInferenceLog(
 function logInto(db: ScopedDb, threadId: string, runId: string): InferenceLog {
   /**
    * The `user` rows already accounted for: the ones this run wrote itself — the
-   * opening brief, and each nudge — and the ones it has picked up from the person
-   * watching.
-   *
-   * `heard` is "every user row that is not one of these", which is exact where a
-   * high-water seq would not be: a person can type while the run is mid-round, so
-   * their message can take a seq *below* one the run goes on to write, and a mark that
-   * only moves forward would step over it. The set stays small — a run says a handful
-   * of things, and a person watching one says fewer.
+   * opening brief, and each nudge — and the ones it has picked up from the
+   * person watching. `heard` is "every user row that is not one of these": a
+   * person can type while the run is mid-round, so their message can take a seq
+   * *below* one the run goes on to write, and a high-water mark that only moves
+   * forward would step over it.
    */
   const accounted = new Set<string>();
 
@@ -227,8 +213,7 @@ function logInto(db: ScopedDb, threadId: string, runId: string): InferenceLog {
           select: { stopRequestedAt: true },
         }),
       );
-      // A failed read is not a stop. The run carries on and asks again next round,
-      // which is the same answer a moment later.
+      // A failed read is not a stop.
       return run?.stopRequestedAt != null;
     },
 

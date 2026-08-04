@@ -1,33 +1,23 @@
 // The run-queue protocol: claiming a job, giving it back when it fails, and
-// reclaiming one whose worker died holding it.
+// reclaiming one whose worker died holding it. `SyncRun`, `RuleRun` and
+// `BudgetInferenceRun` are queues with identical mechanics — claim a row
+// atomically, do slow work outside any transaction, finalise it — and only the
+// slow work differs.
 //
-// The counterpart to ./queue.ts, which is the same three tables from the
-// *enqueuing* side. `SyncRun`, `RuleRun` and `BudgetInferenceRun` are queues with
-// identical mechanics — claim a row atomically, do slow work outside any
-// transaction, finalise it — and only the slow work differs. That part was
-// written out three times in scripts/drain.ts, which is not merely repetitive: it
-// is a concurrency protocol, so each copy was somewhere the guard conditions could
-// drift, and one of them already had (see `finalise`).
-//
-// Here rather than in the script because it is the *rules* of the queue, not the
-// draining of it, and because rules worth stating once are worth testing once:
-// scripts/drain.ts cannot be imported without a database, and none of this needs
-// one. The three run tables are structurally identical in the statements the
-// protocol issues, so a plain interface is enough to talk to any of them — no
-// generics over Prisma's model types, no casts, and a fake in a test is a few
-// lines. Each queue's own `findFirst` stays with its own code, fully typed.
+// The three run tables are structurally identical in the statements the
+// protocol issues, so a plain interface is enough to talk to any of them.
 //
 // No `import "server-only"`: this runs in the worker, which is plain Node.
 
 // How many times a run may be claimed before a failure is terminal, and the base
-// gap between retries (doubled each attempt) — a transient blip clears in seconds,
-// a persistent one gives up rather than spinning forever on the Akahu quota.
+// gap between retries (doubled each attempt): a transient blip clears in seconds,
+// a persistent one gives up rather than spinning on the Akahu quota forever.
 const MAX_ATTEMPTS = Number(process.env.WORKER_MAX_ATTEMPTS ?? 3);
 const BACKOFF_SECONDS = Number(process.env.WORKER_BACKOFF_SECONDS ?? 30);
 
 // A `running` row older than this has no live worker on it (the process died
-// mid-run) — the reaper reclaims it. Deliberately far above any real sync so a
-// slow-but-alive run is never reaped out from under itself and double-run.
+// mid-run) — the reaper reclaims it. Far above any real sync so a slow-but-alive
+// run is never reaped out from under itself.
 const STALE_MINUTES = Number(process.env.WORKER_STALE_MINUTES ?? 15);
 
 /** A run row, as much of one as the protocol itself cares about. */
@@ -53,11 +43,11 @@ export const eligibleNow = () => ({
 
 /**
  * The retry-or-fail decision. `attempts` is how many times this run has been
- * claimed (bumped at claim), so it reflects the try that just ended. Below the cap
- * the run goes back to `queued` with exponential backoff — the re-queue clears
- * `finishedAt` (it isn't over) but keeps the last `error`, so the page shows *why*
- * a pending run is being retried; at the cap it fails for good. Returns the `data`
- * to write and, for the log line, the backoff (null on fail).
+ * claimed (bumped at claim), so it reflects the try that just ended. Below the
+ * cap the run goes back to `queued` with exponential backoff (clearing
+ * `finishedAt` but keeping the last `error`, so the page shows *why* a pending
+ * run is being retried); at the cap it fails for good. Returns the `data` to
+ * write and the backoff for the log line (null on fail).
  */
 export function nextState(attempts: number, error: string) {
   if (attempts < MAX_ATTEMPTS) {
@@ -80,15 +70,11 @@ export const staleMessage = (kind: string) =>
 
 /**
  * Write the outcome of a failed run: back to `queued` with backoff, or `failed`
- * for good once the attempts are spent (see `nextState`).
- *
- * `updateMany` rather than `update`, for every queue. A user can Clear a budget
- * inference mid-flight — it deletes the row — and an `update` finalising onto a
- * missing row throws, which would take down the whole worker tick and every other
- * queue's work with it. That was already understood for inferences and written
- * only there; the other two were one "clear this run" button away from the same
- * crash. A no-op on a row that is gone is the right answer for all three, so it is
- * the only answer here.
+ * for good once the attempts are spent (see `nextState`). `updateMany` rather
+ * than `update`, for every queue: a user can Clear a budget inference
+ * mid-flight — it deletes the row — and an `update` finalising onto a missing
+ * row throws, which would take down the whole worker tick. A no-op on a row
+ * that is gone is the right answer for all three.
  */
 export async function finalise(
   table: RunTable,
@@ -102,10 +88,9 @@ export async function finalise(
 }
 
 /**
- * Reclaim runs left `running` by a worker that died mid-job. A `running` row whose
- * `startedAt` is older than the stale window can't have a live worker on it — the
- * claim resets `startedAt` to now and a real run finishes far inside the window —
- * so hand each to the retry-or-fail decision. The reclaim is a guarded
+ * Reclaim runs left `running` by a worker that died mid-job. A `running` row
+ * whose `startedAt` is older than the stale window can't have a live worker on
+ * it, so hand each to the retry-or-fail decision. The reclaim is a guarded
  * `updateMany` (still `running`, still stale) so it can't race a legitimate
  * finish, and it flips the row to `queued` first so nothing else treats it as
  * in-flight while we decide.
@@ -128,16 +113,13 @@ export async function reapStale(table: RunTable, label: string, kind: string): P
 }
 
 /**
- * Take a queued row for this worker, or say someone else got there first.
- *
- * A guarded `updateMany` (queued → running, `count` tells us whether we won the
- * race): a plain read-then-write would let two workers both pick up the same row,
- * and "safe if two overlap" rests entirely on this being one statement.
- * `startedAt` is reset to now, so a run's duration on `/sync` is execution time
- * rather than time spent queued — and, because that is what `reapStale` measures
- * from, claiming also renews the row's lease. The `eligible` clause is repeated
- * from the caller's read so a row whose backoff expired in between is still only
- * claimed once.
+ * Take a queued row for this worker, or say someone else got there first. A
+ * guarded `updateMany` (queued → running, `count` tells us whether we won the
+ * race): a plain read-then-write would let two workers both pick up the same row.
+ * `startedAt` is reset to now, so a run's duration on /sync is execution time
+ * rather than time spent queued — and, since that is what `reapStale` measures
+ * from, claiming also renews the row's lease. `eligible` is repeated from the
+ * caller's read so a row whose backoff expired in between is still claimed once.
  */
 export async function claim(
   table: RunTable,

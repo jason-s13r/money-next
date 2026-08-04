@@ -7,34 +7,24 @@ import { compactionCut } from "../../chat/compact";
 import { COMPACT_PROMPT } from "../../chat/prompt";
 import { elidedContent, toModelMessages, type StoredMessage } from "./thread";
 
-// Compacting a conversation: replacing what was said with an account of it.
+// Compacting a conversation: replacing what was said with an account of it. A
+// local model has a fixed window, and a long conversation fills it — the turn
+// after that simply fails. `ChatMessage.elided` fights the biggest part by
+// dropping old tool output, but a conversation can be long in the ordinary way
+// too. The messages are not deleted: `summarizedThroughSeq` moves the model's
+// view forward; the rows stay, and the page still renders all of them.
 //
-// The problem is context, and it is a hard wall rather than a slope — a local model has
-// a fixed window, a long conversation fills it, and the turn after that simply fails.
-// `ChatMessage.elided` already fights the biggest part of it by dropping old tool output,
-// but a conversation can be long in the ordinary way too, and no amount of eliding helps
-// with fifty turns of prose.
-//
-// **The messages are not deleted, and that is the point.** `summarizedThroughSeq` moves
-// the model's view forward; the rows stay exactly where they were, and the page still
-// renders all of them. What the person can read and what the model is carrying have been
-// different things since elision, and this is the same idea applied to the conversation
-// rather than to the tool results in it.
-//
-// Summarising *is* a model call, so it can fail or be slow, and it deliberately does not
-// go through the turn machinery: nothing is appended to the thread, nothing streams, and
-// a failure leaves the conversation exactly as it was.
+// Summarising is a model call, so it can fail or be slow, and it deliberately
+// does not go through the turn machinery: nothing is appended to the thread,
+// nothing streams, and a failure leaves the conversation exactly as it was.
 
 export type CompactResult = { ok: true; through: number } | { ok: false; error: string };
 
 /**
- * Summarise everything up to a few messages from the end, and record it on the thread.
- *
- * Where the cut falls is `compactionCut`'s business, in lib/chat/compact.ts, and the one
- * part of this worth testing: a boundary between a tool call and its result produces a
- * conversation the endpoint refuses on the *next* turn. `toModelMessages` drops an
- * orphaned result defensively as well, but a boundary that needs defending is one to
- * place better.
+ * Summarise everything up to a few messages from the end, and record it on the
+ * thread. Where the cut falls is `compactionCut`'s business, and the one part of
+ * this worth testing: a boundary between a tool call and its result produces a
+ * conversation the endpoint refuses on the *next* turn.
  */
 export async function compactThread(
   db: ScopedDb,

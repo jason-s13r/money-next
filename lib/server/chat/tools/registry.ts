@@ -7,30 +7,15 @@ import type { DisplayFx } from "../../budget/fx";
 import type { ScopedDb } from "../../db";
 import type { History } from "./history";
 
-// What a model can see and do, as data.
-//
-// Both conversations in this app — the headless budget inference and the interactive
-// chat — are the same loop over a different set of tools, so a tool is defined once,
-// here, as a plain object rather than a branch of a switch. `toolsForSdk` turns a set of
-// them into what the AI SDK wants, handlers bound to a context, and is the single place
-// the house rules about tool failure are enforced.
-//
-// The shape is deliberately the shape an MCP server would want (name, description,
-// JSON-schema parameters, handler), so exposing this registry to an external client
-// later is a transport, not a rewrite. It is *not* MCP today, and that is the point:
-// every handler is a Prisma call that has to run under the caller's own
-// `scopedDb(workspaceId)` with RLS beneath it, and the validation gate
-// (`resolveProposedItems`) is in this process. Crossing a wire would mean rebuilding
-// both on the far side.
+// What a model can see and do, as data. The budget inference and the interactive
+// chat are the same loop over different tool sets, so a tool is a plain object
+// defined once. MCP-shaped, but not MCP: handlers run under the caller's
+// `scopedDb`, and crossing a wire would mean rebuilding that on the far side.
 
 /**
- * The kinds of change a tool can make, which are the workspace permissions that gate
- * them (see lib/server/auth/roles.ts). One flag was enough while every write tool
- * touched a budget; the enrichment tools — categorising a transaction, naming its
- * payee, writing a rule — are gated on `enrichment: ["update"]`, which is a
- * deliberately separate grant. A bookkeeper who may recategorise need not be able to
- * rewrite the household's plan, and the tools must not be the place that collapses
- * the distinction the roles draw.
+ * The kinds of change a tool can make, which are the permissions gating them.
+ * `enrichment` is deliberately separate from `budget`: a bookkeeper who may
+ * recategorise need not be able to rewrite the household's plan.
  */
 export type WriteScope = "budget" | "enrichment";
 
@@ -45,8 +30,8 @@ const SCOPE_REFUSAL: Record<WriteScope, string> = {
 };
 
 /**
- * Everything a handler is allowed to reach. There is no ambient request and no
- * ambient database: the scoped client is passed in, already bound to one workspace by
+ * Everything a handler is allowed to reach. No ambient request and no ambient
+ * database: the scoped client is passed in, already bound to one workspace by
  * whoever authenticated the caller.
  */
 export type ToolContext = {
@@ -63,21 +48,14 @@ export type ToolContext = {
   history: () => Promise<History>;
   /** Which kinds of change the caller may make. Gates every `write` tool. */
   can: Permissions;
-  /**
-   * Who is asking, for the field change log — null when nobody is (the worker).
-   *
-   * Passed in rather than read at the write, which is the opposite of what
-   * `recordUserChanges` does and for a specific reason: a chat turn is detached from
-   * the request that started it (see lib/server/chat/runs.ts), so by the time a tool
-   * writes there is no request left to resolve a session from. It is captured while
-   * there still is one.
-   */
+  /** Who is asking, for the field change log — null when nobody is (the worker).
+   *  Captured at turn start, not at the write: a turn outlives the request that
+   *  started it, so by then there is no session to resolve. */
   actorUserId: string | null;
 };
 
 /** The call itself, for the rare handler that needs to know which one it is answering.
- *  The budget inference keys its in-flight elision on the id, so it can find a served
- *  page again in the conversation once the area it belonged to is finished with. */
+ *  The budget inference keys its in-flight elision on the id. */
 export type ToolMeta = { toolCallId: string };
 
 export type Tool = {
@@ -98,28 +76,15 @@ export type Tool = {
 };
 
 /** The tools this caller may use: read tools always, a write tool only when the
- *  scope it writes in is one the caller holds. A viewer is never *offered* a tool it
- *  would be refused; an editor granted one scope and not the other is offered
- *  exactly the half they can use. */
+ *  scope it writes in is one the caller holds. */
 export function availableTools(tools: Tool[], can: Permissions): Tool[] {
   return tools.filter((tool) => !tool.write || can[tool.write]);
 }
 
 /**
- * The same tools, as the AI SDK wants them: a set keyed by name, each with its handler
- * already bound to the context it will run against.
- *
- * **The schemas are passed through, not regenerated.** `jsonSchema()` takes what is
- * written in the tool file verbatim, which is the whole reason it is used here in
- * preference to the Zod schemas the SDK's examples reach for. The note on `Tool.parameters`
- * is not decoration — these schemas are hand-tuned for models small enough to be
- * confused by a faithful one, and a Zod rewrite would quietly retune every tool in the
- * app by regenerating them.
- *
- * The house rule about failure survives too: `execute` returns errors rather than
- * throwing, so a handler that fails reaches the model as something it can read and
- * correct on its next step. Schema-invalid calls are the SDK's to report, and it does
- * the same thing with them.
+ * The same tools, as the AI SDK wants them, handlers bound to a context. Schemas
+ * pass through `jsonSchema()` verbatim rather than being regenerated from Zod:
+ * they are hand-tuned for small models, and a rewrite would retune every tool.
  */
 export function toolsForSdk(tools: Tool[], ctx: ToolContext): ToolSet {
   const set: ToolSet = {};
@@ -134,18 +99,9 @@ export function toolsForSdk(tools: Tool[], ctx: ToolContext): ToolSet {
 }
 
 /**
- * Rescue a tool call whose arguments a small local model mangled on the way out.
- *
- * The SDK's own parse is strict, and rightly: arguments that are not JSON are not
- * arguments. But the failures seen here are not the model being wrong about *what* to
- * call — they are it wrapping the object in a markdown fence, or JSON-encoding the
- * string a second time, both of which are recoverable without asking it anything.
- * `parseToolArguments` is where that tolerance lives, and this is what still reaches it
- * now that the SDK owns the parsing.
- *
- * Null for everything else, which hands the model the error instead: a name that is not
- * a tool, or arguments that parse fine and simply do not match the schema, are things
- * only the model can fix.
+ * Rescue a tool call whose arguments a small model mangled on the way out — a
+ * markdown fence around the object, a string JSON-encoded twice. Null for
+ * anything else, which hands the model an error only it can fix.
  */
 export function repairLooseToolCall({
   toolCall,
@@ -166,18 +122,9 @@ export function repairLooseToolCall({
 }
 
 /**
- * Run one tool's handler, turning every way it can go wrong into a value.
- *
- * **Failure is a value, never an exception.** This is the load-bearing rule of the whole
- * design: a model that tripped over a handler is told so *in the conversation*, on its
- * next turn, where it can fix it. Throwing would end a run over something the model was
- * one correction away from getting right. Schema-invalid calls are the SDK's to report,
- * and it does the same thing with them.
- *
- * The permission check is here rather than only at `availableTools` because being
- * offered a tool and being allowed to run it are different questions, and the second
- * one is the one that matters — a model that names a write tool it was never offered
- * must be refused, not obeyed.
+ * Run one tool's handler, turning every way it can go wrong into a value: a
+ * throw would end a run the model was one correction away from getting right.
+ * Permission is re-checked here — naming an unoffered tool must be refused.
  */
 async function runTool(
   tool: Tool,
@@ -243,14 +190,10 @@ export function asNumber(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-/**
- * A list of ids from a tool argument.
- *
- * Tolerates the single string a model sends when it has one id and forgot the
- * brackets, and the comma-separated string it sends when it has several and forgot
- * them harder. Duplicates are dropped: every tool that takes ids reports how many
- * rows it touched, and a list naming the same row twice would inflate that.
- */
+/** A list of ids from a tool argument. Tolerates the single string a model sends
+ *  when it has one id and forgot the brackets, and the comma-separated string it
+ *  sends when it has several. Duplicates dropped so a list naming the same row
+ *  twice cannot inflate a tool's "rows touched" count. */
 export function asIds(value: unknown): string[] {
   const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(",") : [];
   return [...new Set(raw.map((item) => asText(item)).filter((item) => item !== ""))];

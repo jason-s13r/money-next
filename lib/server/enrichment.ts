@@ -1,53 +1,30 @@
-// Setting a transaction's category or merchant by hand — the one path all seven
-// callers go through.
+// Setting a transaction's category or merchant by hand — the one path every
+// caller goes through. Writing the field, logging the rows that actually
+// changed and clearing the settled conflict have to commit together: under the
+// scoped client each would otherwise be its own transaction, and a failure
+// between them leaves the field changed with nothing in the log to say so.
 //
-// There were seven copies of this before: the single setter and the "apply to
-// similar" bulk on the detail page, the two selection bulks on the listing, and
-// the merchant-create variant. They agreed on the shape — read what the field
-// was, write the new value, log the rows that actually changed, settle any
-// conflict outstanding on the field — and disagreed on the details, which is the
-// failure mode of copied code rather than a design. The diff-before-logging rule
-// in particular is load-bearing (see lib/server/changes.ts) and was restated at
-// every site, each one an opportunity to get it subtly wrong.
-//
-// The other reason to have one of these: those steps have to commit together.
-// Separately they are three statements, and under the scoped client each is its
-// own transaction (see lib/server/db/scoped.ts), so a failure between them leaves
-// the field changed with nothing in the log to say so, and a settled disagreement
-// still on screen. The log is the feature that exists to answer "why does this
-// row say that?" — it cannot be the part that goes missing.
-//
-// No `import "server-only"`: nothing here reaches for a request, and the rules
-// engine's own writer (rules/engine/apply.ts) is the sort of caller that might
-// reasonably share it later. What keeps this honest is the scoped client the
-// caller passes in, not the module's location.
+// No `import "server-only"`: nothing here reaches for a request. What keeps
+// this honest is the scoped client the caller passes in, not the module's
+// location.
 
 import { recordUserChanges, type FieldChangeEntry } from "./changes";
 import { withScopedTx, type ScopedDb, type ScopedTx } from "./db";
 
-/**
- * The two fields a person can set by hand *and* Akahu can disagree with — which
- * is why they are the two that need a conflict settled, and the two that live
- * here. Labels are neither (nothing mirrors them), so they are plain writes; see
- * the note in the label action.
- */
+/** The two fields a person can set by hand *and* Akahu can disagree with — which
+ *  is why they need a conflict settled. Labels are neither (nothing mirrors
+ *  them), so they are plain writes. */
 export type EnrichmentField = "category" | "merchant";
 
 /** The resolved target of the edit: a row proven to be in this workspace, or
  *  `null` for clearing the field. `groupId` is category-only — the denormalised
- *  `Transaction.categoryGroupId` has to move with it or the metrics that group by
- *  it drift. */
+ *  `Transaction.categoryGroupId` has to move with it. */
 type Value = { id: string; name: string; groupId?: string | null } | null;
 
-/**
- * Prove the id names a row this workspace can see, and read the label the log
- * will need.
- *
- * The scoped client is what makes this a permission check and not just a
- * spelling check: an id belonging to another workspace simply isn't found, so it
- * throws here rather than being written and rejected later by RLS. A `null`
- * `valueId` is "clear the field", which needs no lookup.
- */
+/** Prove the id names a row this workspace can see, and read the label the log
+ *  will need. The scoped client is what makes this a permission check and not
+ *  just a spelling check: an id belonging to another workspace simply isn't
+ *  found, so it throws here rather than being written and rejected later by RLS. */
 async function resolveValue(
   db: ScopedDb,
   field: EnrichmentField,
@@ -95,24 +72,19 @@ async function readPriors(tx: ScopedTx, field: EnrichmentField, ids: string[]) {
 
 /**
  * Set `field` to `valueId` (or clear it) on every transaction named, as one
- * transaction.
+ * transaction. The field is stamped `user`-owned, which stops the next Akahu
+ * sync overwriting it — the sync raises a `TransactionConflict` instead. See
+ * the notes on `Transaction.categorySource` in the schema.
  *
- * The field is stamped `user`-owned, which is what stops the next Akahu sync
- * overwriting it — the sync raises a `TransactionConflict` instead. See the notes
- * on `Transaction.categorySource` in the schema.
+ * Revalidation is deliberately not here: which paths a given edit invalidates
+ * is the caller's business — the detail page revalidates itself, the bulk bar
+ * revalidates the listing it was invoked from.
  *
- * Revalidation is deliberately not here. Which paths a given edit invalidates is
- * the caller's business — the detail page revalidates itself, the bulk bar
- * revalidates the listing it was invoked from — and a helper guessing at it would
- * be wrong for half of them.
- *
- * Returns how many of the named transactions were actually in this workspace and
- * therefore written. That number is the caller's to interpret, because the two
- * kinds of caller want opposite things from it: a bulk action is *defined* by
- * tolerating ids it can't see (the selection is filtered, not rejected), while a
- * single-row setter handed an id it can't see has been handed a bad id and should
- * say so rather than report success. Returning it instead of deciding here is
- * what keeps `setTransactionCategory` from silently no-op'ing on a probe.
+ * Returns how many of the named transactions were in this workspace and
+ * therefore written. A bulk action tolerates ids it can't see (the selection is
+ * filtered, not rejected); a single-row setter handed an id it can't see has
+ * been handed a bad id and should say so. Returning the count instead of
+ * deciding keeps `setTransactionCategory` from silently no-op'ing on a probe.
  */
 export async function applyEnrichment(
   db: ScopedDb,

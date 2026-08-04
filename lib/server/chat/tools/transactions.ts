@@ -1,4 +1,4 @@
-// No `import "server-only"`: shared with the worker's budget inference. See registry.ts.
+// No `import "server-only"`: shared with the worker's budget inference.
 import type { Prisma } from "../../../generated/prisma/client";
 import { distinctiveTokens } from "../../rules/learning/match";
 import { money, moneySum } from "../../money";
@@ -16,24 +16,21 @@ import {
 } from "./registry";
 
 // Reading transactions as rows, rather than as one spending area's history.
+// `get_transactions` serves from the in-memory `History`, and that shape is
+// right for the question it was built for — "what does this household spend on
+// Food?" — but it cannot answer the questions this file exists for:
 //
-// `get_transactions` (read.ts) serves from the in-memory `History`, and that shape is
-// right for the question it was built for — "what does this household spend on Food?" —
-// but it cannot answer the questions this file exists for, and not by accident:
+//   - It cannot see an uncategorised row at all (`loadHistory` buckets by
+//     spending area and drops anything with no group — precisely the queue
+//     somebody wants help working through).
+//   - It cannot see past `MAX_MONTHS`, the window it loads.
+//   - It has no ids in it, since nothing the inference does needs to point at
+//     one. Every write tool here needs to.
 //
-//   - **It cannot see an uncategorised row at all.** `loadHistory` buckets by spending
-//     area and drops anything with no group, which is precisely the queue somebody wants
-//     help working through.
-//   - **It cannot see past `MAX_MONTHS`,** because that is the window it loads.
-//   - **It has no ids in it.** Rows are described, not identified, since nothing the
-//     inference does needs to point at one. Every write tool here needs to.
-//
-// So these go to the database. They are the only reads in the chat that do a query per
-// call, which is the cost of being able to filter on anything and of returning rows a
-// later call can act on.
-//
-// Amounts still come back in the household's display currency, like everywhere else, so
-// a model never has to think about which account a row is held in.
+// So these go to the database — the only reads in the chat that do a query per
+// call, the cost of being able to filter on anything and return rows a later
+// call can act on. Amounts still come back in the household's display currency,
+// so a model never has to think about which account a row is held in.
 
 /** The relations every row here carries. */
 const ROW_SELECT = {

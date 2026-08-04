@@ -4,32 +4,15 @@ import type { Prisma } from "../../generated/prisma/client";
 import { internalDb } from "./client";
 
 /**
- * The tenancy filter, welded onto the Prisma client.
- *
- * The premise: one forgotten `where` is a cross-tenant financial data leak, and
- * there are ~130 call sites. Discipline does not scale to that, and a code
- * review cannot see the query that *wasn't* written. So the filter is applied in
- * exactly one place — here — and the raw client is unreachable from outside this
- * directory (see ./client and the ESLint rule).
- *
- * What this does not do is more interesting than what it does. It does not make
- * every query safe. It makes the *default* safe: a query written with no thought
- * about tenancy gets scoped, and a query that cannot be scoped automatically
- * throws rather than quietly returning everything.
+ * The tenancy filter, welded onto the Prisma client. One forgotten `where` is a
+ * cross-tenant leak and there are ~130 call sites, so it is applied here alone.
+ * This makes the *default* safe, not every query: what cannot be scoped throws.
  */
 
 /**
- * Tenant-owned models: every row belongs to exactly one workspace, and the
- * filter is a plain equality on `workspaceId`.
- *
- * Not listed, and why:
- *
- *   - `Category`, `CategoryGroup`, `FxRate`, `Connection` — shared catalogs. The
- *     NZFCC standard, ECB rates and Akahu's institution ids are public facts,
- *     identical for everyone. Scoping them would mean re-importing the same
- *     catalog per workspace.
- *   - `Merchant` — half catalog, half tenant data. Handled separately below.
- *   - The control plane — see `CONTROL_PLANE_MODELS`.
+ * Tenant-owned models: every row belongs to one workspace, filtered on a plain
+ * `workspaceId` equality. Absent are the shared catalogs — public facts, the
+ * same for everyone — plus `Merchant` (half catalog) and the control plane.
  */
 export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "BankLink",
@@ -49,47 +32,31 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "FieldChange",
   "SyncState",
   "SyncRun",
-  // Workspace-scoped like the rest. The *further* narrowing to one user — a chat
-  // thread is private to its author — is application code in
-  // lib/server/queries/chat.ts, because RLS only knows the workspace.
+  // Workspace-scoped like the rest. The *further* narrowing to one user — a
+  // chat thread is private to its author — is application code, not RLS, which
+  // only knows the workspace.
   "ChatThread",
   "ChatMessage",
 ]);
 
 /**
- * Models that carry a `workspaceId` and are still deliberately *not* scoped.
- *
- * These are the tenancy control plane — the rows that decide who may enter a
- * workspace — rather than data held inside one. The code that reads them
- * legitimately spans workspaces, and a `workspaceId = current` filter would
- * break each case: resolving a session before a current workspace exists,
- * listing the workspaces someone may switch to, and redeeming an invite to a
- * workspace you are by definition not yet in.
- *
- * This list is an admission, not a design: it is the set of tables the scoped
- * client does not protect. Phase 3 gives them their own guarded access path when
- * it writes the code that reads them. Until then nothing reads them at all.
- *
- * It exists as code rather than a comment so the schema-coverage test can hold
- * it to account: a *new* model carrying a `workspaceId` must be classified here
- * or in `TENANT_MODELS`, and cannot be quietly forgotten into being unscoped.
+ * Carry a `workspaceId` but are deliberately unscoped: the rows that decide who
+ * may *enter* a workspace, read before there is a current one to filter by. Code
+ * rather than prose so the schema-coverage test catches a new model left out.
  */
 export const CONTROL_PLANE_MODELS: ReadonlySet<string> = new Set(["Membership", "Invite"]);
 
 /**
- * Set within a `withScopedTx` callback so the per-operation extension knows the
- * RLS session variable is already set for the enclosing transaction and must not
- * open its own — see the note at the query wrapper below. An `AsyncLocalStorage`
- * rather than a flag on the client because the signal has to follow the async
- * call tree of the callback, not the client instance (which is shared).
+ * Set inside a `withScopedTx` callback so the per-operation wrapper knows the RLS
+ * variable is already set and must not open its own transaction. AsyncLocalStorage
+ * because the signal follows the callback's async tree, not the shared client.
  */
 const inScopedTx = new AsyncLocalStorage<boolean>();
 
 /**
- * Set the Postgres GUC the RLS policies read, transaction-locally. Runs on the
- * unscoped client so it composes into the same `$transaction` batch as the query
- * — that is what puts both statements on one connection so the variable actually
- * governs the query. `$executeRaw`'s tagged template parameterises the id.
+ * Set the Postgres GUC the RLS policies read, transaction-locally. On the
+ * unscoped client so it composes into the same `$transaction` as the query —
+ * sharing one connection is what makes the variable actually govern it.
  */
 function setWorkspaceVar(workspaceId: string) {
   return internalDb.$executeRaw`SELECT set_config('app.workspace_id', ${workspaceId}, true)`;
@@ -118,32 +85,16 @@ function scopeWhere(model: string, workspaceId: string, where: unknown) {
   const existing = given.AND;
   const and = existing === undefined ? [] : Array.isArray(existing) ? existing : [existing];
 
-  // The filter goes *into* `AND` while the caller's own fields stay at the top
-  // level. Both halves of that matter:
-  //
-  //   - Under `AND`, the filter cannot be overridden. Merging it into the
-  //     caller's `where` with a spread would let `where: { workspaceId: theirs }`
-  //     replace it, which is precisely the attack. Prisma ANDs top-level fields,
-  //     so a caller naming another workspace now contradicts the filter and
-  //     matches nothing — it fails closed.
-  //
-  //   - The caller's fields must stay at the top level or `findUnique` breaks:
-  //     it requires a unique field *there*, and wrapping the whole `where` in
-  //     `AND` hides `id` from it. Prisma rejects that outright rather than
-  //     quietly returning everything, but it would still have broken every
-  //     lookup in the app.
+  // The filter goes into `AND`, the caller's own fields stay top level. Under
+  // `AND` a caller naming another workspace contradicts the filter and matches
+  // nothing instead of overriding it; at top level `findUnique` still sees `id`.
   return { ...given, AND: [...and, filter] };
 }
 
 /**
- * Put the workspace on a row about to be written — and refuse if the caller
- * named a different one.
- *
- * Rejecting rather than silently rewriting is deliberate. A create that names
- * another workspace is either a copy-paste bug or an attempt to plant a row in
- * someone else's data; quietly "fixing" it to the current workspace would hide
- * both. There is no legitimate way for a client scoped to A to write a row owned
- * by B.
+ * Put the workspace on a row about to be written, refusing if the caller named a
+ * different one. Quietly rewriting it would hide both things it can mean: a
+ * copy-paste bug, or planting a row in someone else's data.
  */
 function stampRow(workspaceId: string, row: unknown) {
   const given = (row as { workspaceId?: unknown })?.workspaceId;
@@ -157,12 +108,9 @@ function stampRow(workspaceId: string, row: unknown) {
 }
 
 /**
- * A Prisma client that can only see one workspace.
- *
- * Fails closed: no workspace id means no client, rather than a client with no
- * filter. The difference matters — the failure mode of the second one is
- * "returns everything to everyone", silently, and it is exactly what a bug in
- * session handling would produce.
+ * A Prisma client that can only see one workspace. No id means no client rather
+ * than an unfiltered one, whose failure mode is "returns everything to everyone",
+ * silently — exactly what a bug in session handling would produce.
  */
 export function scopedDb(workspaceId: string) {
   if (!workspaceId) {
@@ -173,14 +121,9 @@ export function scopedDb(workspaceId: string) {
   }
 
   return internalDb.$extends({
-    // The workspace this client is bound to, readable by callers.
-    //
-    // Prisma's generated input types still require `workspaceId` on a create
-    // even though the extension below supplies it, so writes say
-    // `workspaceId: db.$workspaceId`. That reads as what it is — "this row
-    // belongs to the workspace this client is scoped to" — it typechecks, and
-    // it survives phase 3 untouched, because the constant moves into `getDb`
-    // rather than into the call sites.
+    // The workspace this client is bound to, readable by callers. Prisma's
+    // generated input types still require `workspaceId` on a create even though
+    // the extension below supplies it, so writes say `workspaceId: db.$workspaceId`.
     client: { $workspaceId: workspaceId },
     query: {
       $allModels: {
@@ -192,11 +135,9 @@ export function scopedDb(workspaceId: string) {
 
           const a = args as Record<string, unknown>;
 
-          // Rewrite the args with the tenancy filter (the app-level scope, still
-          // the primary mechanism). `next` is handed back through a cast: `args`
-          // is typed per model and per operation, but this runs for all of them
-          // at once. The shapes are checked at every call site by the generated
-          // types; what is lost here is only the ability to name that shape.
+          // Rewrite the args with the tenancy filter — the primary mechanism.
+          // The cast back is because `args` is typed per model and operation
+          // while this runs for all of them; call sites keep the real types.
           let next: Record<string, unknown>;
           if (CREATE_OPS.has(operation)) {
             next = { ...a, data: stampFor(model, workspaceId, a.data) };
@@ -207,31 +148,21 @@ export function scopedDb(workspaceId: string) {
               create: stampFor(model, workspaceId, a.create),
             };
           } else {
-            // Everything else takes a `where`: the finds, count, aggregate,
-            // groupBy, update(Many), delete(Many).
-            //
-            // `findUnique`/`findFirst` need no special handling despite the plan
-            // expecting to rewrite them: Prisma 7 accepts a non-unique field
-            // alongside the unique one in `findUnique`'s where and filters on it,
-            // verified against the real database. So the IDOR case —
-            // `findUnique({ where: { id } })` handing over another workspace's
-            // transaction — is closed by the same injection as everything else.
+            // Everything else takes a `where`. `findUnique` needs no special
+            // case: Prisma 7 accepts a non-unique field beside the unique one
+            // and filters on it, so the IDOR closes by the same injection.
             next = { ...a, where: scopeWhere(model, workspaceId, a.where) };
           }
 
           const run = () => query(next as typeof args);
 
-          // Then set the Postgres session variable the RLS policies read (phase
-          // 6, the backstop beneath the filter above). This model is RLS-guarded,
-          // so the query must run in a transaction that first sets
-          // `app.workspace_id` — set_config(..., true) is transaction-local, so a
-          // pooled connection never carries one request's scope into the next.
-          //
-          // Inside a `withScopedTx`, the variable is already set for the whole
-          // transaction: skip the per-op wrapper, both to avoid the cost and
-          // because nesting a transaction inside the interactive one would break
-          // its atomicity (a batch write splitting into separate transactions).
+          // Already set for the whole of an enclosing `withScopedTx`, where
+          // nesting a transaction would also break its atomicity.
           if (inScopedTx.getStore()) return run();
+
+          // Otherwise the GUC the RLS policies read — the backstop beneath the
+          // filter. `set_config(..., true)` is transaction-local, so a pooled
+          // connection never carries one request's scope into the next.
           const [, result] = await internalDb.$transaction([
             setWorkspaceVar(workspaceId),
             run(),
@@ -244,19 +175,9 @@ export function scopedDb(workspaceId: string) {
 }
 
 /**
- * Merchant is the one model where a create cannot be stamped automatically.
- *
- * Both kinds of merchant are written through the same model: the ingest mirrors
- * Akahu's catalog (`merchant_...`, global, `workspaceId: null`) and the
- * transaction page mints private ones (`user_...`, a name someone typed, which
- * is their data). Blanket-stamping the workspace would make the first Akahu
- * merchant a workspace ever syncs private to that workspace — and the next
- * workspace to see the same merchant would then fail on a primary key collision
- * rather than reuse the catalog row.
- *
- * So the caller must say which kind it is, and forgetting throws. The failure
- * this prevents is a private merchant name silently becoming a global catalog
- * entry visible in every other workspace's picker.
+ * Merchant creates cannot be stamped: one model carries both Akahu's global
+ * catalog (`merchant_...`, `workspaceId: null`) and private `user_...` rows.
+ * Stamping would privatise a catalog row and collide the next workspace on its id.
  */
 function stampFor(model: string, workspaceId: string, data: unknown) {
   const one = (row: unknown) => {
@@ -286,27 +207,15 @@ export type ScopedDb = ReturnType<typeof scopedDb>;
 
 /**
  * The client handed to a `withScopedTx` callback: a scoped client bound to the
- * open transaction. `$transaction` is removed because opening a nested one is a
- * footgun the type should forbid — the whole point of the helper is that there
- * is exactly one transaction, with the RLS variable set once at its start.
+ * open transaction. `$transaction` is removed because opening a nested one
+ * breaks the one-transaction guarantee the helper gives.
  */
 export type ScopedTx = Omit<ScopedDb, "$transaction">;
 
 /**
- * Run several scoped writes as one atomic transaction, with the RLS session
- * variable set once for the whole of it.
- *
- * This exists because the per-operation wrapper above (which sets the variable
- * in its own tiny transaction) is correct for single queries but wrong for a
- * group that must be all-or-nothing: wrapping each member separately splits the
- * group into independent transactions and loses atomicity.
- *
- * Use this form when the writes are interleaved with reads or branching logic —
- * `linkTransferLegs`, the transfer-unlink action. It opens one interactive
- * transaction, sets `app.workspace_id` on that connection, marks the async
- * context so the per-operation wrapper stands down, and runs the callback against
- * the transaction client. For a ready array of independent writes with no logic
- * between them, `scopedBatch` pipelines in a single round trip.
+ * Several scoped writes as one atomic transaction, RLS variable set once. The
+ * per-operation wrapper's own tiny transaction is right for a single query but
+ * splits a group that must be all-or-nothing. Ready arrays: use `scopedBatch`.
  */
 export function withScopedTx<T>(db: ScopedDb, fn: (tx: ScopedTx) => Promise<T>): Promise<T> {
   return db.$transaction(async (tx) => {
@@ -316,31 +225,9 @@ export function withScopedTx<T>(db: ScopedDb, fn: (tx: ScopedTx) => Promise<T>):
 }
 
 /**
- * Run a ready array of scoped operations as one pipelined transaction with the
- * RLS variable set once at its head, and hand back their results in order.
- *
- * The batch counterpart to `withScopedTx`, for the groups that are known up front
- * and have no logic between them. The ops are built from the scoped client as
- * before; this prepends the `set_config` as the batch's first statement and runs
- * the whole batch inside the `inScopedTx` context, so the per-operation wrapper
- * stands down and every op executes on the one connection where the variable is
- * set. That the async context reaches Prisma's internal batch execution — so the
- * wrapper does not nest a transaction inside the batch — is verified against the
- * database.
- *
- * **Reads belong here as much as writes.** The ingest's pages of upserts were the
- * original caller, but the reason is not that they are writes: it is that the
- * per-operation wrapper turns each *separate* query into its own BEGIN / set /
- * query / COMMIT, so a listing page firing three reads in a `Promise.all` pays
- * four statements apiece for what is one round trip here. A read batch also gets
- * something the fan-out cannot have at any price: all of it sees one snapshot, so
- * a page and the total it is counted against can no longer disagree because a row
- * arrived between them.
- *
- * The `set_config` result is stripped before returning, so callers see exactly the
- * ops they passed, in order and individually typed. The cast is doing real work
- * and is the reason this is worth a function: `$transaction` types its result from
- * the tuple it is given, and prepending a statement shifts every index by one.
+ * A ready array of scoped ops as one pipelined transaction, results in order.
+ * Reads belong here as much as writes: the per-op wrapper costs each its own
+ * round trip, and one batch sees one snapshot, so a page and its total agree.
  */
 export async function scopedBatch<T extends readonly Prisma.PrismaPromise<unknown>[]>(
   db: ScopedDb,
@@ -352,5 +239,7 @@ export async function scopedBatch<T extends readonly Prisma.PrismaPromise<unknow
       ...ops,
     ]),
   );
+  // `$transaction` types its result from the tuple it is given, so dropping the
+  // prepended `set_config` needs the cast to shift every index back.
   return results.slice(1) as { -readonly [K in keyof T]: Awaited<T[K]> };
 }

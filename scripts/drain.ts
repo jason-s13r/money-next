@@ -1,38 +1,34 @@
 /**
  * Draining the work queues: syncs, rules passes and budget inferences.
  *
- * Not an entry point — `scripts/worker.ts` runs this on a poll loop (the compose
- * `worker` service) and `scripts/ingest.ts --drain` runs it once, right after
- * queuing, for a stack with no worker in it. Both used to be the same code twice
- * or, worse, one of them doing the work a different way.
+ * Not an entry point — the worker runs this on a poll loop (the compose
+ * `worker` service) and `--drain` runs it once, right after queuing, for a
+ * stack with no worker in it.
  *
  * Everything in here belongs to `money_sync`. Claiming a run, calling Akahu and
- * writing the shared catalogs are the things phase 7 took away from the web role;
- * this module is where they went, and importing it from anything under `app/`
- * would put them straight back.
+ * writing the shared catalogs are the worker's job, not the web role's, and
+ * importing this module from anything under `app/` would put them straight
+ * back.
  *
  * Two failure modes are handled so a run doesn't die quietly:
  *
- *   * Retries with backoff — a run that throws (a flaky Akahu call, a transient DB
- *     error, a bad rule graph) goes back to `queued` with `nextAttemptAt` pushed
- *     into the future rather than straight to `failed`, and is retried up to
- *     WORKER_MAX_ATTEMPTS times with exponential backoff before it is failed for
- *     good. A *permanent* condition — a sync's link being gone/inactive — is failed
- *     immediately; retrying it would only burn attempts.
+ *   * Retries with backoff — a run that throws (a flaky Akahu call, a transient
+ *     DB error, a bad rule graph) goes back to `queued` with `nextAttemptAt`
+ *     pushed into the future rather than straight to `failed`, and is retried
+ *     up to WORKER_MAX_ATTEMPTS times with exponential backoff before it is
+ *     failed for good. A *permanent* condition — a sync's link being
+ *     gone/inactive — is failed immediately; retrying it would only burn
+ *     attempts.
  *
- *   * Stale-claim recovery — if the worker process itself dies between claiming a
- *     row and finishing it, the row is left `running` with no live worker on it,
- *     and the page would poll it forever. A reaper pass reclaims any `running` row
- *     older than WORKER_STALE_MINUTES (well above a real run) and routes it through
- *     the same retry-or-fail decision.
+ *   * Stale-claim recovery — if the worker process itself dies between
+ *     claiming a row and finishing it, the row is left `running` with no live
+ *     worker on it, and the page would poll it forever. A reaper pass reclaims
+ *     any `running` row older than WORKER_STALE_MINUTES (well above a real run)
+ *     and routes it through the same retry-or-fail decision.
  *
  * Safe to run as one instance, and safe if two overlap: each claim is atomic
- * (queued → running guarded by a conditional update), so `pnpm worker:sync --drain`
- * on a laptop cannot take a row out from under a running worker.
- *
- * Both of those mechanisms — the claim, the backoff, the reaper — are the same for
- * all three queues and live in lib/server/run-queue.ts. What is left here is what
- * each queue actually *does*, which is the only part that differs.
+ * (queued → running guarded by a conditional update), so `--drain` on a laptop
+ * cannot take a row out from under a running worker.
  */
 import { catalogDb, scopedDb, type ScopedDb } from "../lib/server/db";
 import { akahuFor, TOKEN_LINK_SELECT } from "../lib/server/akahu";
@@ -50,10 +46,9 @@ import {
 // --- Sync queue ------------------------------------------------------------
 
 /**
- * Claim and run one queued sync for a workspace, if there is one. Returns whether
- * it did work, so the caller can keep draining until the queue is empty. Claiming
- * is `claim` (lib/server/run-queue.ts); what is here is what a sync in particular
- * does once it holds the row.
+ * Claim and run one queued sync for a workspace, if there is one. Returns
+ * whether it did work, so the caller can keep draining until the queue is
+ * empty. What is here is what a sync in particular does once it holds the row.
  */
 async function claimAndRunSync(db: ScopedDb): Promise<boolean> {
   const eligible = eligibleNow();
@@ -91,12 +86,11 @@ async function claimAndRunSync(db: ScopedDb): Promise<boolean> {
   console.log(`\n=== ${link.name} (${link.workspaceId}) — ${window} ===`);
 
   try {
-    // Ask Akahu to refresh the connection before ingesting, the same extra step the
-    // web button used to do inline. Every sync arrives here now, scheduled ones
-    // included, so this is no longer only the "sync now" path — the refresh costs
-    // one call and a scheduled sync of stale data is the thing it prevents.
-    //
-    // Resolved from the link, not the environment (phase 8): the refresh must be
+    // Ask Akahu to refresh the connection before ingesting, the same extra step
+    // the web button used to do inline. Every sync arrives here now, scheduled
+    // ones included, so this is no longer only the "sync now" path — the refresh
+    // costs one call and a scheduled sync of stale data is the thing it
+    // prevents. Resolved from the link, not the environment: the refresh must be
     // asked for with the same credentials the sync that follows will use, or a
     // stack with two links would refresh one person's accounts and then ingest
     // the other's.
@@ -211,9 +205,9 @@ async function claimAndRunInference(db: ScopedDb): Promise<boolean> {
 /**
  * Drain every workspace's queues once, returning how many runs were processed.
  *
- * Which workspaces exist is control-plane data (`Workspace` is unscoped); everything
- * below runs through a client scoped to one workspace, which under RLS is also what
- * lets `money_sync` see its own rows at all — see the same note in scripts/ingest.ts.
+ * Which workspaces exist is control-plane data (`Workspace` is unscoped);
+ * everything below runs through a client scoped to one workspace, which under
+ * RLS is also what lets `money_sync` see its own rows at all.
  *
  * Syncs first, then rules, and that order is load-bearing rather than alphabetical:
  * a sync queues the rules pass that follows it, so draining syncs first means the

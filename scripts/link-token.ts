@@ -7,7 +7,7 @@
  *   pnpm link:token --link <linkId> --source env                      # back to env
  *
  * Why a script and not a page: an Akahu access token reads the holder's entire
- * bank history and outlives us (T19). Typing one into a web form puts it through
+ * bank history and outlives us. Typing one into a web form puts it through
  * a server-action payload, a browser's form autofill, and whatever the browser
  * chooses to remember — for a credential whose entire security model is that few
  * things ever hold it. Shell access is the authority here, exactly as it is for
@@ -120,8 +120,8 @@ async function list() {
     for (const link of links) {
       found++;
       // A link marked `stored` with nothing stored is a real state — the row was
-      // created and the token step failed or was abandoned — and it is the one
-      // this listing most needs to make obvious, since the failure it causes
+      // created and the token step failed or was abandoned — and the one this
+      // listing most needs to make obvious, since the failure it causes
       // otherwise appears hours later in a sync run.
       const source =
         link.tokenSource === "stored" && !link.userTokenCipher
@@ -176,11 +176,10 @@ async function verify(credentials: { appToken: string; userToken: string }) {
 /**
  * Read the pair, verify it against Akahu, and confirm the operator meant it.
  *
- * Prompts, network call and confirmation all inside ONE `promptSession`. Asking
- * the confirmation on a second readline interface is the trap read-secret.ts
- * documents — the new interface discards whatever the first left buffered on
- * stdin — and the Akahu call in the middle is no reason to close the session:
- * it is only sitting on stdin while it waits.
+ * Prompts, network call and confirmation all inside ONE `promptSession`.
+ * Closing and reopening a readline interface discards whatever the first left
+ * buffered on stdin, and the Akahu call in the middle is no reason to close
+ * the session: it is only sitting on stdin while it waits.
  *
  * Returns the plaintext pair rather than the ciphertext, because the id it is
  * encrypted against does not exist yet on the create path — the database mints it
@@ -281,8 +280,7 @@ async function createLink(args: Args) {
         name: args.name!,
         // No `connectedByUserId`: nobody clicked anything, an operator ran a
         // script. The column records a person who went through a connect flow,
-        // which is phase 10's job, and inventing one here would be a lie the
-        // members page would later render.
+        // and inventing one here would be a lie the members page would render.
       },
     });
     await tx.bankLink.update({ where: { id: created.id }, data: cipherFields(created.id, tokens) });

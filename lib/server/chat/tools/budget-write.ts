@@ -10,31 +10,28 @@ import { itemRow } from "../../budget/write";
 import { BUDGET_KEY, findBudget, roleOf, windowOf, type FoundBudget } from "./read";
 import { asDate, asInt, asText, type Tool, type ToolContext } from "./registry";
 
-// The tools that change a budget.
+// The tools that change a budget. Only offered to a caller who holds
+// `budget: ["update"]` and refused by `runTool` even if somehow called anyway —
+// a different grant from the one the enrichment tools need: a bookkeeper who
+// may recategorise a transaction need not be able to rewrite the household's
+// plan, which is why `write` names a scope.
 //
-// Only offered to a caller who holds `budget: ["update"]` — see `availableTools` — and
-// refused by `runTool` even if somehow called anyway. That is a different grant from
-// the one the enrichment tools need (enrich-write.ts, labels.ts, rules.ts): a
-// bookkeeper who may recategorise a transaction need not be able to rewrite the
-// household's plan, which is why `write` names a scope rather than saying "yes".
+// They cover what the budget pages cover: a base budget, the layers stacked on
+// it, and the items inside either. **A layer is an ordinary budget with a base
+// and a window**, which is why there is no separate set of tools for layer items
+// — `add_budget_items` does not care which it was handed. The one rule that is
+// not ordinary is that a layer cannot carry another layer, and it is enforced
+// in both places that could break it.
 //
-// They cover what the budget pages cover: a base budget, the layers stacked on it,
-// and the items inside either. **A layer is an ordinary budget with a base and a
-// window**, which is why there is no separate set of tools for layer items — a layer
-// is named the same way a budget is, and `add_budget_items` does not care which it
-// was handed. The one rule that is not ordinary is that a layer cannot carry another
-// layer, and it is enforced in both places that could break it.
+// Everything the model says still goes through `resolveProposedItems`, the same
+// gate the headless inference uses: the model only ever sends *names*, so a
+// spending area that does not exist drops the row, an invented category degrades
+// to null, and a bad frequency drops the row.
 //
-// Everything the model says still goes through `resolveProposedItems`, the same gate
-// the headless inference uses and the one `tests/budget-llm.test.ts` pins. The model
-// only ever sends *names*: a spending area that does not exist drops the row, a
-// category it invented degrades to null rather than pointing an item at nothing, and
-// a bad frequency drops the row. Nothing reaches a `BudgetItem` without passing it.
-//
-// No `revalidatePath` here, deliberately. Every page in this app reaches
-// `requireWorkspace()` and is therefore dynamically rendered, so there is no cached
-// budget page to bust — and `revalidateWorkspacePath` carries `server-only`, which
-// this module may not import.
+// No `revalidatePath` here: every page reaches `requireWorkspace()` and is
+// dynamically rendered, so there is no cached budget page to bust — and
+// `revalidateWorkspacePath` carries `server-only`, which this module may not
+// import.
 
 /** The item shape the model fills in, shared by `create_budget` and
  *  `add_budget_items`. Mirrors `propose_items` in the inference, plus `area`: a chat
@@ -457,8 +454,8 @@ export const updateBudgetItem: Tool = {
         merchantId: resolved.merchantId,
         // A change made in conversation is a change the household asked for.
         inferred: false,
-        // …but the figure is still one a model arrived at, so it keeps saying so and
-        // keeps its reasons. See `chatItemRow`.
+        // …but the figure is still one a model arrived at, so it keeps saying so
+        // and keeps its reasons.
         inferredSource: "ai",
         basis: resolved.basis,
       },
@@ -527,16 +524,14 @@ function resolveItems(raw: unknown, ctx: ToolContext) {
 }
 
 /**
- * A resolved item as a row, written the way a chat writes one.
- *
- * Two deliberate differences from the seeder's own `itemRow`, and they pull opposite
- * ways on purpose. The row is **not** `inferred`: that flag means "a re-infer may
+ * A resolved item as a row, written the way a chat writes one. Two deliberate
+ * differences from the seeder's own `itemRow`, pulling opposite ways on
+ * purpose. The row is **not** `inferred`: that flag means "a re-infer may
  * overwrite this", and a figure agreed with the household in conversation must
- * survive the next pass — wiping it would throw away the very thing the chat was
- * for. But it **keeps its provenance**: `inferredSource: ai` and the `basis` the
- * model gave, because the figure is still a model's and the household is entitled to
- * see whose it was and why. That pairing is what the budget page's provenance badge
- * reads (see `app/w/[workspace]/budgets/[budget]/items.tsx`).
+ * survive the next pass — wiping it would throw away the very thing the chat
+ * was for. But it **keeps its provenance**: `inferredSource: ai` and the `basis`
+ * the model gave, because the figure is still a model's and the household is
+ * entitled to see whose it was and why.
  */
 function chatItemRow(item: ProposedItem, budgetId: string, ctx: ToolContext) {
   return {

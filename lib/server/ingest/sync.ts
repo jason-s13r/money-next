@@ -17,11 +17,10 @@ function startOfUtcDay(date: Date): Date {
 
 /**
  * What a sync needs to know about the connection it is syncing: which workspace
- * its rows belong to, and how to authenticate as it.
- *
- * The credentials are part of the *link*, not of the process, since phase 8 —
- * which is what lets the caller stay a plain loop over links now that two of them
- * may belong to two different people's Akahu accounts.
+ * its rows belong to, and how to authenticate as it. The credentials are part of
+ * the *link*, not of the process, which is what lets the caller stay a plain
+ * loop over links now that two of them may belong to two different people's
+ * Akahu accounts.
  */
 export type SyncLink = TokenLink & { workspaceId: string };
 
@@ -65,10 +64,10 @@ export async function runSync(link: SyncLink, args: SyncArgs): Promise<SyncCount
   const capturedAt = startOfUtcDay(new Date());
 
   // Resolve this link's Akahu credentials once, here, and hand the resulting
-  // client to every step that talks to Akahu. Before phase 8 each step read the
-  // environment for itself, which was harmless while there was one instance-wide
-  // token and is not once there are several: a step that resolved its own would
-  // be a step that could resolve a *different* link's than the sync is for.
+  // client to every step that talks to Akahu. Each step reading the environment
+  // for itself was harmless while there was one instance-wide token and is not
+  // once there are several: a step that resolved its own could resolve a
+  // *different* link's than the sync is for.
   const akahu = akahuFor(link);
 
   await syncCategories();
@@ -81,25 +80,22 @@ export async function runSync(link: SyncLink, args: SyncArgs): Promise<SyncCount
 
   await syncFxRates();
 
-  // Queue the automations rather than run them here.
-  //
-  // This used to be an inline `runRules` over just the ids this sync touched,
-  // wrapped in a try/catch so a broken decision graph couldn't fail a sync that
-  // had already committed. Queuing gets that separation for free — the rules pass
-  // is now its own run, with its own retries, its own row in /rules/runs and its
-  // own failure — and buys two things the inline version couldn't have:
+  // Queue the automations rather than run them here. Queuing gets the
+  // separation for free that an inline `runRules` used to need a try/catch for
+  // — the rules pass is its own run, with its own retries, its own row in
+  // /rules/runs and its own failure — and buys two things the inline version
+  // couldn't have:
   //
   //   * Two links in one workspace produce **one** rules pass, not two. The
-  //     enqueue coalesces per workspace, so the second sync's pass merges into the
-  //     first's instead of walking the same rows again.
+  //     enqueue coalesces per workspace, so the second sync's pass merges into
+  //     the first's instead of walking the same rows again.
   //   * The pass covers the workspace rather than this sync's ids. That is more
-  //     work, which is precisely why it belongs on the worker and not in the tail
-  //     of a sync — and it is what makes a rule authored between two syncs reach
-  //     the transactions that already existed, without anyone pressing "apply now".
+  //     work, which is why it belongs on the worker, and it is what makes a rule
+  //     authored between two syncs reach the transactions that already existed.
   //
-  // Nothing is stomped by the wider scope: `applyOutput` never overwrites a field
-  // a person owns (`categorySource`/`merchantSource` of `user`), so re-evaluating
-  // an old transaction is idempotent unless a rule genuinely changed.
+  // Nothing is stomped by the wider scope: `applyOutput` never overwrites a
+  // field a person owns, so re-evaluating an old transaction is idempotent
+  // unless a rule genuinely changed.
   await enqueueRules(db, { trigger: "sync" });
 
   return { accountsSynced: accounts.length, transactionsSynced: syncedIds.length };

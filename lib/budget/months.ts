@@ -1,11 +1,6 @@
-// Month bucketing and recency weighting, in NZ local time.
-//
-// Factored out of `lib/server/metrics/spend/types.ts` — where these lived and which
-// still re-exports them, so nothing that imported them there had to change — because
-// budget inference now runs in the worker, and that module carries `server-only`
-// and so cannot be imported outside a request. These are pure (an `Intl` formatter
-// and arithmetic, no database), so both the request-side metrics and the worker-side
-// inference share one copy rather than a drifting duplicate.
+// Month bucketing and recency weighting, in NZ local time. Pure (an `Intl`
+// formatter and arithmetic, no database), shared by request-side metrics and
+// worker-side budget inference.
 
 /** The forecast/inference window: the last twelve complete months. */
 export const MONTHS = 12;
@@ -26,11 +21,8 @@ export function monthKey(date: Date): string {
   return `${year}-${month}`;
 }
 
-/**
- * The last `MONTHS` *complete* calendar months, oldest first. The current month is
- * excluded: a month that is three days old always looks like a spending collapse,
- * and it would drag every median down with it.
- */
+/** The last `MONTHS` *complete* calendar months, oldest first. The current month
+ *  is excluded — a month three days old always looks like a spending collapse. */
 export function completeMonths(now: Date): string[] {
   let [year, month] = monthKey(now).split("-").map(Number);
   const keys: string[] = [];
@@ -45,13 +37,11 @@ export function completeMonths(now: Date): string[] {
   return keys;
 }
 
-/**
- * Mean of a monthly series (oldest first) biased toward recent months: month i,
- * counting from 1 at the oldest, carries weight i, so the newest month counts
- * MONTHS times as much as the oldest. Divides by the whole window's weight,
- * including months with no spend, so a category that is trailing off is faded out
- * rather than forecast at its former level.
- */
+/** Mean of a monthly series (oldest first) biased toward recent months: month i,
+ *  counting from 1 at the oldest, carries weight i, so the newest counts MONTHS
+ *  times as much as the oldest. Divides by the whole window's weight, including
+ *  months with no spend, so a category trailing off is faded out rather than
+ *  forecast at its former level. */
 export function recencyWeightedMean(oldestFirst: number[]): number {
   let weighted = 0;
   let weight = 0;

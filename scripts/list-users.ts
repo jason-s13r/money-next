@@ -19,8 +19,8 @@
  * behaviour here. No financial data is touched.
  */
 
-// See the note in list-workspaces.ts: every import here is dynamic, and a file
-// with no static import or export is not a module.
+// Every import here is dynamic: a file with no static import or export is not
+// a module.
 export {};
 import { runScript } from "./_bootstrap";
 
@@ -65,9 +65,9 @@ async function main() {
 
   for (const user of users) {
     // `twoFactorEnabled` says whether TOTP is *enrolled*, not whether it is
-    // required — that is REQUIRE_MFA, a flag rather than a column (phase 3).
-    // Shown because Akahu accreditation makes enrolment mandatory, so this is
-    // the list that has to be empty of "no mfa" before that flag can be flipped.
+    // required (that is REQUIRE_MFA, a flag rather than a column). Shown because
+    // Akahu accreditation makes enrolment mandatory, so this is the list that
+    // has to be empty of "no mfa" before that flag can be flipped.
     const mfa = user.twoFactorEnabled ? "mfa" : "no mfa";
     console.log(`${user.name} <${user.email}>  [${mfa}]  (${user.id})`);
 
