@@ -1,12 +1,13 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useMemo, useState } from "react";
 import { useFormStatus } from "react-dom";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { FREQUENCIES, FREQUENCY_LABELS, type Frequency } from "@/lib/budget/recurrence";
+import { SearchableSelectField } from "@/ui/primitives/searchable-select";
 import { createBudgetItem, updateBudgetItem, deleteBudgetItem } from "../actions";
 import { NO_ERROR, type BudgetActionState } from "../types";
 
@@ -24,6 +25,12 @@ import { NO_ERROR, type BudgetActionState } from "../types";
 // lib/budget/recurrence.ts), and offering it as a seventh frequency would make
 // one cadence expressible two ways. Here it is a button that sets both fields,
 // which is where a convenience like that belongs.
+//
+// The three filing fields are comboboxes rather than native selects: the catalog
+// runs to a few hundred categories and a similar order of merchants, which is
+// well past what a native dropdown can be scrolled through. Picking a group also
+// narrows the category list to that group's own — the pairing the breakdown
+// assumes, and the only combination worth offering once a group is chosen.
 
 export type ItemFormValues = {
   id: string;
@@ -38,11 +45,12 @@ export type ItemFormValues = {
 };
 
 type Option = { id: string; name: string };
-type CategoryOption = Option & { groupName: string | null };
+type CategoryOption = Option & { groupId: string | null; groupName: string | null };
 
 const FIELD = "flex flex-col gap-1 text-sm";
 // Native select, styled to match `Input` beside it — no shadcn Select is
-// installed, and the members invite form already sets this precedent.
+// installed, and the members invite form already sets this precedent. Still used
+// for the frequency, whose six options need no searching.
 const SELECT =
   "h-9 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 dark:bg-input/30";
 
@@ -78,7 +86,42 @@ export function ItemForm({
     item && item.amount > 0 ? "income" : "expense",
   );
 
+  const [groupId, setGroupId] = useState<string | null>(item?.groupId ?? null);
+  const [categoryId, setCategoryId] = useState<string | null>(item?.categoryId ?? null);
+  const [merchantId, setMerchantId] = useState<string | null>(item?.merchantId ?? null);
+
   const fortnightly = frequency === "week" && interval === 2;
+
+  const groupOptions = useMemo(
+    () => groups.map((group) => ({ value: group.id, label: group.name })),
+    [groups],
+  );
+
+  // Narrowed to the chosen group, since a category outside it would contradict the
+  // group the item is filed under. With no group chosen the whole catalog is
+  // offered, each row hinting its group — that hint is noise once filtered, so it
+  // is dropped then.
+  const categoryOptions = useMemo(() => {
+    const inScope = groupId ? categories.filter((c) => c.groupId === groupId) : categories;
+    return inScope.map((category) => ({
+      value: category.id,
+      label: category.name,
+      hint: groupId ? undefined : (category.groupName ?? undefined),
+    }));
+  }, [categories, groupId]);
+
+  const merchantOptions = useMemo(
+    () => merchants.map((merchant) => ({ value: merchant.id, label: merchant.name })),
+    [merchants],
+  );
+
+  /** Changing the group drops a category that no longer belongs to it. */
+  function chooseGroup(next: string | null) {
+    setGroupId(next);
+    if (next && categoryId && !categories.some((c) => c.id === categoryId && c.groupId === next)) {
+      setCategoryId(null);
+    }
+  }
 
   return (
     <form
@@ -191,45 +234,51 @@ export function ItemForm({
           : "The date sets the day within the period: the 1st of the month, or which weekday. It also fixes which fortnight, if you repeat every 2 weeks."}
       </p>
 
+      {/* Not <label>s: the trigger is a button, and wrapping one in a label makes
+          the caption's click toggle the panel twice. The `ariaLabel` on each field
+          names it instead. */}
       <div className="flex flex-wrap gap-3">
-        <label className={`${FIELD} flex-1 min-w-40`}>
-          Category group
-          <select name="categoryGroupId" defaultValue={item?.groupId ?? ""} required className={SELECT}>
-            <option value="" disabled>
-              Choose a group…
-            </option>
-            {groups.map((group) => (
-              <option key={group.id} value={group.id}>
-                {group.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className={`${FIELD} flex-1 min-w-40`}>
+          <span>Category group</span>
+          <SearchableSelectField
+            name="categoryGroupId"
+            ariaLabel="Category group"
+            options={groupOptions}
+            value={groupId}
+            onChange={chooseGroup}
+            placeholder="Choose a group…"
+          />
+        </div>
 
-        <label className={`${FIELD} flex-1 min-w-40`}>
-          Category <span className="text-muted">(optional)</span>
-          <select name="categoryId" defaultValue={item?.categoryId ?? ""} className={SELECT}>
-            <option value="">Any</option>
-            {categories.map((category) => (
-              <option key={category.id} value={category.id}>
-                {category.name}
-                {category.groupName ? ` · ${category.groupName}` : ""}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className={`${FIELD} flex-1 min-w-40`}>
+          <span>
+            Category <span className="text-muted">(optional)</span>
+          </span>
+          <SearchableSelectField
+            name="categoryId"
+            ariaLabel="Category"
+            options={categoryOptions}
+            value={categoryId}
+            onChange={setCategoryId}
+            placeholder="Any"
+            clearLabel="Any"
+          />
+        </div>
 
-        <label className={`${FIELD} flex-1 min-w-40`}>
-          Merchant <span className="text-muted">(optional)</span>
-          <select name="merchantId" defaultValue={item?.merchantId ?? ""} className={SELECT}>
-            <option value="">Any</option>
-            {merchants.map((merchant) => (
-              <option key={merchant.id} value={merchant.id}>
-                {merchant.name}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className={`${FIELD} flex-1 min-w-40`}>
+          <span>
+            Merchant <span className="text-muted">(optional)</span>
+          </span>
+          <SearchableSelectField
+            name="merchantId"
+            ariaLabel="Merchant"
+            options={merchantOptions}
+            value={merchantId}
+            onChange={setMerchantId}
+            placeholder="Any"
+            clearLabel="Any"
+          />
+        </div>
       </div>
 
       <div className="flex items-center gap-3">

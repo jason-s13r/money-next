@@ -34,7 +34,7 @@ export type ItemRow = ItemFormValues & {
 };
 
 type Option = { id: string; name: string };
-type CategoryOption = Option & { groupName: string | null };
+type CategoryOption = Option & { groupId: string | null; groupName: string | null };
 
 export function BudgetItems({
   budgetId,

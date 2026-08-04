@@ -27,13 +27,15 @@ export const getCategories = cache(async () => {
   const db = await getDb();
   const rows = await db.category.findMany({
     orderBy: [{ group: { name: "asc" } }, { name: "asc" }],
-    select: { id: true, name: true, direction: true, group: { select: { name: true } } },
+    select: { id: true, name: true, direction: true, groupId: true, group: { select: { name: true } } },
   });
   // Flatten the group name so callers read `groupName` without a nested access.
+  // The id comes too, for pickers that narrow the catalog to a chosen group.
   return rows.map((c) => ({
     id: c.id,
     name: c.name,
     direction: c.direction,
+    groupId: c.groupId,
     groupName: c.group?.name ?? null,
   }));
 });

@@ -130,7 +130,12 @@ export default async function BudgetPage(props: PageProps<"/w/[workspace]/budget
         budgetId={budget.id}
         items={items}
         groups={groups}
-        categories={categories.map((c) => ({ id: c.id, name: c.name, groupName: c.groupName }))}
+        categories={categories.map((c) => ({
+          id: c.id,
+          name: c.name,
+          groupId: c.groupId,
+          groupName: c.groupName,
+        }))}
         merchants={merchants.map((m) => ({ id: m.id, name: m.name }))}
       />
 
