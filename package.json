@@ -38,7 +38,7 @@
     "link:token": "tsx --env-file-if-exists=.env scripts/link-token.ts",
     "link:keypair": "tsx scripts/link-keypair.ts",
     "link:upgrade": "tsx --env-file-if-exists=.env scripts/link-upgrade.ts",
-    "help:commands": "cat package.json | jq -r '.scripts | keys[]?' | grep ':'"
+    "help:commands": "tsx scripts/help.ts"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"
