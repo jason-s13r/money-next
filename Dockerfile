@@ -32,6 +32,11 @@ RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
 # by the migrate and cron services — it carries the TS source, tsx and the
 # Prisma CLI, none of which the minimal runner ships. ----
 FROM base AS build
+# jq, for `pnpm help:commands`. Here rather than in `base` because this stage is
+# the tooling image — the one you `podman exec` into to run a script — and the
+# runner has no package.json to list. Before the COPYs so it caches across builds.
+RUN apt-get update && apt-get install -y --no-install-recommends jq \
+    && rm -rf /var/lib/apt/lists/*
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Placeholders satisfy `env("DATABASE_URL")` in prisma.config.ts and the
