@@ -21,7 +21,10 @@ import type { SpendSummary } from "../spend";
 export {
   averageDailyNets,
   DAYS_PER_MONTH,
+  formatMonths,
+  NO_CREDIT_FLOOR,
   PROJECTION_DAYS,
+  runwayPhases,
   SCENARIO_COLORS,
   walkProjection,
   type ProjectionPoint,
@@ -229,7 +232,10 @@ export async function getForecastProjections(
       color: SCENARIO_COLORS[index % SCENARIO_COLORS.length],
       blendedDays,
       dailyNets: nets,
-      ...walkProjection(nets, outs, ins, balances.accessible, from),
+      // Walked down to the credit floor, not to zero: a plan that outspends the
+      // balance of someone with an overdraft carries on into it, which is what
+      // the money would actually do.
+      ...walkProjection(nets, outs, ins, balances.accessible, from, balances.creditFloor),
     };
   });
 }

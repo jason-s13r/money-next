@@ -36,7 +36,7 @@ import {
   detectRecurrence,
   isCurrent,
 } from "../lib/budget/detect";
-import { averageDailyNets, walkProjection } from "../lib/budget/projection";
+import { averageDailyNets, runwayPhases, walkProjection } from "../lib/budget/projection";
 import { actualPerOccurrence, blendTowardActual, refinedAmount } from "../lib/budget/refine";
 
 /** A UTC-midnight date, which is how occurrences come back. */
@@ -721,6 +721,169 @@ describe("walkProjection finds the day the money runs out", () => {
     assert.equal(walk.depletionDay, null);
     const days = walk.months! * (365.25 / 12);
     assert.ok(Math.abs(days - 100) < 1e-6, `${days} days`);
+  });
+});
+
+// A workspace with a card or an overdraft has money it can spend past zero, and
+// the chart says so: the line carries on below the axis to the credit floor. The
+// two things that must stay true while it does are that the line stops *at* the
+// limit rather than sailing through it, and that the runway does not quietly grow
+// by the size of the facility — borrowing postpones running out, it does not
+// prevent it, and the 6/3-month status is read against your own money.
+describe("a credit facility lets the line go under zero, to the limit", () => {
+  // $1,000 in hand, a $1,000 facility behind it, $400 a day going out. Zero on
+  // day 2 (halfway through it), the limit on day 4 (exactly at its end).
+  const spend = () => flows(10, Array.from({ length: 10 }, (_, day): [number, number] => [day, -400]));
+  const FLOOR = -1000;
+
+  test("the line continues past zero and lands on the floor", () => {
+    const { nets, outs, ins } = spend();
+    const walk = walkProjection(nets, outs, ins, 1000, FROM, FLOOR);
+
+    const last = walk.points[walk.points.length - 1];
+    assert.equal(last.worth, FLOOR);
+    assert.ok(Math.abs(last.day - 5) < 1e-9, `bottomed out at ${last.day}`);
+    // And nothing on the line is below the limit: the facility is a floor, not a
+    // suggestion.
+    for (const point of walk.points) {
+      assert.ok(point.worth >= FLOOR, `${point.worth} at day ${point.day}`);
+    }
+  });
+
+  test("running out of money and running out of credit are two dates", () => {
+    const { nets, outs, ins } = spend();
+    const walk = walkProjection(nets, outs, ins, 1000, FROM, FLOOR);
+
+    assert.equal(walk.depletionDay, "2026-08-03");
+    assert.equal(walk.creditExhaustedDay, "2026-08-05");
+  });
+
+  test("the runway is the same length as it would be with no facility", () => {
+    // The whole point. The line is longer; the runway is not, because the extra
+    // is borrowed. A tile reading 5 months here instead of 2.5 would be telling
+    // someone about to go into debt that they had twice as long.
+    const { nets, outs, ins } = spend();
+    const withCredit = walkProjection(nets, outs, ins, 1000, FROM, FLOOR);
+    const without = walkProjection(nets, outs, ins, 1000, FROM);
+
+    assert.equal(withCredit.months, without.months);
+    assert.equal(withCredit.depletionDay, without.depletionDay);
+    assert.equal(withCredit.monthlyBurn, without.monthlyBurn);
+  });
+
+  test("with no facility there is no credit date to report", () => {
+    const { nets, outs, ins } = spend();
+    const walk = walkProjection(nets, outs, ins, 1000, FROM);
+
+    assert.equal(walk.creditExhaustedDay, null);
+    assert.equal(walk.points[walk.points.length - 1].worth, 0);
+  });
+
+  test("a facility the plan only dips into runs to the horizon", () => {
+    // $10,000 of credit against $4,000 of spending: it goes under, it does not
+    // run out, and the line keeps its full length rather than stopping early.
+    const { nets, outs, ins } = spend();
+    const walk = walkProjection(nets, outs, ins, 1000, FROM, -10_000);
+
+    assert.equal(walk.creditExhaustedDay, null);
+    assert.deepEqual(walk.points[walk.points.length - 1], { day: 10, worth: -3000 });
+    assert.equal(walk.depletionDay, "2026-08-03");
+  });
+
+  test("a plan rescued after going under still ran out the first time", () => {
+    // Only visible now the line carries on past zero: $1,000 spent down to −$200
+    // by day 2, a $2,000 rescue on day 5, then under again in week three. The
+    // runway is the first date, not the last one before the credit gave out.
+    const movements: [number, number][] = [];
+    for (let day = 0; day < 30; day++) movements.push([day, -400]);
+    movements.push([5, 2000]);
+    const { nets, outs, ins } = flows(30, movements);
+    const walk = walkProjection(nets, outs, ins, 1000, FROM, FLOOR);
+
+    assert.equal(walk.depletionDay, "2026-08-03");
+    assert.ok(
+      walk.creditExhaustedDay! > walk.depletionDay!,
+      `${walk.creditExhaustedDay} after ${walk.depletionDay}`,
+    );
+  });
+
+  test("the two phases are reported apart, and never added up", () => {
+    // $1,000 at $400 a day is 2.5 days of balance; the $1,000 facility behind it
+    // is another 2.5. The tile's own figure stays the first of those — a plan
+    // that lasts five days on paper only lasts 2.5 on money that is yours.
+    const { nets, outs, ins } = spend();
+    const walk = walkProjection(nets, outs, ins, 1000, FROM, FLOOR);
+
+    const days = (months: number) => months * (365.25 / 12);
+    assert.ok(Math.abs(days(walk.months!) - 2.5) < 1e-9, `${days(walk.months!)} days of balance`);
+    assert.ok(
+      Math.abs(days(walk.creditMonths!) - 2.5) < 1e-9,
+      `${days(walk.creditMonths!)} days of credit`,
+    );
+  });
+
+  test("a plan with no facility has no second phase to report", () => {
+    const { nets, outs, ins } = spend();
+    assert.equal(walkProjection(nets, outs, ins, 1000, FROM).creditMonths, null);
+  });
+
+  test("credit still inside the horizon has no length yet", () => {
+    // It went under, but the facility outlives the plan's own window. Reporting a
+    // figure here would mean extrapolating past where the budget describes.
+    const { nets, outs, ins } = spend();
+    assert.equal(walkProjection(nets, outs, ins, 1000, FROM, -10_000).creditMonths, null);
+  });
+
+  test("a balance already gone spends the whole line on credit", () => {
+    // Nothing of one's own left, so there is no first phase to spend: every day
+    // the line covers is borrowed, and the runway is zero rather than a negative
+    // number of months arrived at by dividing a debt by a burn.
+    const { nets, outs, ins } = spend();
+    const walk = walkProjection(nets, outs, ins, 0, FROM, FLOOR);
+
+    assert.equal(walk.months, 0);
+    assert.equal(walk.depletionDay, "2026-08-01");
+    assert.ok(Math.abs(walk.creditMonths! * (365.25 / 12) - 2.5) < 1e-9);
+  });
+
+  test("a facility already drawn to its limit has nowhere left to go", () => {
+    // The degenerate case the floor must survive: no headroom at all, so the
+    // line starts on the limit instead of sinking below one it cannot exceed.
+    const { nets, outs, ins } = spend();
+    const walk = walkProjection(nets, outs, ins, -1000, FROM, FLOOR);
+
+    assert.deepEqual(walk.points, [{ day: 0, worth: FLOOR }]);
+    assert.equal(walk.creditExhaustedDay, "2026-08-01");
+  });
+});
+
+// Both popovers — the runway tile's and the chart legend's — build their timing
+// rows from this one function, so the two can never come to different
+// conclusions about the same scenario.
+describe("the popovers phrase the runway as two phases", () => {
+  test("a plan with credit behind it gets both, in order", () => {
+    assert.deepEqual(runwayPhases({ months: 4.52, creditMonths: 3.28 }), [
+      { label: "Balance lasts", value: "4.5 months" },
+      { label: "Credit lasts", value: "3.3 months" },
+    ]);
+  });
+
+  test("without a facility there is only the balance", () => {
+    assert.deepEqual(runwayPhases({ months: 12.5, creditMonths: null }), [
+      { label: "Balance lasts", value: "12.5 months" },
+    ]);
+  });
+
+  test("under a month is said in words, not as a decimal", () => {
+    // "0.4 months" is a decimal pretending to be a fact about a fortnight.
+    assert.deepEqual(runwayPhases({ months: 0.4, creditMonths: null }), [
+      { label: "Balance lasts", value: "under a month" },
+    ]);
+  });
+
+  test("a plan that pays for itself has no phases at all", () => {
+    assert.deepEqual(runwayPhases({ months: Infinity, creditMonths: null }), []);
+    assert.deepEqual(runwayPhases({ months: null, creditMonths: null }), []);
   });
 });
 

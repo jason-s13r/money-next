@@ -1,6 +1,7 @@
 import "server-only";
 import { connection } from "next/server";
 import { getDb } from "../db/request";
+import { drawableCredit, spendFloor } from "../../accounts";
 import { LIQUID_TYPES, LOCKED_TYPES } from "../../categories";
 import { displayConverter, getDisplayCurrency } from "../currency";
 import { accountMoney } from "../money";
@@ -21,6 +22,16 @@ export type BalanceSummary = {
   total: number;
   /** Total minus locked. The number that reflects decisions you can make. */
   accessible: number;
+  /**
+   * How far below zero `accessible` can legitimately go: every revolving credit
+   * facility drawn to its limit. Zero for someone with no facility, and negative
+   * otherwise — it is a balance, not a size, so the forecast can walk down to it
+   * without having to know which way round to read it.
+   */
+  creditFloor: number;
+  /** The sum of those facilities' limits, in the display currency — what the
+   *  floor is worth as a headline figure. Zero when there is no facility. */
+  creditLimit: number;
   facility: {
     name: string;
     limit: number;
@@ -64,6 +75,25 @@ export async function getBalanceSummary(): Promise<BalanceSummary> {
 
   const total = accounts.reduce((sum, a) => sum + inDisplay(a.balanceCurrent ?? 0, a.currency), 0);
 
+  // How far the accessible balance can be run down: each spendable account's own
+  // floor (see `lib/accounts.ts` — a facility bottoms out at its limit, plain
+  // money at zero, a term loan where it already sits), summed into one figure on
+  // the same axis as `accessible` so the chart can draw it as a line rather than
+  // reason about signs.
+  const spendable = accounts.filter((a) => !LOCKED_TYPES.has(a.type));
+  const creditFloor = spendable.reduce(
+    (sum, a) => sum + inDisplay(spendFloor(a), a.currency),
+    0,
+  );
+
+  // The headline size of the facilities behind that floor — only the ones with
+  // credit left to draw, since a limit nothing can be drawn against is a number
+  // about the past.
+  const creditLimit = spendable.reduce(
+    (sum, a) => (drawableCredit(a) > 0 ? sum + inDisplay(a.balanceLimit!, a.currency) : sum),
+    0,
+  );
+
   // The revolving facility reports `balanceCurrent` signed: positive means in
   // credit, negative means drawn against the limit. Summing it into net worth is
   // therefore already correct, and only the negative case is debt. Its limit and
@@ -97,6 +127,8 @@ export async function getBalanceSummary(): Promise<BalanceSummary> {
     locked,
     total,
     accessible: total - locked,
+    creditFloor,
+    creditLimit,
     facility,
     byCurrency: [...totalsByCurrency]
       .map(([currency, total]) => ({ currency, total }))

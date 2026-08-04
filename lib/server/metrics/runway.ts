@@ -1,4 +1,4 @@
-import type { ProjectionScenario } from "./budget/forecast";
+import { runwayPhases, type ProjectionScenario } from "./budget/forecast";
 
 // The runway tiles under the balance — one per forecast budget, read straight
 // off the projections the chart draws.
@@ -14,6 +14,11 @@ import type { ProjectionScenario } from "./budget/forecast";
 // different number than the line it labels is just wrong. And a scenario built
 // from budgets runs at the plan's own rhythm, so "months" is where the walk
 // actually crossed zero rather than a division: a Christmas in the way moves it.
+//
+// Zero stays the line the runway is measured to even where the chart's projection
+// carries on below it into a credit facility. Borrowing postpones the date money
+// stops being available; it does not extend the runway, and a tile that added the
+// overdraft to it would tell someone about to go into debt that they had longer.
 
 export type Runway = {
   /** Scenario name — matches the chart legend. */
@@ -28,6 +33,33 @@ export type Runway = {
   depletionDay: string | null;
   /** Pre-built runway phrase, e.g. "12.5 months, empty by 3 Aug 2027". */
   runwayText: string;
+  /**
+   * What happens after that, for someone with a facility to fall back on:
+   * "Credit gone by 14 Nov 2027". Null when there is no facility, or when the
+   * plan never draws it all the way down inside the horizon.
+   *
+   * Kept out of {@link runwayText} and out of {@link months} on purpose. Credit
+   * is not runway — it is the same shortfall borrowed — so it must not move the
+   * 6/3-month status a reader judges the plan by. It is worth saying, though: the
+   * chart's line visibly carries on past zero, and a tile that stopped at "empty"
+   * would leave that unexplained.
+   *
+   * Written to stand on its own because it is shown in the tile's popover rather
+   * than in the line itself. Inline it made a long sentence longer, and the date
+   * that matters — the one the status is judged on — is the runway's.
+   */
+  creditText: string | null;
+  /**
+   * How long the plan lasts, split into the months the balance covers and the
+   * months the credit covers after it — for the popover, alongside
+   * {@link creditText}. Empty when the plan never depletes at all.
+   *
+   * Two figures rather than one total, and inside the popover rather than on the
+   * face of the tile, for the same reason {@link months} ignores credit: they are
+   * different kinds of time, and adding them would flatter a household living on
+   * its overdraft.
+   */
+  phases: { label: string; value: string }[];
   /** Pre-built burn phrase, e.g. "burning $3,400/mo" or "$820/mo to spare". */
   burnText: string;
   /**
@@ -110,6 +142,10 @@ export function getRunways(
       depletionDay: scenario.depletionDay,
       status: described.status,
       runwayText: described.text,
+      creditText: scenario.creditExhaustedDay
+        ? `Credit gone by ${formatDay(scenario.creditExhaustedDay)}`
+        : null,
+      phases: runwayPhases(scenario),
       burnText,
       burnBreakdown:
         scenario.monthlyIn > 0

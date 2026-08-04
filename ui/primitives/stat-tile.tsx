@@ -55,6 +55,12 @@ export type HeroRunway = {
   label: string;
   /** Pre-built runway phrase, e.g. "12.5 months runway". */
   runwayText: string;
+  /** What the credit facility does after that, e.g. "Credit gone by 14 Nov
+   *  2027". Null when there is none to draw on. */
+  creditText?: string | null;
+  /** The runway split into its phases — months on the balance, then months on
+   *  credit — for the popover. Empty when the plan never depletes. */
+  phases?: { label: string; value: string }[];
   /** Pre-built burn phrase, e.g. "burning $3,400/mo" or "$820/mo to spare". */
   burnText: string;
   /** Planned income and expenses that net to the burn, for the tooltip. */
@@ -91,7 +97,7 @@ export function Hero({
               <span className="font-medium">{r.label}</span>
               <span className="text-muted">
                 {r.runwayText},{" "}
-                {r.burnBreakdown ? (
+                {r.burnBreakdown || r.creditText ? (
                   // Popover, not Tooltip: opens on hover for pointer users and on
                   // tap for touch users, where a hover-only tooltip never would.
                   <Popover>
@@ -106,18 +112,47 @@ export function Hero({
                     {/* Spell out the arithmetic: the net burn is planned expenses
                         less the periodic income planned to keep covering part of it. */}
                     <PopoverContent className="flex flex-col gap-1 text-left text-secondary">
-                      <span className="flex justify-between gap-6">
-                        <span>Planned expenses</span>
-                        <span className="tabular-nums">{r.burnBreakdown.expenses}</span>
-                      </span>
-                      <span className="flex justify-between gap-6">
-                        <span>Less planned income</span>
-                        <span className="tabular-nums">−{r.burnBreakdown.income}</span>
-                      </span>
-                      <span className="mt-0.5 flex justify-between gap-6 border-t border-border pt-1 font-medium text-foreground">
-                        <span>Net</span>
-                        <span className="tabular-nums">{r.burnBreakdown.net}</span>
-                      </span>
+                      {r.burnBreakdown ? (
+                        <>
+                          <span className="flex justify-between gap-6">
+                            <span>Planned expenses</span>
+                            <span className="tabular-nums">{r.burnBreakdown.expenses}</span>
+                          </span>
+                          <span className="flex justify-between gap-6">
+                            <span>Less planned income</span>
+                            <span className="tabular-nums">−{r.burnBreakdown.income}</span>
+                          </span>
+                          <span className="mt-0.5 flex justify-between gap-6 border-t border-border pt-1 font-medium text-foreground">
+                            <span>Net</span>
+                            <span className="tabular-nums">{r.burnBreakdown.net}</span>
+                          </span>
+                        </>
+                      ) : null}
+                      {/* How long it lasts, in the two phases that must not be
+                          added together: months on the balance, then months on
+                          credit. In here rather than on the face of the tile,
+                          because the months figure out there deliberately counts
+                          only the first of them — a reader who wants the borrowed
+                          time is the one who opened the breakdown. */}
+                      {r.phases?.length || r.creditText ? (
+                        <span
+                          className={
+                            r.burnBreakdown
+                              ? "mt-0.5 flex flex-col gap-1 border-t border-border pt-1"
+                              : "flex flex-col gap-1"
+                          }
+                        >
+                          {r.phases?.map((phase) => (
+                            <span key={phase.label} className="flex justify-between gap-6">
+                              <span>{phase.label}</span>
+                              <span className="tabular-nums">{phase.value}</span>
+                            </span>
+                          ))}
+                          {r.creditText ? (
+                            <span className="whitespace-nowrap text-muted">{r.creditText}</span>
+                          ) : null}
+                        </span>
+                      ) : null}
                     </PopoverContent>
                   </Popover>
                 ) : (

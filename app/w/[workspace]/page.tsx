@@ -96,7 +96,8 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
       {/* Balance over time. The line is the accessible balance reconstructed from
           the transaction flow (BalanceSnapshot history is only days old); the bars
           are each day's net flow — the line's own deltas — and each dashed line
-          walks one forecast budget forward to where the money runs out. */}
+          walks one forecast budget forward to where the money runs out, carrying
+          on under the axis into any credit facility until that is spent too. */}
       <Card>
         <CardHeader>
           <CardTitle>Balance over time</CardTitle>

@@ -3,8 +3,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { RANGES } from "./balance-chart.util";
 
 /** A row in a legend item's explanatory popover. `emphasis` marks the headline
- *  figure — the net burn, or the single figure a scenario reduces to. */
-export type LegendPopoverRow = { label: string; value: string; emphasis?: boolean };
+ *  figure — the net burn, or the single figure a scenario reduces to. `divider`
+ *  opens a new group without claiming to be a total: the monthly arithmetic and
+ *  how long the plan lasts are two subjects, not one column of figures. */
+export type LegendPopoverRow = {
+  label: string;
+  value: string;
+  emphasis?: boolean;
+  divider?: boolean;
+};
 
 export type LegendItem = {
   color: string;
@@ -62,7 +69,9 @@ export function BalanceChartLegend({
                         className={
                           row.emphasis
                             ? "flex justify-between gap-6 border-t border-border pt-1 font-medium text-foreground"
-                            : "flex justify-between gap-6 text-secondary"
+                            : row.divider
+                              ? "mt-0.5 flex justify-between gap-6 border-t border-border pt-1 text-secondary"
+                              : "flex justify-between gap-6 text-secondary"
                         }
                       >
                         <span>{row.label}</span>

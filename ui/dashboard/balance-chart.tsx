@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatMoneyWhole } from "@/lib/format";
 import { formatPeriodKey } from "@/lib/periods";
+import { runwayPhases } from "@/lib/budget/projection";
 import type { BalanceSeries } from "@/lib/server/metrics/balance-series";
 import { BalanceChartSvg } from "./balance-chart-svg";
 import { BalanceChartLegend, type LegendItem } from "./balance-chart-legend";
@@ -32,7 +33,10 @@ import {
 // from the $0 line by that day's net transaction flow, riding a daily balance line,
 // with one forward projection per forecast budget. Those bend: a forecast budget is
 // walked forward day by day together with its layers, so an expensive December steps
-// down where a burn rate would have run straight. Because a bar *is* the line's step
+// down where a burn rate would have run straight. Those lines may pass under the
+// $0 axis: where the workspace has a card or an overdraft, the plan keeps being
+// spendable after the balance is gone, and the line runs on to the marked credit
+// floor and stops there. Because a bar *is* the line's step
 // for that day, both share one dollar axis. The range buttons set how many days fill
 // the width (the zoom); the rest scrolls. Marks follow the house data-viz rules:
 // thin lines, a recessive grid, text in ink tokens, colour for identity.
@@ -41,8 +45,17 @@ import {
 // `balance-chart-legend.tsx`.
 
 export function BalanceChart({ series }: { series: BalanceSeries }) {
-  const { displayCurrency, now, currentWorth, days, nets, projectedNets, worthBoundaries, scenarios } =
-    series;
+  const {
+    displayCurrency,
+    now,
+    currentWorth,
+    creditFloor,
+    days,
+    nets,
+    projectedNets,
+    worthBoundaries,
+    scenarios,
+  } = series;
 
   const N = days.length;
 
@@ -151,7 +164,15 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
           s.points.map((p) => ` L${fx(N + p.day)} ${fy(p.worth)}`).join(""),
       }));
 
-    return { bw, plotW, viewportW, yScale, fx, fy, worthPath, worthArea, nowX, projections };
+    // The credit floor, marked only once a line has gone under the axis. A
+    // facility nobody's plan draws on is not news, and forcing the axis down to
+    // an untouched limit would flatten the part of the chart being read.
+    // `walkProjection` lands a bottoming-out line exactly on the floor, so
+    // whenever it matters the scale already reaches it.
+    const floor =
+      creditFloor < 0 && creditFloor >= yScale.min ? { y: fy(creditFloor), value: creditFloor } : null;
+
+    return { bw, plotW, viewportW, yScale, fx, fy, worthPath, worthArea, nowX, projections, floor };
   }, [
     containerW,
     rangeKey,
@@ -161,6 +182,7 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     plannedNets,
     N,
     currentWorth,
+    creditFloor,
     scenarios,
   ]);
 
@@ -344,6 +366,13 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
                 : `${money(Math.abs(s.monthlyBurn))}/mo`,
             emphasis: true,
           },
+          // How long that rate lasts, in the two phases the line draws: down to
+          // the axis on the balance, then down to the credit floor on borrowing.
+          // The same builder the runway tile uses, so the legend and the tile
+          // cannot come to different conclusions about the same scenario. The
+          // date credit runs out is left to the tile: here the line already ends
+          // on the floor, which is the same fact drawn instead of written.
+          ...runwayPhases(s).map((phase, i) => ({ ...phase, divider: i === 0 })),
         ],
       },
     })),

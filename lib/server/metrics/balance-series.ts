@@ -32,6 +32,13 @@ import {
 // the day's step in that very line. Transfers are excluded on the same two tests
 // used everywhere else (Akahu's tagged type and a hand-linked `transferGroupId`),
 // so a day's flow matches the net on the comparison view.
+//
+// The forward lines are allowed below the axis. Someone with a card or an
+// overdraft can keep spending after their own money is gone, and stopping the
+// line at zero drew that as the end of the story; it now runs on to the credit
+// floor (see `BalanceSummary.creditFloor`) and stops there, which is where the
+// spending actually has to stop. The runway is still measured to zero — see
+// `lib/server/metrics/runway.ts` for why credit must not lengthen it.
 
 /** A ceiling on how many days are returned — generous (years), but bounded so a
  *  very old ledger does not ship an unbounded series. Beyond it the oldest days
@@ -47,6 +54,13 @@ export type BalanceSeries = {
   /** Accessible balance today: the anchor the line ends at and the projections
    *  start from. */
   currentWorth: number;
+  /** The balance every projection bottoms out at — negative where the workspace
+   *  has a revolving facility to draw on, zero where it has none. The chart marks
+   *  it, so a line that ends below the axis says what it ran into. */
+  creditFloor: number;
+  /** The credit that floor is made of, as a positive figure, for the label
+   *  beside it. Zero when there is no facility. */
+  creditLimit: number;
   /** Day keys (`YYYY-MM-DD`), oldest first — one per bar. */
   days: string[];
   /** Net transaction flow per day, oldest first, aligned with `days`. */
@@ -156,6 +170,8 @@ export async function getBalanceSeries(
     displayCurrency: display,
     now: nowMs,
     currentWorth,
+    creditFloor: balances.creditFloor,
+    creditLimit: balances.creditLimit,
     days,
     nets,
     projectedNets,

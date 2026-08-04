@@ -27,6 +27,10 @@ type Geom = {
   nowX: number;
   /** One dashed line per forecast budget, in legend order. */
   projections: { id: string; color: string; path: string }[];
+  /** Where the credit facility bottoms out, when a projection reaches for it —
+   *  `y` in plot pixels, `value` the balance it stands for. Null when there is no
+   *  facility, or no line goes low enough for it to be worth marking. */
+  floor: { y: number; value: number } | null;
 };
 
 type ChartSvgProps = {
@@ -92,7 +96,11 @@ export function BalanceChartSvg({
           role="img"
           aria-label={`Available balance over time, currently ${money(
             currentWorth,
-          )}, with daily net-flow bars, grey bars for the flow the forecast budgets plan on average each day ahead, and one projected line per forecast budget. Scroll horizontally for history.`}
+          )}, with daily net-flow bars, grey bars for the flow the forecast budgets plan on average each day ahead, and one projected line per forecast budget.${
+            geom.floor
+              ? ` Projections continue below zero into available credit, down to ${money(geom.floor.value)}.`
+              : ""
+          } Scroll horizontally for history.`}
           onMouseMove={onMove}
           onMouseLeave={onLeave}
         >
@@ -155,6 +163,33 @@ export function BalanceChartSvg({
               strokeLinejoin="round"
             />
           ))}
+
+          {/* The credit floor: how far the facilities let a plan go under, drawn
+              across the forecast half only, because it is today's limits being
+              spent forward and says nothing about what the past could have done.
+              Solid-ish and in the warning ink — unlike the projections it is not
+              a guess, it is the wall they stop at. */}
+          {geom.floor && (
+            <>
+              <line
+                x1={nowX}
+                x2={plotW}
+                y1={geom.floor.y}
+                y2={geom.floor.y}
+                style={{ stroke: C_DOWN, opacity: 0.5 }}
+                strokeWidth={1}
+                strokeDasharray="6 3"
+              />
+              <text
+                x={nowX + 4}
+                y={geom.floor.y - 5}
+                fontSize={11}
+                style={{ fill: "var(--text-muted)" }}
+              >
+                {`credit limit · ${compact(geom.floor.value)}`}
+              </text>
+            </>
+          )}
 
           {/* Today divider */}
           <line
@@ -228,8 +263,16 @@ export function BalanceChartSvg({
             style={{ left: hover.x }}
           >
             <p className="mb-0.5 whitespace-nowrap font-medium">{info.label}</p>
+            {/* Nothing here wraps, and the box widens to whatever it holds
+                instead. A budget named "family budget" broken across two lines
+                costs more room than it saves, and a wrapped figure is worse than
+                untidy: `-$1,240` breaking after the minus sign puts a lone "−"
+                on the row above and reads as two numbers, one of them positive. */}
             {info.rows.map((r) => (
-              <p key={r.label} className="flex justify-between gap-3 font-mono tabular-nums">
+              <p
+                key={r.label}
+                className="flex justify-between gap-3 whitespace-nowrap font-mono tabular-nums"
+              >
                 <span style={{ color: r.color }}>{r.label}</span>
                 <span>{r.value}</span>
               </p>
