@@ -1,6 +1,7 @@
 import {
   CATEGORY_COL,
   ensureTable,
+  LABEL_COL,
   MATCH_COL,
   MERCHANT_COL,
   type Graph,
@@ -12,6 +13,9 @@ import { type DerivedMatch } from "./match";
 export type LearnedOutputs = {
   categoryId?: string | null;
   merchantId?: string | null;
+  /** The tag to put on transactions this rule changes, instead of the derived
+   *  `category-rule-…`/`merchant-rule-…` one. Stored by name (see labels.ts). */
+  labelName?: string | null;
   /** A human label stored on the row (`_description`) for the editor. */
   label?: string;
 };
@@ -60,11 +64,13 @@ export function upsertLearnedRule(
   const table = ensureTable(graph);
   const cat = outputs.categoryId ? `'${outputs.categoryId}'` : "";
   const mer = outputs.merchantId ? `'${outputs.merchantId}'` : "";
+  const lab = outputs.labelName ? `'${outputs.labelName}'` : "";
 
   const existing = table.rules.find((r) => r[MATCH_COL] === match.expression);
   if (existing) {
     if (cat) existing[CATEGORY_COL] = cat;
     if (mer) existing[MERCHANT_COL] = mer;
+    if (lab) existing[LABEL_COL] = lab;
     if (outputs.label) existing._description = outputs.label;
     return { graph, merged: true };
   }
@@ -77,7 +83,8 @@ export function upsertLearnedRule(
       p.structured &&
       p.type === match.type &&
       literalId(r[CATEGORY_COL]) === (outputs.categoryId ?? null) &&
-      literalId(r[MERCHANT_COL]) === (outputs.merchantId ?? null)
+      literalId(r[MERCHANT_COL]) === (outputs.merchantId ?? null) &&
+      literalId(r[LABEL_COL]) === (outputs.labelName ?? null)
     );
   });
 
@@ -95,9 +102,16 @@ export function upsertLearnedRule(
   );
   if (subsumed.size) table.rules = table.rules.filter((r) => !subsumed.has(r._id));
 
-  const row: TableRule = { _id: id("row"), [MATCH_COL]: match.expression };
-  if (cat) row[CATEGORY_COL] = cat;
-  if (mer) row[MERCHANT_COL] = mer;
+  // Every output cell is written, empty ones included: a row missing a column's
+  // key is skipped by the engine entirely, not merely treated as setting nothing
+  // (see `normalizeTable`), which is what made category-only rules never fire.
+  const row: TableRule = {
+    _id: id("row"),
+    [MATCH_COL]: match.expression,
+    [CATEGORY_COL]: cat,
+    [MERCHANT_COL]: mer,
+    [LABEL_COL]: lab,
+  };
   if (outputs.label) row._description = outputs.label;
   table.rules.unshift(row);
   return { graph, merged: subsumed.size > 0 };

@@ -23,8 +23,13 @@ import type { ScopedTx } from "./db";
  * `categoryGroupId` is absent because it is not independently attributable: it
  * is kept in step with the category by whoever sets the category, so logging it
  * would double every category change.
+ *
+ * `label` is here for one narrow case: a tag a *rule* was configured to apply, so
+ * the run report can show it. Tags a person adds are not logged — they are nobody
+ * else's to disagree with (see the label actions) — and neither are the tags a run
+ * derives from what it changed, for the same reason `categoryGroupId` is absent.
  */
-export const CHANGE_FIELDS = ["category", "merchant", "transfer"] as const;
+export const CHANGE_FIELDS = ["category", "merchant", "transfer", "label"] as const;
 export type ChangeField = (typeof CHANGE_FIELDS)[number];
 
 /**

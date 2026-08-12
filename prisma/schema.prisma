@@ -1,12 +1,10 @@
-// Personal finance dashboard, backed by Postgres.
-// Data is ingested from the Akahu API by `pnpm worker:sync` (scripts/ingest.ts).
+// Personal finance data, ingested from the Akahu API.
 //
-// Akahu ids are used as primary keys so that re-running a sync is idempotent.
+// Akahu ids are primary keys, so re-running a sync is idempotent.
 //
-// Money is `Decimal @db.Decimal(19, 4)`, never `Float`: sums have to be exact.
-// Prisma hands these back as decimal.js objects, so the read layer converts them
-// to numbers at the query boundary — see lib/server/queries. Rates are not money
-// and stay `Float` (see `FxRate.rate`).
+// Money is `Decimal @db.Decimal(19, 4)`, never `Float`: sums must be exact.
+// Prisma returns decimal.js objects, converted to numbers at the query boundary.
+// Rates are ratios rather than money and stay `Float`.
 
 generator client {
   provider = "prisma-client"
@@ -21,27 +19,21 @@ datasource db {
 // Tenancy
 //
 // The tenant is a `Workspace`. Financial data hangs off a workspace, never off a
-// user: a solo user is a workspace with one member and a shared one is a
-// workspace with two, so the query layer can't tell the difference and doesn't
-// need to. See docs/multi-user.md.
-//
-// These tables are empty until phase 3 brings auth — except `Workspace` and
-// `BankLink`, which are populated with one bootstrap row each so the existing
-// single-user data has an owner.
+// user: a solo user is a workspace with one member and a shared one has two, so
+// the query layer can't tell the difference and doesn't need to.
 // ---------------------------------------------------------------------------
 
 /// A tenant: the thing financial data belongs to, and the unit of sharing.
 model Workspace {
   id   String @id @default(cuid())
   name String
-  /// URL-safe identity, unique across the instance. Phase 3 routes on it
-  /// (`app/w/[workspace]/`), which is also what keeps any future cache key
-  /// workspace-specific for free.
+  /// URL-safe identity, unique across the instance. Routes are keyed on it,
+  /// which keeps any future cache key workspace-specific for free.
   slug String @unique
 
-  /// Better Auth's organization plugin declares both, and its endpoints write
-  /// them. Neither is rendered anywhere yet; they are the library's columns, not
-  /// a feature this app has decided to have.
+  /// Better Auth's organization plugin declares both and its endpoints write
+  /// them. Neither is rendered anywhere: the library's columns, not a feature
+  /// this app has decided to have.
   logo     String?
   metadata String?
 
@@ -53,10 +45,9 @@ model Workspace {
   bankLinks BankLink[]
 
   // Every tenant-owned table, related rather than left as a loose column, so
-  // that deleting a workspace cascades to its financial data in one statement.
-  // That is not tidiness: Akahu's accreditation (and the Privacy Act) require
-  // deletion on request to be real, so "delete a workspace" must never become a
-  // soft delete of the rows that matter.
+  // deleting a workspace cascades to its financial data in one statement.
+  // Akahu's accreditation and the Privacy Act require deletion on request to be
+  // real, so "delete a workspace" must never become a soft delete.
   accounts                Account[]
   transactions            Transaction[]
   pendingTransactions     PendingTransaction[]
@@ -78,13 +69,10 @@ model Workspace {
   chatMessages            ChatMessage[]
 }
 
-/// A person. Deliberately minimal, and matches the core fields Better Auth
-/// expects so phase 3 adopts this table rather than renaming it: Better Auth
-/// owns authentication (credentials, sessions, MFA); this app only ever needs
-/// the identity a `Membership` points at.
-///
-/// Phase 3 took that bet up: Better Auth's schema mapped onto this table with no
-/// rename and no migration of the columns already here.
+/// A person. Deliberately minimal, and named to match the core fields Better
+/// Auth expects, which is why it adopted this table with no rename: Better Auth
+/// owns authentication (credentials, sessions, MFA), and this app only ever
+/// needs the identity a `Membership` points at.
 model User {
   id            String  @id @default(cuid())
   name          String
@@ -93,8 +81,7 @@ model User {
   image         String?
 
   /// Whether TOTP is enrolled. Whether it is *required* is `REQUIRE_MFA`, not a
-  /// column — see docs/multi-user.md. Nullable because Better Auth's twoFactor
-  /// plugin declares it so.
+  /// column. Nullable because Better Auth's twoFactor plugin declares it so.
   twoFactorEnabled Boolean? @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -106,16 +93,15 @@ model User {
   memberships    Membership[]
   invitesSent    Invite[]      @relation("InviteInvitedBy")
   bankLinksAdded BankLink[]
-  // Deliberately `onDelete: SetNull` on the other side, unlike everything else
-  // hanging off a workspace: deleting a person must not delete the record that
-  // the edit happened, only the claim about who made it.
+  // `SetNull` on the other side, unlike everything else hanging off a workspace:
+  // deleting a person drops the claim about who made an edit, not the record
+  // that it happened.
   fieldChanges   FieldChange[]
-  // Cascade, unlike `fieldChanges` above: a thread is not a record of a change to
-  // the household's data, it is one person's conversation. Nobody else can read it
-  // (see ChatThread), so there is nothing left to preserve once they are gone.
+  // Cascade instead: a thread is one person's conversation and nobody else can
+  // read it, so nothing is left to preserve once they are gone.
   chatThreads    ChatThread[]
-  // `SetNull` again: the run is a record of work done to the household's budgets,
-  // and outlives the claim about who asked for it.
+  // `SetNull` again: the run is work done to the household's budgets, and
+  // outlives the claim about who asked for it.
   inferenceRuns  BudgetInferenceRun[]
 }
 
@@ -123,21 +109,19 @@ model User {
 // Authentication
 //
 // Better Auth's tables, under this schema's names. Nothing in the app reads them
-// directly: they are the library's, reached through `lib/server/auth`, and the
-// mapping that points it at them lives there too.
+// directly; they are the library's, reached through the auth layer.
 //
-// Their shape is not ours to design — it is generated by `@better-auth/cli
-// generate`, and this section is that output reconciled with the conventions
-// here (`Timestamptz(3)`, no `@@map`). If a Better Auth upgrade wants a column,
-// re-run the CLI and diff rather than guessing.
+// Their shape is not ours to design: it is `@better-auth/cli generate` output,
+// reconciled with the conventions here (`Timestamptz(3)`, no `@@map`). If an
+// upgrade wants a column, re-run the CLI and diff rather than guessing.
 // ---------------------------------------------------------------------------
 
-/// A logged-in session. Better Auth owns the token and the expiry; per-request
-/// membership re-validation (see `lib/server/auth/session.ts`) is what makes a
-/// revoked membership take effect on the next request rather than at expiry.
+/// A logged-in session. Better Auth owns the token and the expiry; membership is
+/// re-validated per request, which is what makes a revoked membership take
+/// effect on the next request rather than at expiry.
 model Session {
   id        String   @id @default(cuid())
-  /// The session cookie's value. Unique: it is looked up on every request.
+  /// The session cookie's value. Unique: looked up on every request.
   token     String   @unique
   expiresAt DateTime @db.Timestamptz(3)
 
@@ -147,11 +131,10 @@ model Session {
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// The organization plugin's "active organization", mapped to our vocabulary.
-  /// Nothing reads it: this app routes the workspace in the URL
-  /// (`app/w/[workspace]/`) and re-checks membership per request, so a session
-  /// carrying a workspace id would be a second, staler answer to a question the
-  /// path already asks. Present because the plugin's endpoints write it.
+  /// The organization plugin's "active organization", in our vocabulary. Nothing
+  /// reads it: the workspace is in the URL and membership is re-checked per
+  /// request, so a session carrying one would be a second, staler answer to a
+  /// question the path already asks. Present because the plugin writes it.
   activeWorkspaceId String?
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -162,10 +145,9 @@ model Session {
 
 /// A credential, or a linked identity at an OAuth provider.
 ///
-/// Better Auth calls this `account`. This schema's `Account` is a *bank*
-/// account and was here first, so the model is renamed and the mapping in
-/// `lib/server/auth` (`account: { modelName: "authAccount" }`) points the
-/// library at it. The clash is the only one in the whole adoption.
+/// Better Auth calls this `account`. This schema's `Account` is a *bank* account
+/// and was here first, so the model is renamed and the auth mapping
+/// (`account: { modelName: "authAccount" }`) points the library at it.
 ///
 /// `password` holds a hash, never a password — Better Auth owns the hashing.
 model AuthAccount {
@@ -194,7 +176,7 @@ model AuthAccount {
 }
 
 /// Short-lived tokens Better Auth issues for email verification and password
-/// reset. Rows are transient; nothing here refers to them.
+/// reset. Transient; nothing here refers to them.
 model Verification {
   id         String   @id @default(cuid())
   identifier String
@@ -207,11 +189,8 @@ model Verification {
   @@index([identifier])
 }
 
-/// A user's TOTP enrolment: the shared secret and their backup codes.
-///
-/// This is the highest-value row in the auth tables — the secret is a second
-/// factor at rest — and it is why T23's "encrypt the backups" is not optional
-/// once real users exist.
+/// A user's TOTP enrolment: the shared secret and their backup codes. The
+/// highest-value rows in the auth tables: the secret is a second factor at rest.
 model TwoFactor {
   id String @id @default(cuid())
 
@@ -224,8 +203,7 @@ model TwoFactor {
   /// Set false while enrolment is mid-flight, true once a code has been proven.
   verified Boolean? @default(true)
 
-  /// Better Auth's own lockout on repeated failed challenges — the T1
-  /// (credential stuffing) answer for the second factor.
+  /// Better Auth's own lockout on repeated failed challenges.
   failedVerificationCount Int?      @default(0)
   lockedUntil             DateTime? @db.Timestamptz(3)
 
@@ -233,14 +211,12 @@ model TwoFactor {
   @@index([userId])
 }
 
-/// A user's place in a workspace, and what they may do there. Many-to-many from
-/// day one: a user can belong to and create several workspaces. Any future limit
-/// on that is a check inside `createWorkspace`/`acceptInvite` — the only two
-/// places a membership is born — not a schema reshape.
+/// A user's place in a workspace, and what they may do there. Many-to-many: a
+/// user can belong to and create several workspaces. Any limit on that is a
+/// check inside `createWorkspace`/`acceptInvite` — the only two places a
+/// membership is born — not a schema reshape.
 ///
-/// Better Auth's organization plugin calls this `member` and owns its writes;
-/// `membershipLimit` in its accept path is the seam those future limits plug
-/// into, exactly where the plan said they would go.
+/// Better Auth's organization plugin calls this `member` and owns its writes.
 model Membership {
   id String @id @default(cuid())
 
@@ -250,9 +226,9 @@ model Membership {
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   /// owner | editor | viewer. A plain string, matching this schema's no-enums
-  /// style, and enforced at the write boundary (`requireRole`), never only in
-  /// the UI. Adding a role later is a new string plus its place in the
-  /// ordering, not a migration.
+  /// style, and enforced at the write boundary rather than only in the UI.
+  /// Adding a role is a new string plus its place in the ordering, not a
+  /// migration.
   role String
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -266,41 +242,33 @@ model Membership {
 /// A pending invitation to join a workspace. Redeeming one is the other entry
 /// point (with `createWorkspace`) for a new membership.
 ///
-/// ## Why there is no `token` column
+/// No `token` column, deliberately: the link carries the invite's *id*, and
+/// `acceptInvitation` requires a session, then refuses unless `email` matches
+/// the logged-in user's, the row is still `pending`, and `expiresAt` is in the
+/// future — flipping the status with a compare-and-set so redemption is
+/// atomically single-use.
 ///
-/// Phase 2 modelled this with a `token @unique` — a bearer secret in the invite
-/// link. Better Auth's organization plugin, which now owns this table, does not
-/// work that way, and its way is better. The link carries the invite's *id*, and
-/// `acceptInvitation` requires a session, then refuses unless
-/// `invitation.email` equals the logged-in user's email, the row is still
-/// `pending`, and `expiresAt` is in the future — flipping the status with a
-/// compare-and-set so redemption is atomically single-use.
-///
-/// So the id is not the capability; being logged in as the invited person is.
-/// That satisfies the standing rule that ids are identifiers and not
-/// capabilities (threat-model.md), and it is a stronger answer to T12 than a
-/// secret in a column: a forwarded link is useless to whoever receives it.
+/// The id is therefore an identifier and not a capability; being logged in as
+/// the invited person is. A forwarded link is useless to whoever receives it.
 model Invite {
   id String @id @default(cuid())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  /// Who it was addressed to, and the role they get on acceptance. Acceptance
-  /// checks this against the session's email, so it is a control, not a label.
+  /// Who it was addressed to, and the role they get on acceptance. Checked
+  /// against the session's email, so `email` is a control, not a label.
   email String
   role  String
 
-  /// The invitee's name, if the owner typed one when sending the invite. Purely
-  /// a convenience: it pre-fills the signup form so the person doesn't have to
-  /// state a name the owner already knew. Nullable and never a control — the
-  /// invitee can change it, and Better Auth's `createInvitation` doesn't set it
-  /// (the `invite` action writes it in a second step), so an invite made any
-  /// other way simply has none.
+  /// The invitee's name, if the owner typed one when sending the invite. A
+  /// convenience that pre-fills the signup form, never a control: the invitee
+  /// can change it, and Better Auth's `createInvitation` doesn't set it, so an
+  /// invite made any other way simply has none.
   name String?
 
-  /// pending | accepted | rejected | canceled. Better Auth transitions it from
-  /// `pending` exactly once, which is what makes an invite single-use.
+  /// pending | accepted | rejected | canceled. Transitioned out of `pending`
+  /// exactly once, which is what makes an invite single-use.
   status String @default("pending")
 
   invitedByUserId String?
@@ -316,14 +284,8 @@ model Invite {
 /// A workspace's connection to Akahu — the thing accounts are ingested through,
 /// and the unit a user revokes.
 ///
-/// v1 holds exactly one bootstrap row per instance, carrying no credentials: the
-/// tokens stay in env (`AKAHU_APP_ID_TOKEN`/`AKAHU_USER_ACCESS_TOKEN`) and are
-/// resolved by link. Phase 7's per-user OAuth adds encrypted token columns here
-/// and nothing else moves — that's the point of introducing the model now.
-///
-/// `status`/`revokedAt` are also what Akahu's accreditation requires an app to
-/// expose to consumers (see docs/multi-user.md), so they are modelled from the
-/// start rather than retrofitted.
+/// `status`/`revokedAt` are what Akahu's accreditation requires an app to expose
+/// to consumers, so they are modelled here rather than derived.
 model BankLink {
   id String @id @default(cuid())
 
@@ -337,31 +299,28 @@ model BankLink {
   /// here or at Akahu). Ingest only runs for ACTIVE links.
   status String @default("ACTIVE")
 
-  /// Set when access ends, whichever side ended it. Kept distinct from deletion:
-  /// a revoked link stops syncing but its already-ingested history remains until
+  /// Set when access ends, whichever side ended it. Distinct from deletion: a
+  /// revoked link stops syncing, but its already-ingested history remains until
   /// the workspace is deleted.
   revokedAt DateTime? @db.Timestamptz(3)
 
   /// Where this link's Akahu credentials come from.
   ///
-  /// `env`    — the single bootstrap pair in AKAHU_APP_ID_TOKEN /
-  ///            AKAHU_USER_ACCESS_TOKEN. One instance-wide pair, so at most one
-  ///            link can meaningfully use it. The v1 arrangement.
-  /// `stored` — the encrypted columns below, set by `pnpm link:token`. A personal
-  ///            token from my.akahu.nz, held per link, so a second workspace can
-  ///            sync a second person's accounts without sharing a token.
+  /// `env`    — the AKAHU_APP_ID_TOKEN / AKAHU_USER_ACCESS_TOKEN pair. One
+  ///            instance-wide pair, so at most one link can meaningfully use it.
+  /// `stored` — the encrypted columns below: a personal token from my.akahu.nz
+  ///            held per link, so a second workspace can sync a second person's
+  ///            accounts without sharing a token.
   ///
-  /// Phase 10's OAuth flow adds `oauth`: the same two columns, obtained by a code
-  /// exchange rather than pasted. That is why this is a source *name* and not a
-  /// boolean — how a credential arrived decides what may be done with it
-  /// (`auth.revoke()` applies to an OAuth grant, not to a personal token).
+  /// A source *name* rather than a boolean, leaving room for an `oauth` value on
+  /// the same two columns: how a credential arrived decides what may be done
+  /// with it (`auth.revoke()` applies to a grant, not to a personal token).
   tokenSource String @default("env")
 
-  /// AES-256-GCM ciphertext, never the token itself. Encrypted and decrypted only
-  /// by `lib/server/secrets.ts`, whose key lives in TOKEN_ENCRYPTION_KEY — in the
-  /// environment of the sync worker and the CLI, and deliberately *not* in the web
-  /// app's (see docs/multi-user.md, phase 8). The key is never in this database:
-  /// that is the whole point, and what makes a stolen dump inert.
+  /// AES-256-GCM ciphertext, never the token itself. The key lives in
+  /// TOKEN_ENCRYPTION_KEY — in the sync worker's and the CLI's environment, and
+  /// deliberately *not* the web app's. It is never in this database, which is
+  /// what makes a stolen dump inert.
   ///
   /// Each blob is bound to this row and this field as additional authenticated
   /// data, so a ciphertext moved to another link — or from the app slot to the
@@ -370,7 +329,7 @@ model BankLink {
   appTokenCipher  String?
   userTokenCipher String?
 
-  /// When the stored pair was last set. The credential's own age, not the row's:
+  /// When the stored pair was last set: the credential's own age, where
   /// `updatedAt` moves whenever anything here changes.
   tokenUpdatedAt DateTime? @db.Timestamptz(3)
 
@@ -396,9 +355,9 @@ model Account {
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  /// The Akahu connection this account was ingested through, and the thing a
-  /// user revokes to disconnect it. Restrict, not Cascade: unlinking a bank must
-  /// be a deliberate decision about the history, not a silent shredding of it.
+  /// The Akahu connection this account was ingested through. Restrict, not
+  /// Cascade: unlinking a bank must be a deliberate decision about the history,
+  /// not a silent shredding of it.
   bankLinkId String
   bankLink   BankLink @relation(fields: [bankLinkId], references: [id], onDelete: Restrict)
 
@@ -416,7 +375,7 @@ model Account {
   /// Account holder name as exposed by the provider, when available.
   holder String?
 
-  /// What this account can do, according to Akahu: TRANSACTIONS, PAYMENT_TO, PAYMENT_FROM.
+  /// Akahu's TRANSACTIONS, PAYMENT_TO and PAYMENT_FROM capabilities.
   hasTransactions     Boolean @default(false)
   canReceivePayments  Boolean @default(false)
   canInitiatePayments Boolean @default(false)
@@ -446,9 +405,8 @@ model Account {
   @@index([connectionId])
 }
 
-/// A financial institution connected through Akahu. For personal apps this is
-/// built from the `connection` object embedded in each account; for full apps
-/// it can be enriched from `/connections`.
+/// A financial institution, built from the `connection` object embedded in each
+/// Akahu account.
 model Connection {
   /// Akahu connection id, e.g. `conn_...`
   id             String  @id
@@ -497,18 +455,18 @@ model Transaction {
   merchant        Merchant?      @relation(fields: [merchantId], references: [id], onDelete: SetNull)
   categoryId      String?
   category        Category?      @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  /// The `personal_finance` spending group this row sits under, as a real group id
-  /// (NZFCC `group_...`, or an invented `group_custom_...` income group). Kept as a
-  /// plain FK column — not derived through the category relation — because an
-  /// uncategorised inflow still carries an income group with no category, and
-  /// because metrics `groupBy` it (Prisma can't group across a relation). The
-  /// group *name* lives only on `CategoryGroup`; read it through `categoryGroup.name`.
+  /// The `personal_finance` spending group this row sits under: an NZFCC
+  /// `group_...`, or an invented `group_custom_...` income group. A column rather
+  /// than a value derived through the category, because an uncategorised inflow
+  /// still carries an income group with no category, and because metrics
+  /// `groupBy` it (Prisma can't group across a relation). The group *name* lives
+  /// only on `CategoryGroup`.
   categoryGroupId String?
   categoryGroup   CategoryGroup? @relation(fields: [categoryGroupId], references: [id], onDelete: SetNull)
 
   /// Who owns the enrichment, per editable field: `akahu` (mirrored, and the
-  /// sync may overwrite it) or `user` (hand-set, and the sync must not clobber
-  /// it — it records a TransactionConflict instead when Akahu later disagrees).
+  /// sync may overwrite it) or `user` (hand-set, so a sync that disagrees
+  /// records a `TransactionConflict` rather than clobbering it).
   categorySource String @default("akahu")
   merchantSource String @default("akahu")
 
@@ -518,8 +476,8 @@ model Transaction {
   otherAccount String?
   cardSuffix   String?
 
-  /// Foreign currency conversion details, when the transaction was made in
-  /// another currency. The rate is a ratio, not money — it stays `Float`.
+  /// Set when the transaction was made in another currency. The rate is a ratio
+  /// rather than money, so it stays `Float`.
   conversionAmount   Decimal? @db.Decimal(19, 4)
   conversionCurrency String?
   conversionRate     Float?
@@ -527,13 +485,10 @@ model Transaction {
   /// URL of a merchant logo image for this transaction, when Akahu provides one.
   logo String?
 
-  /// The transfer this row is one leg of, once it's been grouped with the other
-  /// side(s) of an internal transfer. A group holds two *or more* legs, so it
+  /// The transfer this row is one leg of. A group holds two *or more* legs, so it
   /// spans not just a simple out/in pair but a multi-currency conversion and a
-  /// separate fee row too. Any "is this a transfer" filter is a plain
-  /// `transferGroupId: null` test on either leg. Kept a plain column (not a Prisma
-  /// relation) to match the denormalised style here; group members are resolved by
-  /// querying this column. Always user-made: Akahu tags a row's `type` as TRANSFER
+  /// separate fee row too, and "is this a transfer" is a `transferGroupId: null`
+  /// test on either leg. Always user-made: Akahu tags a row's `type` as TRANSFER
   /// but never says which rows belong together.
   transferGroupId String?
   transferGroup   TransferGroup? @relation(fields: [transferGroupId], references: [id], onDelete: SetNull)
@@ -548,11 +503,10 @@ model Transaction {
   // a `categoryGroup` and uncategorised otherwise. No classifier writes here.
 
   conflicts TransactionConflict[]
-  /// Free-form user tags (see `Label`), through the explicit join `TransactionLabel`.
+  /// Free-form user tags, through the explicit `TransactionLabel` join.
   labels    TransactionLabel[]
 
-  // The prefix of nearly every metrics query, now that they all filter by
-  // workspace before they filter by anything else.
+  // The prefix of nearly every metrics query: workspace before anything else.
   @@index([workspaceId, date])
   @@index([accountId, date])
   @@index([date])
@@ -562,7 +516,7 @@ model Transaction {
   @@index([transferGroupId])
   @@index([connectionId])
   // Trigram indexes for the free-text search, which runs as ILIKE '%term%' and
-  // so can use no btree index. Declared here rather than left as raw SQL in the
+  // so can use no btree index. Declared here rather than as raw SQL in the
   // migration, or `migrate dev` reads them as drift and offers to drop them.
   // Every column the search ORs over is indexed: Postgres only combines OR
   // branches into a BitmapOr when each one has an index.
@@ -574,14 +528,12 @@ model Transaction {
 }
 
 /// A pending (authorised but not-yet-settled) transaction, mirrored from Akahu's
-/// `/transactions/pending`. Unlike `Transaction` these are transient and have no
-/// stable id: a pending row vanishes once it settles (reappearing under a real
-/// `trans_...` id with no back-reference) or is cancelled. So each sync *replaces*
-/// this whole table with Akahu's current pending set rather than upserting by id
-/// (see `syncPendingTransactions`). Display-only: deliberately kept out of every
-/// balance, spend, runway and rules path — pending money is not settled money.
-/// Pending rows are also less enriched than settled ones — Akahu attaches `meta`
-/// but no merchant or category — so those columns are absent here.
+/// `/transactions/pending`. These have no stable id: a pending row vanishes once
+/// it settles — reappearing under a real `trans_...` id with no back-reference —
+/// or is cancelled, so each sync *replaces* this whole table with Akahu's current
+/// pending set rather than upserting by id. Display-only, and kept out of every
+/// balance, spend, runway and rules path: pending money is not settled money.
+/// Akahu attaches no merchant or category here, so those columns are absent.
 model PendingTransaction {
   id Int @id @default(autoincrement())
 
@@ -616,8 +568,8 @@ model PendingTransaction {
 
   syncedAt DateTime @default(now()) @db.Timestamptz(3)
 
-  // Each sync replaces this table for one workspace (see `syncPendingTransactions`),
-  // so the workspace is both the read prefix and the delete predicate.
+  // Each sync replaces this table one workspace at a time, so the workspace is
+  // both the read prefix and the delete predicate.
   @@index([workspaceId, date])
   @@index([accountId, date])
   @@index([date])
@@ -625,16 +577,12 @@ model PendingTransaction {
 
 /// A user-defined grouping of transactions that together make up one internal
 /// transfer: the outflow and inflow legs, plus any currency-conversion or fee
-/// rows. Its legs are excluded from income/spend/net metrics (see the notes on
-/// `Transaction.transferGroupId`). Akahu never links the legs itself, so every
-/// group here is hand-made on the transaction page. Deliberately relation-less on
-/// the Prisma side: legs point at it by `transferGroupId` and are read back with a
-/// plain query, matching the denormalised style of the rest of the schema.
+/// rows. Its legs are excluded from income/spend/net metrics. Akahu never links
+/// the legs itself, so every group here is hand-made.
 model TransferGroup {
-  /// A cuid, not a counter. These ids identify one workspace's transfer; a
-  /// sequential one would publish how many transfers exist across every
-  /// workspace on the instance, and could be walked. Scoping makes a guessed id
-  /// return nothing — this makes there be nothing to guess.
+  /// A cuid, not a counter: a sequential id would publish how many transfers
+  /// exist across every workspace on the instance, and could be walked. Scoping
+  /// makes a guessed id return nothing; this leaves nothing to guess.
   id String @id @default(cuid())
 
   workspaceId String
@@ -648,12 +596,12 @@ model TransferGroup {
 }
 
 /// Historical daily FX reference rates from the ECB, fetched via frankfurter.dev
-/// during `worker:sync` and cached so cross-currency transfer matching runs offline
-/// like every other read here. `rate` is units of `currency` per 1 unit of `base`
-/// on `date` (the base is stored as 1); convert A→B with `amount * rateB / rateA`,
-/// which is base-agnostic. We quote against NZD (see lib/server/fx.ts) so the
-/// common NZD↔X pair is a single lookup. The ECB only publishes on business days,
-/// so a weekend/holiday transaction reads the most recent prior date.
+/// during a sync and cached so cross-currency transfer matching runs offline like
+/// every other read here. `rate` is units of `currency` per 1 unit of `base` on
+/// `date` (the base is stored as 1); convert A→B with `amount * rateB / rateA`,
+/// which is base-agnostic. Quoted against NZD, so the common NZD↔X pair is a
+/// single lookup. The ECB only publishes on business days, so a weekend or
+/// holiday transaction reads the most recent prior date.
 model FxRate {
   date     DateTime @db.Timestamptz(3)
   base     String
@@ -665,10 +613,9 @@ model FxRate {
 }
 
 /// A divergence between a user-set enrichment field and what a later Akahu sync
-/// reported for it. Raised only when a `user`-owned field (see
-/// `Transaction.categorySource`/`merchantSource`) receives a *different, non-null*
-/// value from Akahu — an inflow Akahu simply leaves uncategorised never conflicts.
-/// The user's value is kept; this row is the prompt to reconcile on the tx page.
+/// reported for it. Raised only when a `user`-owned field receives a *different,
+/// non-null* value from Akahu — an inflow Akahu simply leaves uncategorised never
+/// conflicts. The kept value is the user's; this row is the prompt to reconcile.
 model TransactionConflict {
   id Int @id @default(autoincrement())
 
@@ -681,24 +628,21 @@ model TransactionConflict {
   /// Which enrichment field diverged: `category` | `merchant`.
   field String
 
-  /// What owns the value we are keeping: `user` (someone set it by hand) or
-  /// `rule` (their rules set it). Both outrank Akahu, so both are defended
-  /// against the sync and both can therefore diverge from it — but the reader is
-  /// owed the difference, because "you set this" and "your rule set this" call
-  /// for different fixes. Every conflict raised before this column existed was
-  /// user-held by construction, the sync having protected nothing else, so the
-  /// backfill is `user` and is not a guess.
+  /// What owns the value being kept: `user` (someone set it by hand) or `rule`
+  /// (their rules set it). Both outrank Akahu and both can therefore diverge
+  /// from it, but "you set this" and "your rule set this" call for different
+  /// fixes.
   heldSource String @default("user")
 
-  /// The value being kept (see `heldSource`), for display without a join. Named
-  /// `userValue*` from when the user was the only owner the sync deferred to.
+  /// The value being kept, for display without a join. Named `userValue*` from
+  /// when the user was the only owner the sync deferred to.
   userValueId     String?
   userValueLabel  String?
   /// The value Akahu reported on the sync that raised this, for a side-by-side.
   akahuValueId    String?
   akahuValueLabel String?
 
-  /// `open` (awaiting the user) | `dismissed` (user kept theirs; don't re-nag
+  /// `open` (awaiting the user) | `dismissed` (they kept theirs; don't re-nag
   /// unless Akahu's value changes again).
   status String @default("open")
 
@@ -714,7 +658,6 @@ model TransactionConflict {
 /// A merchant, mirrored from Akahu's transaction enrichment. One `merchant`
 /// object recurs across thousands of transactions, so it is stored once here and
 /// referenced by `Transaction.merchantId` rather than copied onto every row.
-/// https://developers.akahu.nz/docs/the-transaction-model#merchant
 model Merchant {
   /// Akahu merchant id, e.g. `merchant_...`
   id String @id
@@ -722,19 +665,16 @@ model Merchant {
   /// The one table that is half catalog, half tenant data.
   ///
   /// `null` = Akahu's global merchant catalog (`merchant_...`), shared by every
-  /// workspace. Set = a private merchant a user minted here (`user_...`, see
-  /// `createMerchantAndSetForTransaction`) — a name they typed, which is their
-  /// data and nobody else's.
+  /// workspace. Set = a private merchant a user minted here (`user_...`) from a
+  /// name they typed, which is their data and nobody else's.
   ///
-  /// So reads OR the two together and creates always stamp the workspace. This
-  /// is the one model where the scoped client cannot simply inject an equality
-  /// filter; see `scopedDb`.
+  /// So reads OR the two together and creates always stamp the workspace: the
+  /// one model where the scoped client cannot simply inject an equality filter.
   workspaceId String?
   workspace   Workspace? @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name    String
-  /// The merchant's website, when Akahu resolved one. Previously discarded at
-  /// ingest; kept now so no enrichment field is lost.
+  /// The merchant's website, when Akahu resolved one.
   website String?
   /// URL of a logo image for this merchant, when Akahu provides one.
   logo    String?
@@ -742,8 +682,8 @@ model Merchant {
   transactions Transaction[]
   budgetItems  BudgetItem[]
 
-  // A business can arrive under more than one id (Akahu has two for "Kamo Vets"),
-  // so name is not unique — it is indexed for lookup, not constrained.
+  // A business can arrive under more than one Akahu id, so the name is indexed
+  // for lookup, not constrained.
   @@index([name])
   // The search matches merchant names through a relation filter; same trigram
   // reasoning as `Transaction`.
@@ -751,14 +691,13 @@ model Merchant {
 }
 
 /// A free-form tag a workspace attaches to its transactions — the user's own
-/// grouping ("holiday-2026", "reimburse", "tax-deductible") alongside the
-/// merchant/category the bank enrichment supplies. Purely tenant data and purely
-/// user-owned: nothing about a label is mirrored from Akahu, so unlike
-/// merchant/category it carries no `*Source`, raises no `TransactionConflict`, and
-/// a sync never touches it. Attached through the explicit `TransactionLabel` join.
+/// grouping ("reimburse", "tax-deductible") alongside the merchant and category
+/// the bank enrichment supplies. Nothing about a label is mirrored from Akahu, so
+/// unlike merchant/category it carries no `*Source`, raises no
+/// `TransactionConflict`, and a sync never touches it.
 model Label {
-  /// Minted here (`app_label_...`, see `mintId`) — a name someone typed, which is
-  /// their data. Never mirrored, so it never shares an id with an Akahu row.
+  /// Minted here (`app_label_...`) from a name someone typed. Never mirrored, so
+  /// it never shares an id with an Akahu row.
   id String @id
 
   workspaceId String
@@ -770,17 +709,17 @@ model Label {
 
   transactions TransactionLabel[]
 
-  // One label per name within a workspace, so the picker's "create" can reuse an
+  // One label per name within a workspace, so the picker's "create" reuses an
   // existing tag rather than minting a duplicate.
   @@unique([workspaceId, name])
   @@index([workspaceId])
 }
 
-/// The many-to-many join between `Transaction` and `Label`. An explicit model
-/// rather than Prisma's implicit m-n because the join row must carry its own
-/// `workspaceId` for the RLS policy to scope it (an implicit join table has no
-/// column the policy could read). Both sides cascade: deleting a transaction or a
-/// label removes the tag, never orphans it.
+/// The many-to-many join between `Transaction` and `Label`. Explicit rather than
+/// Prisma's implicit m-n because the join row must carry its own `workspaceId`
+/// for the RLS policy to scope it, and an implicit join table has no column the
+/// policy could read. Both sides cascade: deleting a transaction or a label
+/// removes the tag, never orphans it.
 model TransactionLabel {
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -799,10 +738,9 @@ model TransactionLabel {
 }
 
 /// A `personal_finance` spending group (or an invented income group), stored once
-/// and referenced by both `Category` and `Transaction` rather than having its
-/// name copied onto every row. Populated at ingest from the NZFCC mirror and, as a
-/// safety net, from each transaction's enrichment (see lib/server/sync.ts) — the
-/// same once-and-referenced pattern as `Merchant`.
+/// and referenced by both `Category` and `Transaction` rather than having its name
+/// copied onto every row. Populated at ingest from the NZFCC mirror and, as a
+/// safety net, from each transaction's enrichment.
 model CategoryGroup {
   /// Real NZFCC `group_...` id, or an invented `group_custom_...` income group id.
   id   String @id
@@ -813,9 +751,9 @@ model CategoryGroup {
   budgetItems  BudgetItem[]
 }
 
-/// The NZFCC category catalog, mirrored from nzfcc.org so an `nzfcc_...` id can
-/// be resolved to its name and spending group locally. Refreshed on every
-/// `worker:sync`, so a category the standard adds appears the next run.
+/// The NZFCC category catalog, mirrored from nzfcc.org so an `nzfcc_...` id
+/// resolves to its name and spending group locally. Refreshed on every sync, so a
+/// category the standard adds appears the next run.
 model Category {
   /// NZFCC category id, e.g. `nzfcc_...`
   id        String @id
@@ -824,9 +762,8 @@ model Category {
   direction String
 
   /// The `personal_finance` group. NZFCC leaves this absent on credit categories,
-  /// so the catalog fills those with a custom income group — "Periodic Income" or
-  /// "Other Income" (see lib/nzfcc.ts) — to match the group on inflows. The group
-  /// name lives on `CategoryGroup`; read it through `group.name`.
+  /// so the catalog fills those with a custom income group to match the group on
+  /// inflows. The group name lives on `CategoryGroup`.
   groupId String?
   group   CategoryGroup? @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
@@ -844,17 +781,16 @@ model Category {
 // ---------------------------------------------------------------------------
 // Budgets
 //
-// Everything above this line is a record of what happened. These four models are
-// the only ones that describe what is *meant* to happen, and nothing about them
-// is ever mirrored from Akahu: a budget is entirely the user's, like `Label`.
+// Everything above this line records what happened. These models are the only
+// ones that describe what is *meant* to happen, and nothing here is mirrored from
+// Akahu: a budget is entirely the user's, like `Label`.
 //
 // The shape is deliberately the mirror image of `Transaction`. A `BudgetItem` is
 // an intended transaction — signed amount, category group, optional category and
 // merchant — plus a recurrence. Expanding that recurrence yields dates, and
-// bucketing those dates with the same `periodKey` the metrics use (lib/periods.ts)
-// puts plan and actual in identical buckets. That is what lets the budget
-// breakdown reuse the historic comparison's types, row tree and components whole
-// (see lib/server/metrics/budget).
+// bucketing those dates with the same `periodKey` the metrics use puts plan and
+// actual in identical buckets, which is what lets the budget breakdown reuse the
+// historic comparison's types, row tree and components whole.
 // ---------------------------------------------------------------------------
 
 /// A named plan, and the span over which it applies.
@@ -867,65 +803,59 @@ model Category {
 /// a **base** — the ongoing plan, `baseBudgetId` null — or a **layer** of exactly
 /// one base, holding only the *extra* a period needs. A seasonal Christmas layer
 /// therefore describes what is spent on top of ordinary life, not instead of it,
-/// and it is added to its base precisely while its own window is live. The
-/// breakdown and every forecast expand a base together with its date-active
-/// layers; nothing sums two unrelated budgets, which is what makes the addition
-/// safe. One level only — a layer has no layers of its own; the create/move
-/// actions enforce that, since the schema cannot.
+/// and is added to its base precisely while its own window is live. The breakdown
+/// and every forecast expand a base together with its date-active layers; nothing
+/// sums two unrelated budgets, which is what makes the addition safe. One level
+/// only — the create/move actions enforce that, since the schema cannot.
 model Budget {
   /// A cuid, not a counter — it *is* the address of the budget, in the URL and in
-  /// every link to it. Same reasoning as `RuleRun`: a sequential id would publish
-  /// how many budgets exist across every workspace on the instance.
+  /// every link to it, and a sequential id would publish how many budgets exist
+  /// across every workspace on the instance.
   ///
-  /// There is deliberately no slug. A budget had one and it was a copy of the name
-  /// taken at creation, which went stale on the first rename and grew `-2` suffixes
-  /// on every duplicate; a budget is not a shared or indexed page, so nothing was
-  /// bought with the readability.
+  /// Deliberately no slug: a budget is not a shared or indexed page, so a copy of
+  /// the name taken at creation buys no readability and goes stale on the first
+  /// rename.
   id String @id @default(cuid())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  /// What the household calls it. Not unique, and not a key: two "Christmas" layers
-  /// on two different bases is an ordinary thing to have.
+  /// What the household calls it. Not unique and not a key: two "Christmas"
+  /// layers on two different bases is an ordinary thing to have.
   name String
 
   /// The span this budget applies over, as NZ calendar days and **inclusive of
-  /// both ends** — "active until 25 December" is what a person means, so the 25th
-  /// is in. Timestamptz like every other date here; the day it names is resolved
-  /// in Pacific/Auckland, for the reason lib/periods.ts gives at length.
+  /// both ends** — "active until 25 December" includes the 25th. Timestamptz like
+  /// every other date here, with the day it names resolved in Pacific/Auckland.
   ///
   /// Both null is the general, always-on budget. Both set is a seasonal or event
   /// budget. One of each is a valid half-bounded window ("from March onwards").
   startsOn DateTime? @db.Timestamptz(3)
   endsOn   DateTime? @db.Timestamptz(3)
 
-  /// Whether the window repeats every year. Christmas does; a holiday trip does
-  /// not. When set, only the month and day of `startsOn`/`endsOn` matter and the
-  /// year is ignored — including when the span wraps the New Year (15 Dec – 5 Jan),
-  /// which is the case `activeOn` has to handle explicitly. Meaningless, and
-  /// ignored, on an open-ended window.
+  /// Whether the window repeats every year. When set, only the month and day of
+  /// `startsOn`/`endsOn` matter and the year is ignored — including when the span
+  /// wraps the New Year (15 Dec – 5 Jan), which the active-on test handles
+  /// explicitly. Meaningless, and ignored, on an open-ended window.
   repeatsAnnually Boolean @default(false)
 
   /// Where this budget came from: `user` (someone made it) or `inferred` (the
   /// seeder built it from transaction history). Provenance, never a control —
   /// nothing branches on it for correctness. It is how "re-infer from history"
   /// finds the budget to refresh, and how the UI can say a figure was guessed.
-  /// Same vocabulary and same intent as `Transaction.categorySource`.
   origin String @default("user")
 
   /// Whether this budget is one of the forward projections drawn on the dashboard
-  /// and runway tiles. A base budget marked `forecast` is walked forward day by day
-  /// together with its date-active layers; layers themselves are never forecast
-  /// roots. Replaces the old `Forecast` table, which was a named view of a budget:
-  /// the name and colour now come from the budget itself.
+  /// and runway tiles. A base marked `forecast` is walked forward day by day
+  /// together with its date-active layers; layers are never forecast roots, and
+  /// the projection's name and colour come from the budget itself.
   forecast Boolean @default(false)
 
   /// The base this budget layers onto, or null when it *is* a base. A layer holds
   /// only the extra spend a period needs, added on top of its base; base + active
-  /// layers is what the breakdown and every forecast projection project. `Cascade`:
-  /// a layer is meaningless once its base is gone, so it goes with it. One level
-  /// only — the create/move actions refuse to point a layer at another layer.
+  /// layers is what the breakdown and every forecast project. `Cascade`: a layer
+  /// is meaningless once its base is gone. One level only — the create/move
+  /// actions refuse to point a layer at another layer.
   baseBudgetId String?
   base         Budget?  @relation("BudgetLayers", fields: [baseBudgetId], references: [id], onDelete: Cascade)
   layers       Budget[] @relation("BudgetLayers")
@@ -936,8 +866,8 @@ model Budget {
   items          BudgetItem[]
   inferenceRuns  BudgetInferenceRun[]
 
-  // The read every projection starts with: this workspace's budgets, narrowed to
-  // the ones whose window could overlap the span being drawn.
+  // Every projection starts here: this workspace's budgets, narrowed to the ones
+  // whose window could overlap the span being drawn.
   @@index([workspaceId, startsOn, endsOn])
   // A base's layers, and the "bases only" filter the pickers use.
   @@index([workspaceId, baseBudgetId])
@@ -948,8 +878,8 @@ model BudgetItem {
   id String @id @default(cuid())
 
   /// Carried on the row itself even though the item is reachable through its
-  /// budget: the RLS policy is a predicate on a column, and it cannot follow a
-  /// relation to find one (see 20260718000000_rls_backstop).
+  /// budget: the RLS policy is a predicate on a column, and cannot follow a
+  /// relation to find one.
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
@@ -960,21 +890,20 @@ model BudgetItem {
   name String
 
   /// Negative for money out, positive for money in — **the same convention as
-  /// `Transaction.amount`**, deliberately, so the breakdown builder branches on
-  /// the sign exactly as the historic one does. The editor has an expense/income
-  /// toggle and writes the sign; nobody types a minus.
+  /// `Transaction.amount`**, so the breakdown builder branches on the sign exactly
+  /// as the historic one does. The editor's expense/income toggle writes the sign;
+  /// nobody types a minus.
   amount Decimal @db.Decimal(19, 4)
 
   /// The currency the figure was entered in, stamped from the workspace's display
   /// currency when the item is created. Stored rather than assumed because the
-  /// display currency is derived from whichever accounts are busiest
-  /// (`getDisplayCurrency`) and can therefore change under a budget that was
-  /// typed months earlier — without this column that would silently reinterpret
-  /// every amount. Converted at read like everything else.
+  /// display currency is derived from whichever accounts are busiest, so it can
+  /// change under a budget typed months earlier and silently reinterpret every
+  /// amount. Converted at read like everything else.
   currency String
 
   /// The high-level bucket, and the only one of the three that is required: a
-  /// budgeted amount that belongs to no group could not appear in the breakdown at
+  /// budgeted amount belonging to no group could not appear in the breakdown at
   /// all. `Restrict`, because the group catalog is shared and a refresh must not
   /// be able to orphan a workspace's plan.
   categoryGroupId String
@@ -990,12 +919,12 @@ model BudgetItem {
 
   /// `once | day | week | month | quarter | year`.
   ///
-  /// The recurring values are `lib/periods.ts`'s `PERIODS` minus `taxyear`, so a
-  /// budget speaks the same vocabulary the breakdown buckets in. Two deliberate
+  /// The recurring values are the metrics' periods minus `taxyear`, so a budget
+  /// speaks the same vocabulary the breakdown buckets in. Two deliberate
   /// absences: **fortnight is not a frequency** — it is `week` with `interval: 2`,
   /// which the editor offers as a preset — and **`once` is not a period**, it is
-  /// the single-occurrence case event budgets are made of ("presents, on the
-  /// 20th"). That second one is why this is its own list and not `Period`.
+  /// the single-occurrence case event budgets are made of, which is why this is
+  /// its own list rather than `Period`.
   frequency String
   /// How many `frequency` steps between occurrences. 1 for monthly, 2 for
   /// fortnightly. Ignored for `once`.
@@ -1004,39 +933,34 @@ model BudgetItem {
   /// One real occurrence, from which the rest are derived: its NZ day-of-month,
   /// weekday and month *are* the anchor within the period.
   ///
-  /// A single column rather than separate day/weekday/month fields because those
-  /// can hold combinations that mean nothing (`anchorDay: 31` on a weekly item)
-  /// and because one is needed regardless — with `interval > 1` a weekday alone
-  /// does not say *which* fortnight is the on one. For `once`, this is simply the
-  /// date it happens.
+  /// A single column rather than separate day/weekday/month fields, which can hold
+  /// combinations that mean nothing (`anchorDay: 31` on a weekly item) and would
+  /// still be needed alongside a date — with `interval > 1` a weekday alone does
+  /// not say *which* fortnight is the on one. For `once`, the date it happens.
   anchorDate DateTime @db.Timestamptz(3)
 
-  /// Whether the seeder wrote this row and nobody has agreed to it since. Cleared on
-  /// the first user edit, which is what lets "re-infer from history" refresh the
-  /// rows still resting on a guess while leaving hand-corrected ones alone — and
-  /// cleared on a row written through the chat, where the figure was talked over
-  /// with the household before it was stored and must survive the next pass.
+  /// Whether the seeder wrote this row and nobody has agreed to it since. Cleared
+  /// on the first user edit, and on a row written through the chat, where the
+  /// figure was talked over before it was stored. So "re-infer from history"
+  /// refreshes the rows still resting on a guess and leaves the rest alone.
   inferred Boolean @default(false)
 
-  /// How the figure on this row was arrived at: `ai` (a model read the history and
-  /// named it — the seeder, or the chat) or `computed` (the deterministic pattern
-  /// detector, used when no model is reachable or a window's inference failed). Null
-  /// for a hand-typed row, which was produced by neither.
+  /// How the figure was arrived at: `ai` (a model read the history and named it)
+  /// or `computed` (the deterministic pattern detector, used when no model is
+  /// reachable or a window's inference failed). Null for a hand-typed row.
   ///
-  /// Provenance for the UI's badge, never a control — it says where a figure came
+  /// Provenance for the UI's badge, never a control: it says where a figure came
   /// from, not what may be done to it, which is `inferred`'s business. The two are
-  /// genuinely independent: a chat-written row is `inferredSource: ai` and
-  /// `inferred: false`, because a model proposed it *and* the household agreed to
-  /// it. Editing the amount by hand clears this, since the figure is then nobody's
-  /// but the person's who typed it.
+  /// independent — a chat-written row is `ai` and `inferred: false`, a model
+  /// having proposed it *and* the household agreed to it. Editing the amount by
+  /// hand clears this.
   inferredSource String?
 
-  /// How the figure was arrived at, in the words of whatever arrived at it — the
-  /// LLM's one-line rationale ("Recurring larger transactions appearing several
-  /// times a year"), the detector's ("12 payments over 24 months"), or what was
-  /// settled on in the chat. Shown in a popover on the provenance badge so a figure
-  /// nobody typed can be questioned. Null for a hand-typed row, which needs no
-  /// explanation of where it came from.
+  /// The one-line rationale from whatever arrived at the figure — the LLM's
+  /// ("recurring larger transactions several times a year"), the detector's ("12
+  /// payments over 24 months"), or what was settled on in the chat. Shown in a
+  /// popover on the provenance badge, so a figure nobody typed can be questioned.
+  /// Null for a hand-typed row.
   basis String?
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -1049,9 +973,9 @@ model BudgetItem {
   @@index([merchantId])
 }
 
-/// Point-in-time balance, appended on each sync so the dashboard can chart
-/// net worth over time. Akahu only ever exposes the *current* balance, so this
-/// history only exists because we record it.
+/// Point-in-time balance, appended on each sync so the dashboard can chart net
+/// worth over time. Akahu only ever exposes the *current* balance, so this
+/// history exists only because we record it.
 model BalanceSnapshot {
   id Int @id @default(autoincrement())
 
@@ -1072,12 +996,10 @@ model BalanceSnapshot {
   @@index([accountId, capturedAt])
 }
 
-/// Incremental transaction sync progress, one row per bank link.
-///
-/// Was a single `"singleton"` row, which was only ever right because there was
-/// one connection in the world. A high-water mark is a property of the link it
-/// was read through — two links refresh at different times and reach back to
-/// different dates — so the link id *is* the primary key.
+/// Incremental transaction sync progress, one row per bank link. A high-water
+/// mark is a property of the link it was read through — two links refresh at
+/// different times and reach back to different dates — so the link id *is* the
+/// primary key.
 model SyncState {
   bankLinkId String   @id
   bankLink   BankLink @relation(fields: [bankLinkId], references: [id], onDelete: Cascade)
@@ -1085,8 +1007,8 @@ model SyncState {
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  /// High-water mark: the `date` of the newest transaction we have stored.
-  /// The next sync starts slightly before this to catch late-settling rows.
+  /// High-water mark: the `date` of the newest transaction stored. The next sync
+  /// starts slightly before it, to catch late-settling rows.
   lastTransactionDate DateTime? @db.Timestamptz(3)
   updatedAt           DateTime  @updatedAt @db.Timestamptz(3)
 
@@ -1100,52 +1022,46 @@ model SyncRun {
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  /// Which link this run was for, so `/sync` and the nav's status widget read
-  /// per-workspace history. Nullable, and `SetNull` on delete, so disconnecting
-  /// a bank leaves its audit trail behind rather than erasing the record that
-  /// the syncs happened.
+  /// Which link this run was for. `SetNull` on delete, so disconnecting a bank
+  /// leaves its audit trail behind rather than erasing the record that the syncs
+  /// happened.
   bankLinkId String?
   bankLink   BankLink? @relation(fields: [bankLinkId], references: [id], onDelete: SetNull)
 
-  /// When the row was created: for a `queued` run that is when the web app
-  /// enqueued it; the worker overwrites it with the real start when it claims the
-  /// job, so `finishedAt - startedAt` is execution time, not time spent waiting in
-  /// the queue.
+  /// Enqueue time for a `queued` run; the worker overwrites it with the real
+  /// start when it claims the job, so `finishedAt - startedAt` is execution time
+  /// rather than time spent waiting in the queue.
   startedAt  DateTime  @default(now()) @db.Timestamptz(3)
   finishedAt DateTime? @db.Timestamptz(3)
-  /// queued | running | success | failed. `queued` is the state every enqueuer
-  /// writes (phase 7): the web app can enqueue a run — a tenant INSERT it already
-  /// holds — but no longer runs the ingest itself, so `money_app` needs no catalog
-  /// DML and never calls Akahu. The `money_sync` worker claims the row (queued →
-  /// running) and finalises it. The cron script (`pnpm worker:sync`) writes `queued`
-  /// too now, so scheduled and on-demand syncs go down one path. A run that fails
-  /// transiently goes back to `queued` (see `attempts`) rather than straight to
-  /// `failed`, so the two are not strictly terminal-once.
+  /// queued | running | success | failed. Every enqueuer — the web app and the
+  /// cron script alike — writes `queued` and nothing more: the app role holds the
+  /// INSERT but no catalog DML, and never calls Akahu itself. The sync worker
+  /// claims the row (queued → running) and finalises it. A transient failure goes
+  /// back to `queued`, so the terminal states are not terminal-once.
   status     String    @default("running")
 
-  /// Whether this run re-fetches the whole history window (`--full`) or syncs
-  /// incrementally from the high-water mark. Persisted because the worker runs the
-  /// job later, in another process, and must reproduce the mode the button chose.
+  /// Whether this run re-fetches the whole history window or syncs incrementally
+  /// from the high-water mark. Persisted because the worker runs the job later,
+  /// in another process, and must reproduce the mode the button chose.
   full Boolean @default(false)
 
-  /// An explicit lookback window in days (`pnpm worker:sync --days 90`), or null for
-  /// the pipeline's own default. Persisted for the same reason as `full`: the
-  /// enqueuer and the process that runs the job are no longer the same one, so an
-  /// argument that isn't stored is an argument that is silently dropped.
+  /// An explicit lookback window in days, or null for the pipeline's own default.
+  /// Persisted for the same reason as `full`: the enqueuer and the process that
+  /// runs the job are not the same one, so an argument that isn't stored is
+  /// silently dropped.
   days Int?
 
-  /// How many times the worker has claimed this run (queued → running). Bumped on
-  /// every claim, so a run that keeps failing counts up until it hits the worker's
-  /// `WORKER_MAX_ATTEMPTS` cap and is failed for good. A transient failure below
-  /// the cap re-queues the row with backoff (`nextAttemptAt`) instead. Also how the
+  /// How many times the worker has claimed this run (queued → running). A run
+  /// that keeps failing counts up to `WORKER_MAX_ATTEMPTS` and is then failed for
+  /// good; below the cap it re-queues with backoff instead. Also how the
   /// stale-claim reaper decides whether a run abandoned by a dead worker is worth
-  /// retrying or should be failed.
+  /// retrying.
   attempts Int @default(0)
 
-  /// Earliest time a `queued` row may be claimed, or null for "now". The worker
-  /// sets this in the future when it re-queues a failed run, spacing retries out
-  /// with exponential backoff; the claim query skips rows whose backoff has not
-  /// elapsed. Irrelevant once a row is `running`/terminal.
+  /// Earliest time a `queued` row may be claimed, or null for "now". Set into the
+  /// future when the worker re-queues a failed run, spacing retries out
+  /// exponentially; the claim query skips rows whose backoff has not elapsed.
+  /// Irrelevant once a row is `running` or terminal.
   nextAttemptAt DateTime? @db.Timestamptz(3)
 
   accountsSynced     Int @default(0)
@@ -1158,13 +1074,11 @@ model SyncRun {
 }
 
 /// A GoRules JDM decision graph, executed by the Zen engine to automate
-/// transaction enrichment (see lib/server/rules.ts). Rules are taught from a
-/// transaction ("Create rule from this transaction") and reviewed on `/rules`.
-/// One document is `active` at a time; that is the graph the sync and the manual
-/// "apply rules" backfill evaluate every transaction against. The graph is stored
-/// as its JSON text in `content` — deliberately text rather than Postgres `jsonb`,
-/// because the app never queries into the graph: it is loaded whole, parsed, and
-/// handed to the engine, and `jsonb` would reorder keys for no gain here.
+/// transaction enrichment. One document is `active` per workspace; that is the
+/// graph the sync and the manual "apply rules" backfill evaluate every
+/// transaction against. The graph is stored as JSON text rather than `jsonb`
+/// because the app never queries into it: it is loaded whole, parsed and handed
+/// to the engine, and `jsonb` would reorder keys for no gain.
 model RuleDocument {
   id Int @id @default(autoincrement())
 
@@ -1172,19 +1086,19 @@ model RuleDocument {
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   name String
-  /// Stable URL-safe identifier, unique *within a workspace*. The UI now edits a
-  /// single active document in place, so this is an identity key rather than a
-  /// route segment. Instance-wide uniqueness would have made the second
-  /// workspace's first rule document collide with the first workspace's.
+  /// Stable URL-safe identifier, unique *within a workspace*. An identity key
+  /// rather than a route segment, the UI editing a single active document in
+  /// place. Instance-wide uniqueness would make one workspace's first rule
+  /// document collide with another's.
   slug String
 
-  /// The JDM decision graph, serialised with `JSON.stringify`. Parsed back into
-  /// `{ nodes, edges }` before evaluation.
+  /// The JDM decision graph, serialised with `JSON.stringify` and parsed back
+  /// into `{ nodes, edges }` before evaluation.
   content String
 
-  /// Exactly one document should be active *per workspace*. The rules runner
-  /// picks the active one; activating a document deactivates the others in the
-  /// same workspace (see the rules actions).
+  /// Exactly one document should be active *per workspace*: the rules runner
+  /// picks that one, and activating a document deactivates the others in the same
+  /// workspace.
   active Boolean @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
@@ -1196,12 +1110,12 @@ model RuleDocument {
 }
 
 /// One execution of the rules engine — a per-sync pass or a manual "apply now"
-/// backfill (see lib/server/rules.ts `runRules`). Recorded only when it actually
-/// changed something (or errored), so the log reads as "what the rules did" rather
-/// than a heartbeat of every no-op sync. Mirrors `SyncRun`.
+/// backfill. Recorded only when it actually changed something (or errored), so
+/// the log reads as what the rules did rather than a heartbeat of every no-op
+/// sync. Mirrors `SyncRun`.
 model RuleRun {
-  /// A cuid: this one appears in a URL (`/rules/runs/<id>`), so a counter would
-  /// hand every visitor a running total of the instance's rule activity.
+  /// A cuid: this one appears in a URL, so a counter would hand every visitor a
+  /// running total of the instance's rule activity.
   id String @id @default(cuid())
 
   workspaceId String
@@ -1211,11 +1125,11 @@ model RuleRun {
   finishedAt DateTime? @db.Timestamptz(3)
   /// What triggered the run: `sync` (during ingest) | `manual` (Apply now).
   trigger    String
-  /// queued | running | success | failed. A `manual` run is now enqueued the same
-  /// way a sync is (phase 7): the web app writes a `queued` row — a tenant INSERT
-  /// `money_app` holds — and the `money_sync` worker claims it (queued → running)
-  /// and finalises it, so the whole-history backfill no longer runs in the request.
-  /// A `sync`-triggered run is still created terminal by the ingest itself.
+  /// queued | running | success | failed. A `manual` run is enqueued the same way
+  /// a sync is — the web app writes a `queued` row and the worker claims it
+  /// (queued → running) and finalises it — so the whole-history backfill never
+  /// runs in the request. A `sync`-triggered run is created terminal by the
+  /// ingest itself.
   status     String    @default("success")
 
   /// Tallies for the whole run, mirroring the in-memory summary.
@@ -1225,8 +1139,8 @@ model RuleRun {
   transfersLinked Int @default(0)
   errors          Int @default(0)
 
-  /// Retry bookkeeping for the queued (`manual`) path, identical to SyncRun:
-  /// `attempts` counts claims and caps retries; `nextAttemptAt` gates a re-queued
+  /// Retry bookkeeping for the queued (`manual`) path, identical to `SyncRun`:
+  /// `attempts` counts claims and caps retries, `nextAttemptAt` gates a re-queued
   /// row until its backoff elapses. Both irrelevant to a `sync`-triggered run,
   /// which is never queued.
   attempts      Int       @default(0)
@@ -1244,58 +1158,50 @@ model RuleRun {
 /// off the request.
 ///
 /// Inference talks to a local LLM, which can take a minute or more over several
-/// windows — far too long to hold a page render or a form POST open for. So the web
-/// app writes a `queued` row (a tenant INSERT `money_app` already holds) and returns
-/// straight away; the `money_sync` worker (scripts/drain.ts) claims it, runs the
-/// inference and creates or refreshes the budget. The same queue machinery the sync
-/// and rules passes use: atomic claim, retry with backoff, stale-claim reaping.
-///
-/// `budgetId` is the budget the run concerns. Set upfront for a re-infer; null for a
-/// create, then filled in with the freshly created budget when it succeeds — so on
-/// success it always points at the budget to show, and the budgets list can show a
-/// run in flight as "being created" until the row it produces appears.
+/// windows — far too long to hold a page render or a form POST open for. So the
+/// web app writes a `queued` row and returns straight away; the worker claims it,
+/// runs the inference and creates or refreshes the budget. The same queue
+/// machinery the sync and rules passes use: atomic claim, retry with backoff,
+/// stale-claim reaping.
 model BudgetInferenceRun {
   id String @id @default(cuid())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  /// The budget this run builds or refreshes. Null while a create run is in flight,
-  /// set to the new budget on success; set from the start for a re-infer. `SetNull`
-  /// so deleting the budget leaves the record of the run behind.
+  /// The budget this run builds or refreshes: set upfront for a re-infer, null
+  /// while a create run is in flight and filled in on success, so it always
+  /// points at the budget to show once the run has succeeded. `SetNull`, so
+  /// deleting the budget leaves the record of the run behind.
   budgetId String?
   budget   Budget? @relation(fields: [budgetId], references: [id], onDelete: SetNull)
 
-  /// Who asked for this run. Null for a run with no person behind it — and for
-  /// every row written before this column existed.
-  ///
-  /// It is here for one reason: the run logs itself into a `ChatThread` (see
-  /// `unattended` there), and a thread is private to its author, so the log needs
-  /// an owner and the only honest candidate is whoever pressed the button. Nothing
-  /// about *running* the inference uses it. `SetNull`, like `FieldChange.userId`:
-  /// deleting a person must not delete the record that the run happened.
+  /// Who asked for this run, or null for one with no person behind it. Here for
+  /// one reason: the run logs itself into a `ChatThread`, a thread is private to
+  /// its author, and the only honest owner for that log is whoever pressed the
+  /// button. Nothing about *running* the inference uses it. `SetNull`: deleting a
+  /// person must not delete the record that the run happened.
   userId String?
   user   User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   /// The conversation this run logged itself into, set by the worker as soon as it
-  /// opens one. Null until then, and forever for a run nobody owns. `SetNull` so
-  /// deleting the thread — the ordinary thing to do with a log you have read —
-  /// leaves the run behind.
+  /// opens one. Null until then, and forever for a run nobody owns. `SetNull`, so
+  /// deleting a log that has been read leaves the run behind.
   threadId String?
   thread   ChatThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
 
   /// queued | running | success | failed. Same lifecycle as `SyncRun.status`: the
-  /// web app writes `queued`, the worker claims it (queued → running) and finalises
-  /// it, and a transient failure re-queues with backoff rather than failing outright.
+  /// web app writes `queued`, the worker claims it (queued → running) and
+  /// finalises it, and a transient failure re-queues with backoff.
   status String @default("queued")
 
-  /// Created-at for a queued row; overwritten with the real start when the worker
-  /// claims it, so `finishedAt - startedAt` is execution time, not queue wait.
+  /// Enqueue time for a queued row, overwritten with the real start when the
+  /// worker claims it, so `finishedAt - startedAt` is execution time.
   startedAt  DateTime  @default(now()) @db.Timestamptz(3)
   finishedAt DateTime? @db.Timestamptz(3)
 
-  /// Claim count and retry backoff, exactly as `SyncRun` — see there. The reaper and
-  /// the retry-or-fail decision in scripts/drain.ts read both.
+  /// Claim count and retry backoff, exactly as `SyncRun`. The reaper and the
+  /// retry-or-fail decision read both.
   attempts      Int       @default(0)
   nextAttemptAt DateTime? @db.Timestamptz(3)
 
@@ -1305,15 +1211,14 @@ model BudgetInferenceRun {
   /// budget from what it had.
   ///
   /// The run happens in the worker, in another process, so there is no signal to
-  /// send it and no registry to find it in — the way the interactive chat's stop
-  /// reaches a turn (lib/server/chat/runs.ts). A column is the channel: the loop
-  /// reads it between rounds and stops there. That makes stopping take effect
-  /// after the step in flight rather than during it, which is the honest bound on
-  /// anything crossing a process boundary through a database.
+  /// send it and no registry to find it in the way the interactive chat's stop
+  /// reaches a turn. This column is the channel: the loop reads it between rounds
+  /// and stops there, so stopping takes effect after the step in flight rather
+  /// than during it — the honest bound on anything crossing a process boundary
+  /// through a database.
   ///
-  /// A timestamp rather than a flag so the log can say when it was asked, and so
-  /// a request that arrives after the run has ended is a fact about the row
-  /// rather than a value nothing will ever read.
+  /// A timestamp rather than a flag, so the log can say when it was asked and a
+  /// request arriving after the run ended is still a fact about the row.
   stopRequestedAt DateTime? @db.Timestamptz(3)
 
   @@index([workspaceId, startedAt])
@@ -1323,54 +1228,51 @@ model BudgetInferenceRun {
   @@index([userId])
 }
 
-/// Mail composed and waiting to be delivered, and the reason the web app cannot
-/// deliver it itself.
+/// Mail composed and waiting to be delivered.
 ///
-/// The app writes a row here and stops — INSERT is the only statement `money_app`
-/// holds on this table — and the `money_sync` worker sends it. That is the same
-/// split the Akahu tokens have: an SMTP credential that can send mail as this
-/// domain has no business in the internet-facing process.
+/// The app writes a row here and stops — INSERT is the only statement the app
+/// role holds on this table — and the sync worker sends it. The same split the
+/// Akahu tokens have: an SMTP credential that can send mail as this domain has no
+/// business in the internet-facing process.
 ///
-/// The app is revoked SELECT here rather than merely never reading, because the
+/// The app is revoked SELECT rather than merely never reading, because the
 /// *contents* matter as much as the credential. A queued invite or reset message
 /// carries a working bearer link, so a queue the web role could read would hand a
 /// compromise of it every unredeemed one at once — including for workspaces the
-/// attacker is not a member of, which is more than that role can reach through
-/// any ordinary path. The migration revokes it and the isolation test proves the
-/// revoke, since dev and tests connect as the owner and would never notice.
+/// attacker is not a member of, which is more than that role can reach any other
+/// way.
 ///
 /// No `workspaceId`, deliberately. A password reset belongs to a person rather
-/// than a workspace (`/account` has no workspace at all), the worker drains this
-/// globally, and a row here is never tenant data: it holds an address, a subject,
-/// a link and prose, and by standing rule never an amount or a transaction.
+/// than a workspace, the worker drains this globally, and a row here is never
+/// tenant data: it holds an address, a subject, a link and prose, and by standing
+/// rule never an amount or a transaction.
 model EmailOutbox {
   id String @id @default(cuid())
 
-  /// Recipient and message. `text` is not a courtesy — a message with no
-  /// plaintext part scores as spam with most filters, which for an invite
-  /// presents as exactly the silent non-delivery this queue exists to surface.
+  /// Recipient and message. `text` is not a courtesy: a message with no plaintext
+  /// part scores as spam with most filters, which for an invite presents as
+  /// exactly the silent non-delivery this queue exists to surface.
   to      String
   subject String
   text    String
   html    String?
 
   /// `invite` | `reset`. For reading the queue and the logs; nothing branches on
-  /// it. Deliberately not the message body's source of truth — the body is
-  /// composed once, at enqueue, so what was queued is what is sent.
+  /// it, and it is not the body's source of truth — the body is composed once, at
+  /// enqueue, so what was queued is what is sent.
   kind String
 
   /// The run-queue protocol, identical to the sync and rules queues: `queued` |
   /// `running` | `success` | `failed`, with `attempts` capping retries and
   /// `nextAttemptAt` gating a re-queued row until its backoff elapses. A relay
-  /// that is down therefore backs off and eventually gives up, rather than
+  /// that is down therefore backs off and eventually gives up rather than
   /// spinning, and a worker that dies holding a row is reaped by the same pass.
   status        String    @default("queued")
   attempts      Int       @default(0)
   nextAttemptAt DateTime? @db.Timestamptz(3)
 
-  /// `startedAt` is the enqueue time until the worker claims the row and resets
-  /// it, which is also the reaper's lease anchor — the same arrangement, and the
-  /// same reason, as `SyncRun`.
+  /// Enqueue time until the worker claims the row and resets it, which is also
+  /// the reaper's lease anchor — the same arrangement as `SyncRun`.
   startedAt  DateTime  @default(now()) @db.Timestamptz(3)
   finishedAt DateTime? @db.Timestamptz(3)
   error      String?
@@ -1385,13 +1287,9 @@ model EmailOutbox {
 /// the rules engine, and a person using the app — so "who set this category, and
 /// what was it before?" is answered by history rather than by the current value.
 /// `Transaction.categorySource`/`merchantSource` still say who *owns* a field
-/// now; this says how it got that way.
-///
-/// Why a table and not an `updatedByUserId` column: a column holds only the most
-/// recent writer and forgets everything before it, and it costs a column per
-/// attributable field. This started life as `RuleApplication` — the same shape,
-/// for one writer — and generalising it to all three subsumed both. See
-/// docs/multi-user.md.
+/// now; this says how it got that way. A table and not an `updatedByUserId`
+/// column, which would hold only the most recent writer and cost a column per
+/// attributable field.
 ///
 /// Changes only, never genesis: a transaction arriving from Akahu already
 /// categorised writes nothing here, because `syncedAt` plus a `source` of `akahu`
@@ -1403,13 +1301,13 @@ model FieldChange {
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  /// A plain column, not a relation, and deliberately so: an append-only log must
-  /// not be quietly rewritten by a cascade, and the rules-run report has always
-  /// joined the current transaction rows back in for display while tolerating a
-  /// since-deleted one. (Inherited from `RuleApplication`, which did the same.)
+  /// A plain column, not a relation, deliberately: an append-only log must not be
+  /// quietly rewritten by a cascade, and readers join the current transaction rows
+  /// back in for display while tolerating a since-deleted one.
   transactionId String
 
-  /// Which field changed: `category` | `merchant` | `transfer`.
+  /// Which field changed: `category` | `merchant` | `transfer` | `label` (only a
+  /// tag a rule was configured to apply).
   field String
 
   /// What made the change: `akahu` (the sync) | `user` (a person) | `rule` (the
@@ -1417,26 +1315,23 @@ model FieldChange {
   /// same precedence: user beats rule beats akahu.
   source String
 
-  /// The person who made it, when `source` is `user`.
-  ///
-  /// Null on every row written before phase 3, which is the honest reading rather
-  /// than a fudge: this instance did not know who anyone was yet. Also null for
-  /// `akahu` and `rule` changes, which have no person behind them — a *manually*
-  /// triggered rule run records who asked for it on `RuleRun`, not here, because
-  /// the person chose to run the rules, not to make this particular edit.
+  /// The person who made it, when `source` is `user`. Null for `akahu` and `rule`
+  /// changes, which have no person behind them — a *manually* triggered rule run
+  /// records who asked for it on `RuleRun`, not here, because the person chose to
+  /// run the rules rather than to make this particular edit. Also null on rows
+  /// written before this instance knew who anyone was.
   actorUserId String?
   actor       User?   @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
 
-  /// The run that made it, when `source` is `rule`. What `RuleApplication.runId`
-  /// was, and what `/rules/runs/<id>` still reads.
+  /// The run that made it, when `source` is `rule`, and what the run report reads.
   ruleRunId String?
   ruleRun   RuleRun? @relation(fields: [ruleRunId], references: [id], onDelete: Cascade)
 
   /// The value before and after. Ids for joining back, labels stored alongside so
   /// a reader needs no join for the values themselves — and so the history still
   /// reads correctly after a category is renamed or a merchant deleted, which is
-  /// the point of a log. `transfer` carries the other leg: no id pair, since a
-  /// group is not a value.
+  /// the point of a log. `transfer` carries the other leg and no id pair, a group
+  /// not being a value.
   fromId    String?
   fromLabel String?
   toId      String?
@@ -1444,8 +1339,8 @@ model FieldChange {
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
 
-  /// The transaction history panel's query: one transaction's changes, newest
-  /// first, within the workspace the scoped client already filters on.
+  /// The history panel's query: one transaction's changes, newest first, within
+  /// the workspace the scoped client already filters on.
   @@index([workspaceId, transactionId, createdAt])
   @@index([ruleRunId])
   @@index([transactionId])
@@ -1454,105 +1349,100 @@ model FieldChange {
 // ---------------------------------------------------------------------------
 // Chat
 //
-// A conversation with the local model, persisted. This is what supersedes the
-// file transcripts under `LLM_LOG_DIR`: the conversation is rows, readable in the
-// app, rather than a directory on the server nobody looks at. That now includes
+// A conversation with the local model, persisted as rows and readable in the app
+// rather than as a transcript file on the server nobody looks at. That includes
 // the headless budget inference, which logs its whole run into a thread of its
 // own (`unattended` below) owned by whoever asked for it.
 // ---------------------------------------------------------------------------
 
 /// One conversation.
 ///
-/// **Private to its author**, which is the one place in this app where membership
-/// of a workspace is not enough to read something. Every other tenant table is
-/// household data — the transactions, the budgets, the rules — and `scopedDb`
-/// plus RLS is the whole access story. A chat is not that: it is one person
-/// thinking out loud, and the other member of a household did not ask to read it.
+/// **Private to its author**, the one place in this app where membership of a
+/// workspace is not enough to read something. Every other tenant table is
+/// household data — transactions, budgets, rules — where the scoped client plus
+/// RLS is the whole access story. A chat is one person thinking out loud, and the
+/// other member of a household did not ask to read it.
 ///
-/// Note what that means for enforcement. RLS only knows `app.workspace_id`, so
-/// the database can keep another *workspace* out but not another *member*; the
-/// `userId` filter that does is application code, and it lives in exactly one
-/// place (lib/server/queries/chat.ts) so it cannot be forgotten at a call site.
+/// RLS only knows `app.workspace_id`, so the database can keep another *workspace*
+/// out but not another *member*. The `userId` filter that does is application
+/// code, kept in one place so it cannot be forgotten at a call site.
 model ChatThread {
   id String @id @default(cuid())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
-  /// Who it belongs to. Required, unlike `FieldChange.userId` — a thread with no
-  /// owner would be a thread nobody may read, which is not a useful row to keep.
+  /// Who it belongs to. Required, unlike `FieldChange.userId`: a thread with no
+  /// owner would be one nobody may read.
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  /// Taken from the opening message and editable after. Not a summary the model
-  /// writes: that would be another round trip before the first reply appears.
+  /// Taken from the opening message and editable after. Not model-written: that
+  /// would be another round trip before the first reply appears.
   title String
 
   /// Written by a background run rather than by a person talking: the log of one
-  /// unattended budget inference (lib/server/budget/inference-log.ts).
+  /// unattended budget inference.
   ///
   /// A log is a conversation to *read*, not one to take a turn in, and this column
   /// is what says so: the thread page renders it read-only and the turn route
-  /// refuses a turn on it. Two things make that necessary. It is still being
-  /// written by another process while the run lasts, so a turn would be two
-  /// writers on one thread; and it was held with tools that exist only in that run
+  /// refuses a turn on it. Two things make that necessary. While the run lasts
+  /// another process is still writing, so a turn would be two writers on one
+  /// thread; and it was held with tools that exist only in that run
   /// (`propose_items`, `finish`).
   ///
-  /// Not permanent, though — see `continuedAt`. A finished log can be taken over,
-  /// which clears this and makes the thread an ordinary conversation.
+  /// Not permanent: a finished log can be taken over, which clears this and makes
+  /// the thread an ordinary conversation (see `continuedAt`).
   unattended Boolean @default(false)
 
   /// When a person took over a finished run's log and carried on in it.
   ///
   /// Taking over clears `unattended`, which is what puts a composer on the page
-  /// and lets the turn route claim the thread; this is what remembers that
-  /// everything above the takeover was written by a worker rather than said by
-  /// anyone. Two things read it: the page, to mark the boundary, and the turn,
-  /// which tells the model what it is picking up — the run's tools are gone and
-  /// the budget it was building has already been saved.
+  /// and lets the turn route claim the thread; this remembers that everything
+  /// above the takeover was written by a worker rather than said by anyone. Two
+  /// things read it: the page, to mark the boundary, and the turn, which tells the
+  /// model what it is picking up — the run's tools are gone and the budget it was
+  /// building has already been saved.
   ///
-  /// The record stays honest because the boundary is visible. A log continued in
-  /// place beats a copy: the transcript of a run is megabytes of served
-  /// transactions, and forking it to protect a distinction the page can simply
-  /// draw would duplicate a household's history to no end.
+  /// Continued in place rather than copied: a run's transcript is megabytes of
+  /// served transactions, and the boundary being visible is what keeps the record
+  /// honest without duplicating a household's history.
   continuedAt DateTime? @db.Timestamptz(3)
 
-  /// Set when a turn starts, cleared when it settles. No longer the authority on
-  /// what is running — the in-process registry in lib/server/chat/runs.ts is —
-  /// but still what a freshly rendered page has to go on, and what says a turn
-  /// was interrupted by the process dying rather than by finishing.
+  /// Set when a turn starts, cleared when it settles. Not the authority on what is
+  /// running — the in-process run registry is — but what a freshly rendered page
+  /// has to go on, and what says a turn was interrupted by the process dying
+  /// rather than by finishing.
   runningSince DateTime? @db.Timestamptz(3)
 
-  /// Which model answers here. Null means whatever `LLM_MODEL` currently is, which
-  /// is what every thread opened before this column existed wants. Stored per
-  /// thread rather than per workspace because the choice is about the
+  /// Which model answers here; null means whatever `LLM_MODEL` currently is.
+  /// Stored per thread rather than per workspace because the choice is about the
   /// conversation — a quick one wants a small model, and switching mid-thread is
-  /// a legitimate thing to do when the small one gets stuck.
+  /// legitimate when the small one gets stuck.
   model String?
 
   /// The conversation so far, in prose, standing in for the messages up to
   /// `summarizedThroughSeq`. Null until someone compacts.
   ///
-  /// This is the second half of the same argument as `ChatMessage.elided`: what
-  /// the model is shown and what the person can read are different things. The
-  /// messages are never deleted — scroll back and they are all there — but the
-  /// model is handed the summary and then everything since, which is what lets a
-  /// conversation outlive the context window it started in.
+  /// The second half of the same argument as `ChatMessage.elided`: what the model
+  /// is shown and what the person can read are different things. The messages are
+  /// never deleted — scroll back and they are all there — but the model is handed
+  /// the summary and then everything since, which is what lets a conversation
+  /// outlive the context window it started in.
   summary String?
 
-  /// The last message the summary accounts for. Everything after it is still sent
-  /// verbatim. Kept beside the summary rather than derived, because "what did this
-  /// summary cover?" has exactly one right answer and recomputing it from the
-  /// summary's age would be a guess.
+  /// The last message the summary accounts for; everything after it is still sent
+  /// verbatim. Stored beside the summary rather than derived, since recomputing it
+  /// from the summary's age would be a guess.
   summarizedThroughSeq Int?
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
   messages ChatMessage[]
-  /// The runs that logged themselves here. At most one in practice — a retried run
-  /// opens a fresh thread rather than appending to the log of the attempt that
-  /// failed — but the relation is a list because the foreign key is on the run.
+  /// The runs that logged themselves here. At most one in practice — a retry opens
+  /// a fresh thread rather than appending to the failed attempt's log — but a list,
+  /// the foreign key being on the run.
   inferenceRuns BudgetInferenceRun[]
 
   /// The thread list: one person's threads, most recently used first.
@@ -1562,10 +1452,10 @@ model ChatThread {
 /// One message in a thread, stored in the shape the API speaks.
 ///
 /// `role`, `content`, `toolCalls` and `toolCallId` are the OpenAI chat message
-/// fields, kept verbatim rather than normalised into something of our own. That
-/// is deliberate: rehydrating a thread to continue it is then a `map`, not a
-/// reconstruction, and there is no second representation to drift out of step
-/// with what was actually said.
+/// fields, kept verbatim rather than normalised into something of our own:
+/// rehydrating a thread to continue it is then a `map` rather than a
+/// reconstruction, with no second representation to drift out of step with what
+/// was actually said.
 model ChatMessage {
   id String @id @default(cuid())
 
@@ -1575,10 +1465,10 @@ model ChatMessage {
   threadId String
   thread   ChatThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
 
-  /// Position in the conversation, from 0. Ordering by `createdAt` would be a
-  /// coin toss between an assistant message and the tool results it triggered,
-  /// which arrive in the same millisecond and must not be reordered — the API
-  /// rejects a tool result that does not follow its call.
+  /// Position in the conversation, from 0. Ordering by `createdAt` would be a coin
+  /// toss between an assistant message and the tool results it triggered, which
+  /// arrive in the same millisecond — and the API rejects a tool result that does
+  /// not follow its call.
   seq Int
 
   /// system | user | assistant | tool
@@ -1591,17 +1481,17 @@ model ChatMessage {
   toolCalls Json?
 
   /// On a tool result: which call it answers, and which tool ran. The name is
-  /// redundant against the call but saves the UI a lookup to decide how to render
-  /// a result, and survives if the calling message is ever pruned.
+  /// redundant against the call, but saves the UI a lookup to decide how to render
+  /// a result and survives if the calling message is ever pruned.
   toolCallId String?
   toolName   String?
 
   /// Whether this message's content is dropped when rebuilding the model's view
   /// of the thread. A served page of transactions has done its job once it has
   /// been reasoned over, and carrying thousands of rows forward is what runs a
-  /// small local model out of context — the same trade the budget inference makes
-  /// in-flight. The row keeps its full content regardless: the elision is for the
-  /// model, not for the person, who can still scroll back and see what it read.
+  /// small local model out of context. The row keeps its full content regardless:
+  /// the elision is for the model, not for the person, who can still scroll back
+  /// and see what it read.
   elided Boolean @default(false)
 
   createdAt DateTime @default(now()) @db.Timestamptz(3)

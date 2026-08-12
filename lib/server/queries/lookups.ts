@@ -50,6 +50,26 @@ export const getMerchants = cache(async () => {
   });
 });
 
+/**
+ * The transaction types on record, commonest first — the options for a rule's type
+ * gate.
+ *
+ * Read from the data rather than kept as a constant: the vocabulary is Akahu's,
+ * not ours, and a list we maintain by hand would quietly go stale the first time
+ * they add one. Commonest first because the type a rule wants is nearly always one
+ * of the two or three that dominate the ledger.
+ */
+export const getTransactionTypes = cache(async () => {
+  await connection();
+  const db = await getDb();
+  const rows = await db.transaction.groupBy({
+    by: ["type"],
+    _count: { _all: true },
+    orderBy: { _count: { type: "desc" } },
+  });
+  return rows.map((r) => r.type);
+});
+
 /** The workspace's labels, for the tag picker on a transaction or bulk action. */
 export const getLabels = cache(async () => {
   await connection();

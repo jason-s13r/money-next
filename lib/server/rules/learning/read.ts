@@ -1,10 +1,10 @@
 import {
   CATEGORY_COL,
-  LEARNED_TABLE_ID,
+  LABEL_COL,
+  learnedTable,
   MATCH_COL,
   MERCHANT_COL,
   type Graph,
-  type TableContent,
 } from "./graph";
 
 const TYPE_CLAUSE = /^type == '([^']*)'$/;
@@ -39,6 +39,8 @@ export type LearnedRuleView = {
   match: ParsedMatch;
   categoryId: string | null;
   merchantId: string | null;
+  /** The tag this rule applies instead of the derived one, or null for derived. */
+  labelName: string | null;
 };
 
 /**
@@ -64,11 +66,6 @@ function literalId(cell: string | undefined): string | null {
   return m ? m[1] : cell.trim() || null;
 }
 
-function learnedTable(graph: Graph): TableContent | null {
-  const node = graph.nodes.find((n) => n.id === LEARNED_TABLE_ID);
-  return node ? (node.content as TableContent) : null;
-}
-
 /** The learned rules in evaluation order (first-match wins), for display. */
 export function readLearnedRules(graph: Graph): LearnedRuleView[] {
   const table = learnedTable(graph);
@@ -78,6 +75,7 @@ export function readLearnedRules(graph: Graph): LearnedRuleView[] {
     match: parseMatch(r[MATCH_COL] ?? ""),
     categoryId: literalId(r[CATEGORY_COL]),
     merchantId: literalId(r[MERCHANT_COL]),
+    labelName: literalId(r[LABEL_COL]),
   }));
 }
 

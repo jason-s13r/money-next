@@ -3,16 +3,20 @@
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
+import type { ScopedDb } from "@/lib/server/db";
 import { enqueueRules } from "@/lib/server/queue";
 import { editRuleGraph } from "@/lib/server/rules/document";
 import {
   deriveMatch,
   upsertLearnedRule,
+  updateLearnedRule,
+  validateEdit,
   deleteLearnedRule,
   setTransferAutoLink,
   type Graph,
+  type RuleEdit,
 } from "@/lib/server/rules/learning";
-import type { GenerateRuleResult } from "./types";
+import type { GenerateRuleResult, UpdateRuleResult } from "./types";
 
 // Server actions behind `/rules`. The rules *engine* lives in lib/server/rules/engine
 // and the graph read/write helpers in lib/server/rules/learning; this file is the thin
@@ -30,6 +34,30 @@ async function editActiveGraph(mutate: (graph: Graph) => void) {
   const db = await getDb();
   await editRuleGraph(db, mutate);
   await revalidateWorkspacePath("/rules");
+}
+
+/**
+ * How many stored transactions a predicate reaches — the blast radius shown when a
+ * rule is taught or edited.
+ *
+ * `mode: "insensitive"` is what makes this count *true*, not just consistent. The
+ * rule itself matches on `contains(lower(description), …)` (see `buildExpression`),
+ * so a case-sensitive count here would promise a smaller reach than the rule
+ * actually has.
+ */
+async function countMatching(
+  db: ScopedDb,
+  type: string | null,
+  tokens: string[],
+): Promise<number> {
+  return db.transaction.count({
+    where: {
+      ...(type ? { type } : {}),
+      AND: tokens.map((t) => ({
+        description: { contains: t, mode: "insensitive" as const },
+      })),
+    },
+  });
 }
 
 /**
@@ -57,6 +85,33 @@ export async function applyRulesNow() {
 
   await revalidateWorkspacePath("/rules");
   await revalidateWorkspacePath("/rules/runs");
+}
+
+/**
+ * Rewrite a learned rule: its tokens, the type it is gated on, and its outputs.
+ *
+ * A derived predicate keeps whatever the tokeniser thought was stable, which is
+ * sometimes a reference that appears exactly once ("3cb-kensingtonh") — a rule that
+ * looks right on the page and will never match again. Editing is the cheap fix for
+ * that, and the returned count is how the person checks the fix landed.
+ */
+export async function updateRule(ruleId: string, edit: RuleEdit): Promise<UpdateRuleResult> {
+  await requireRole({ enrichment: ["update"] });
+
+  const validated = validateEdit(edit);
+  if (!validated.ok) return validated;
+
+  let found = false;
+  const db = await getDb();
+  await editRuleGraph(db, (graph) => {
+    found = updateLearnedRule(graph, ruleId, validated.edit);
+  });
+  if (!found) return { ok: false, reason: "That rule no longer exists." };
+
+  const matchCount = await countMatching(db, validated.edit.type, validated.edit.tokens);
+
+  await revalidateWorkspacePath("/rules");
+  return { ok: true, matchCount };
 }
 
 /** Delete a learned rule (a row in the decision table) by its id. */
@@ -118,18 +173,7 @@ export async function generateRuleFromTransaction(
     }).merged;
   });
 
-  // `mode: "insensitive"` is what makes this count *true*, not just consistent.
-  // The rule itself matches on `contains(lower(description), …)` (see
-  // `buildMatch`), so a case-sensitive count here would promise the user a
-  // smaller blast radius than the rule actually has.
-  const matchCount = await db.transaction.count({
-    where: {
-      type: tx.type,
-      AND: match.tokens.map((t) => ({
-        description: { contains: t, mode: "insensitive" as const },
-      })),
-    },
-  });
+  const matchCount = await countMatching(db, tx.type, match.tokens);
 
   await revalidateWorkspacePath("/rules");
   await revalidateWorkspacePath(`/transactions/${transactionId}`);

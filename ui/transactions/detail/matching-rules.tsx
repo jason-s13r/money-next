@@ -57,7 +57,11 @@ export function MatchingRules({
                   </span>
                 ))}
                 <span className="opacity-50">→</span>
-                <RuleOutputs categoryName={rule.categoryName} merchantName={rule.merchantName} />
+                <RuleOutputs
+                  categoryName={rule.categoryName}
+                  merchantName={rule.merchantName}
+                  labelName={rule.labelName}
+                />
               </li>
             ))}
             {transferMatches ? (

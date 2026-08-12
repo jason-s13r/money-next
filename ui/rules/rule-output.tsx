@@ -14,17 +14,21 @@ function OutputPill({ label, value }: { label: string; value: string }) {
 export function RuleOutputs({
   categoryName,
   merchantName,
+  labelName = null,
 }: {
   categoryName: string | null;
   merchantName: string | null;
+  /** The tag the rule applies by name; absent means the derived one. */
+  labelName?: string | null;
 }) {
-  if (!categoryName && !merchantName) {
+  if (!categoryName && !merchantName && !labelName) {
     return <span className="text-xs text-muted">no output set</span>;
   }
   return (
     <span className="flex flex-wrap items-center gap-1.5">
       {categoryName ? <OutputPill label="Category" value={categoryName} /> : null}
       {merchantName ? <OutputPill label="Merchant" value={merchantName} /> : null}
+      {labelName ? <OutputPill label="Label" value={labelName} /> : null}
     </span>
   );
 }

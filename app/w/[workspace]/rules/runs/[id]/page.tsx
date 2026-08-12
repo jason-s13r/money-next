@@ -11,6 +11,7 @@ const FIELD_LABEL: Record<string, string> = {
   category: "Category",
   merchant: "Merchant",
   transfer: "Transfer",
+  label: "Label",
 };
 
 export default async function RuleRunPage(props: PageProps<"/w/[workspace]/rules/runs/[id]">) {

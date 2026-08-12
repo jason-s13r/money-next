@@ -47,6 +47,34 @@ export function distinctiveTokens(description: string, limit = 4): string[] {
     .slice(0, limit);
 }
 
+/**
+ * A token as a rule can store it: trimmed, lowercased (the predicate compares
+ * against `lower(description)`), and free of the single quote that would break
+ * out of the generated string literal. Null when nothing usable is left.
+ *
+ * The gate a hand-edited token passes, where `isDistinctive` is the gate a
+ * *derived* one passes — a person tidying `3cb-kensingtonh` down to `kensington`
+ * knows things the stopword list does not, so this only enforces what the
+ * expression format itself requires.
+ */
+export function normalizeToken(raw: string): string | null {
+  const token = raw.trim().toLowerCase();
+  if (token === "" || token.includes("'")) return null;
+  return token;
+}
+
+/**
+ * The ZEN predicate for a type and a set of tokens: every token must appear in
+ * the description, and the transaction must be of that type when one is given.
+ * A null type matches any (`parseMatch` reads one back the same way).
+ */
+export function buildExpression(type: string | null, tokens: string[]): string {
+  return [
+    ...(type ? [`type == '${type}'`] : []),
+    ...tokens.map((t) => `contains(lower(description), '${t}')`),
+  ].join(" and ");
+}
+
 export type DerivedMatch = {
   /** A ZEN boolean expression over the transaction input. */
   expression: string;
@@ -66,9 +94,5 @@ export function deriveMatch(tx: { type: string; description: string }): DerivedM
   const tokens = distinctiveTokens(tx.description);
   if (tokens.length === 0) return null;
 
-  const clauses = [
-    `type == '${tx.type}'`,
-    ...tokens.map((t) => `contains(lower(description), '${t}')`),
-  ];
-  return { expression: clauses.join(" and "), type: tx.type, tokens };
+  return { expression: buildExpression(tx.type, tokens), type: tx.type, tokens };
 }

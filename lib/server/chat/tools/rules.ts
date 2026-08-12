@@ -58,6 +58,10 @@ export const listRules: Tool = {
           : { handWritten: rule.match.raw },
         setsCategory: rule.categoryId ? (names.categories.get(rule.categoryId) ?? rule.categoryId) : null,
         setsMerchant: rule.merchantId ? (names.merchants.get(rule.merchantId) ?? rule.merchantId) : null,
+        // Absent unless the rule names its own tag; otherwise what it changes is
+        // tagged after the change (`category-rule-…`), which is not the rule's
+        // own setting and would read as one here.
+        ...(rule.labelName ? { setsLabel: rule.labelName } : {}),
       })),
       order: "First match wins: a rule earlier in this list beats a later one on the same transaction.",
       autoLinkTransfers: readTransferAutoLink(graph),

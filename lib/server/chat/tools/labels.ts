@@ -18,11 +18,12 @@ import { asText, type Tool } from "./registry";
 // inventing one is the point. That is why `create_label` exists at all and why
 // `add_label_to_transactions` will mint one on the way past when asked.
 //
-// Two reserved names are worth knowing about and are called out in `list_labels`:
-// `ingested-<date>`, which every sync stamps on that run's arrivals, and `rule-tagged`,
-// which marks a row a rule changed. They are ordinary rows — the app re-creates them by
-// name when it needs them — so nothing stops a model deleting one, and the label saying
-// what it is for is the only thing that discourages it.
+// Two families of reserved name are worth knowing about and are called out in
+// `list_labels`: `ingested-<date>`, which every sync stamps on that run's arrivals, and
+// `category-rule-<slug>` / `merchant-rule-<slug>` / `transfer-rule`, which mark what a
+// rule run changed. They are ordinary rows — the app re-creates them by name when it
+// needs them — so nothing stops a model deleting one, and the label saying what it is
+// for is the only thing that discourages it.
 
 export const listLabels: Tool = {
   name: "list_labels",
@@ -269,9 +270,9 @@ export const removeLabelFromTransactions: Tool = {
   },
 };
 
-/** The tags the app writes for itself — a dated one per sync, and one standing one for
- *  rows a rule touched. See lib/server/labels.ts. */
-const AUTOMATIC = /^(ingested-\d{4}-\d{2}-\d{2}|rule-tagged)$/;
+/** The tags the app writes for itself — a dated one per sync, and one per effect a
+ *  rule had. See lib/server/labels.ts. */
+const AUTOMATIC = /^(ingested-\d{4}-\d{2}-\d{2}|(category|merchant)-rule-.+|transfer-rule)$/;
 
 export const LABEL_READ_TOOLS: Tool[] = [listLabels];
 

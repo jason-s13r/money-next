@@ -1,13 +1,18 @@
 import { Link } from "@/ui/chrome/workspace-context";
 import { requireWorkspace } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
-import { getCategories, getMerchants } from "@/lib/server/queries/lookups";
+import {
+  getCategories,
+  getLabels,
+  getMerchants,
+  getTransactionTypes,
+} from "@/lib/server/queries/lookups";
 import { getRuleRuns } from "@/lib/server/queries/runs";
 import { readLearnedRules, readTransferAutoLink, type Graph } from "@/lib/server/rules/learning";
 import { formatDateTime } from "@/lib/format";
-import { removeRule } from "./actions";
 import { TransfersToggle } from "./transfers-toggle";
-import { RuleOutputs } from "@/ui/rules/rule-output";
+import { RuleRow } from "@/ui/rules/rule-row";
+import type { RuleCatalogs } from "@/ui/rules/rule-editor";
 import { AutoRefresh } from "@/ui/primitives/auto-refresh";
 
 export const metadata = { title: "Rules" };
@@ -23,10 +28,14 @@ export default async function RulesPage() {
   const canEdit = role !== "viewer";
 
   const db = await getDb();
-  const [doc, categories, merchants, runList] = await Promise.all([
+  // The catalogs are the editor's option lists, so they are only worth fetching
+  // for someone who can open it.
+  const [doc, categories, merchants, labels, types, runList] = await Promise.all([
     db.ruleDocument.findFirst({ where: { active: true } }),
     getCategories(),
     getMerchants(),
+    canEdit ? getLabels() : [],
+    canEdit ? getTransactionTypes() : [],
     getRuleRuns(1),
   ]);
 
@@ -42,6 +51,18 @@ export default async function RulesPage() {
   // Resolve output ids to names for display.
   const categoryName = new Map(categories.map((c) => [c.id, c.name]));
   const merchantName = new Map(merchants.map((m) => [m.id, m.name]));
+
+  const catalogs: RuleCatalogs = {
+    types: types.map((t) => ({ value: t, label: t })),
+    // The group as a hint, matching the category picker on a transaction.
+    categories: categories.map((c) => ({
+      value: c.id,
+      label: c.name,
+      ...(c.groupName ? { hint: c.groupName } : {}),
+    })),
+    merchants: merchants.map((m) => ({ value: m.id, label: m.name })),
+    labels: labels.map((l) => ({ value: l.name, label: l.name })),
+  };
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
@@ -74,44 +95,29 @@ export default async function RulesPage() {
         </p>
       ) : (
         <ul className="divide-y divide-current/10 border-y border-current/10">
-          {rules.map((rule) => {
-            const cat = rule.categoryId ? categoryName.get(rule.categoryId) ?? rule.categoryId : null;
-            const mer = rule.merchantId ? merchantName.get(rule.merchantId) ?? rule.merchantId : null;
-            return (
-              <li key={rule.id} className="flex flex-wrap items-center gap-x-3 gap-y-2 py-3">
-                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5 text-sm">
-                  <span className="opacity-50">When</span>
-                  {rule.match.type ? (
-                    <span className="rounded bg-current/10 px-1.5 py-0.5 font-mono text-xs">
-                      {rule.match.type}
-                    </span>
-                  ) : null}
-                  {rule.match.structured ? (
-                    rule.match.tokens.map((t) => (
-                      <span key={t} className="rounded bg-current/10 px-1.5 py-0.5 font-mono text-xs">
-                        {t}
-                      </span>
-                    ))
-                  ) : (
-                    <code className="rounded bg-current/10 px-1.5 py-0.5 text-xs">{rule.match.raw}</code>
-                  )}
-                  <span className="opacity-50">→</span>
-                  <RuleOutputs categoryName={cat} merchantName={mer} />
-                </div>
-                {canEdit ? (
-                  <form action={removeRule.bind(null, rule.id)}>
-                    <button
-                      type="submit"
-                      className="text-xs text-status-critical opacity-70 transition-opacity hover:opacity-100"
-                      aria-label="Delete rule"
-                    >
-                      Delete
-                    </button>
-                  </form>
-                ) : null}
-              </li>
-            );
-          })}
+          {rules.map((rule) => (
+            <RuleRow
+              key={rule.id}
+              canEdit={canEdit}
+              catalogs={catalogs}
+              rule={{
+                id: rule.id,
+                type: rule.match.type,
+                tokens: rule.match.tokens,
+                structured: rule.match.structured,
+                raw: rule.match.raw,
+                categoryId: rule.categoryId,
+                merchantId: rule.merchantId,
+                labelName: rule.labelName,
+                categoryLabel: rule.categoryId
+                  ? categoryName.get(rule.categoryId) ?? rule.categoryId
+                  : null,
+                merchantLabel: rule.merchantId
+                  ? merchantName.get(rule.merchantId) ?? rule.merchantId
+                  : null,
+              }}
+            />
+          ))}
         </ul>
       )}
 

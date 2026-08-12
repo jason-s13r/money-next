@@ -45,10 +45,17 @@ export type RuleInput = {
  * name a row that exists (an unknown id is ignored, not written, so a typo can't
  * corrupt a transaction); `autoLinkTransfer` asks the runner to find and link the
  * opposite leg when it can do so unambiguously.
+ *
+ * `labelName` is a name, not an id, and it need not exist yet — the runner
+ * get-or-creates it (`ensureLabelId`), the same way the sync's dated tag works. It
+ * replaces the tag the runner would otherwise derive from what changed; a rule
+ * that sets nothing else applies no label, since only a changed transaction is
+ * tagged.
  */
 export type RuleOutput = {
   categoryId?: string | null;
   merchantId?: string | null;
+  labelName?: string | null;
   autoLinkTransfer?: boolean;
 };
 

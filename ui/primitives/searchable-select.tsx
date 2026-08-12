@@ -352,6 +352,8 @@ export function SearchableSelectField({
   options,
   value,
   onChange,
+  onCreate,
+  createLabel,
   placeholder = "Choose…",
   clearLabel,
   ariaLabel,
@@ -361,13 +363,23 @@ export function SearchableSelectField({
   options: SelectOption[];
   value: string | null;
   onChange: (value: string | null) => void;
+  /**
+   * When present, a non-empty search with no matches offers a row that creates
+   * one. Only meaningful for a field whose value *is* its text — a label, which is
+   * stored by name — since there is no id to mint here.
+   */
+  onCreate?: (query: string) => void;
+  /** Label for the create row. Use `%s` as a placeholder for the query. */
+  createLabel?: string;
   placeholder?: string;
   /** When present, an entry that unsets the value (e.g. "Any"). */
   clearLabel?: string;
   ariaLabel: string;
   className?: string;
 }) {
-  const label = options.find((o) => o.value === value)?.label ?? null;
+  // Falls back to the value itself: a created option is chosen before the caller
+  // has had a chance to put it in `options`.
+  const label = options.find((o) => o.value === value)?.label ?? value;
 
   return (
     <div className={className}>
@@ -377,6 +389,8 @@ export function SearchableSelectField({
         value={value}
         valueLabel={label}
         onChoose={(id) => onChange(id)}
+        onCreate={onCreate}
+        createLabel={createLabel}
         placeholder={placeholder}
         clearLabel={clearLabel}
         ariaLabel={ariaLabel}

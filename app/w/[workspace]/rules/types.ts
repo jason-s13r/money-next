@@ -15,3 +15,13 @@ export type GenerateRuleResult =
        *  sanity-check its reach before it runs on future syncs. */
       matchCount: number;
     };
+
+/**
+ * What the inline editor gets back from a save. The match count is the point of
+ * returning anything at all: the reason to edit a rule is usually that its tokens
+ * were too narrow (or too broad), and the count is the only immediate evidence
+ * that the edit did what was intended.
+ */
+export type UpdateRuleResult =
+  | { ok: false; reason: string }
+  | { ok: true; matchCount: number };
