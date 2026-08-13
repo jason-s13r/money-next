@@ -14,6 +14,11 @@ import { BalanceChart } from "@/ui/dashboard/balance-chart";
 import { Hero } from "@/ui/primitives/stat-tile";
 import { Link } from "@/ui/chrome/workspace-context";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { connection } from "next/server";
+
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
 
 export const metadata = { title: "Dashboard" };
 
@@ -36,6 +41,8 @@ function parseWindow(searchParams: Record<string, string | string[] | undefined>
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 
 export default async function DashboardPage(props: PageProps<"/w/[workspace]">) {
+  // TODO: Cache Components adoption. Added to unblock the build: remove this connection() to re-trigger the error and review the fix options.
+  await connection();
   const now = new Date();
   const { period, offset } = parseWindow(await props.searchParams, now);
 

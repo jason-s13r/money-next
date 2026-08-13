@@ -18,6 +18,11 @@ import { ComparisonTable } from "@/ui/dashboard/comparison/table";
 import { WindowPager } from "@/ui/dashboard/comparison/pager";
 import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
 import { BudgetSelector, ViewSelector } from "./selectors";
+import { connection } from "next/server";
+
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
 
 // Budget against reality, in the table the historic breakdown already uses.
 //
@@ -35,6 +40,8 @@ const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 export default async function BudgetBreakdownPage(
   props: PageProps<"/w/[workspace]/budgets/breakdown">,
 ) {
+  // TODO: Cache Components adoption. Added to unblock the build: remove this connection() to re-trigger the error and review the fix options.
+  await connection();
   const now = new Date();
   const searchParams = await props.searchParams;
 

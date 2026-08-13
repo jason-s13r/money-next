@@ -5,6 +5,13 @@ import { Separator } from "@/components/ui/separator";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarInset, SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 
+// Kept on purpose: `requireUser()` below decides whether this chrome renders at
+// all, and the sidebar it feeds is per-person, so there is no shell worth showing
+// before the gate resolves. Blocking here costs the pages nothing — this layout
+// renders once and stays mounted while you move between them, and each of those
+// segments is validated on its own.
+export const instant = false;
+
 /**
  * Chrome for the account area.
  *

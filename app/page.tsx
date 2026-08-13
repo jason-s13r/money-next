@@ -4,6 +4,10 @@ import { redirect } from "next/navigation";
 import { listWorkspaces } from "@/lib/server/auth/workspaces";
 import { workspacePath } from "@/lib/workspace-path";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 /**
  * `/` is a signpost, not a page.
  *

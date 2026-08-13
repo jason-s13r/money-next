@@ -6,6 +6,10 @@ import { slugify } from "@/lib/slug";
 import { DEFAULT_CURRENCY, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // The index of the workspace's labels (see `Label`) — every tag, how many
 // transactions carry it, each a link to that tag's own listing. Labels are made
 // by tagging a transaction (on its page, inline in a listing, or in bulk); there

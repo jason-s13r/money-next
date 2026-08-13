@@ -7,6 +7,10 @@ import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 import { fromSlug, slugify } from "@/lib/slug";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // Every transaction carrying a user label (see `Label`). Keyed by the tag's name
 // slug and resolved back against the labels actually on record, so an unknown or
 // ambiguous slug 404s rather than listing nothing — the same round-trip the

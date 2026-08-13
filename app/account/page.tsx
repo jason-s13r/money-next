@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { requireUser } from "@/lib/server/auth/session";
 import { AccountSection } from "./section";
+import { FormFallback } from "@/ui/primitives/form-fallback";
 import { ProfileForm } from "./profile-form";
 
 export const metadata: Metadata = { title: "Account details" };
@@ -15,12 +17,19 @@ export const metadata: Metadata = { title: "Account details" };
  * workspace. The sidebar chrome and the "works without a workspace" guarantee
  * live in app/account/layout.
  */
-export default async function AccountPage() {
-  const user = await requireUser();
-
+export default function AccountPage() {
   return (
     <AccountSection title="Your details" description="The name and email address on your account.">
-      <ProfileForm name={user.name} email={user.email} />
+      <Suspense fallback={<FormFallback fields={2} className="max-w-sm" />}>
+        <Profile />
+      </Suspense>
     </AccountSection>
   );
+}
+
+// The gate still gates: nothing it protects renders until it has resolved. Only
+// its *position* moved, below the boundary, so the heading above ships instantly.
+async function Profile() {
+  const user = await requireUser();
+  return <ProfileForm name={user.name} email={user.email} />;
 }

@@ -5,6 +5,7 @@ import type { NextConfig } from "next";
 const INSECURE_HTTP = process.env.INSECURE_HTTP === "1" || process.env.INSECURE_HTTP === "true";
 
 const nextConfig: NextConfig = {
+  cacheComponents: true,
   // Traced, minimal server output for the container image (see Dockerfile). This
   // copies only the server plus the node_modules actually reached — but NOT
   // `public/` or `.next/static`, which the Dockerfile copies in by hand. The

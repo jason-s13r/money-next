@@ -9,6 +9,10 @@ import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 import { MERCHANT_LOGO_FALLBACK } from "@/lib/ui/logo";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // Keyed by Akahu's `merchantId`, so the url is stable and unambiguous. One
 // business can arrive under two ids ("Kamo Vets" has two); this page is exactly
 // the id the reader clicked, which is what every merchant link now carries.

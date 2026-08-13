@@ -6,6 +6,10 @@ import { parseSort, withSort, type Sort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 import { firstParam } from "@/lib/search-params";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // A free-text search over every text field on a transaction (see
 // `searchTransactions`). The query lives in the url `?q=` — a search is
 // addressable and shareable, and the back button works. The input itself lives

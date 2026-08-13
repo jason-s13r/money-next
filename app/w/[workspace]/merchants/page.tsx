@@ -2,6 +2,10 @@ import { getMerchantsWithCounts } from "@/lib/server/queries/lookups";
 import { StatList } from "@/ui/primitives/stat-list";
 import { MerchantsList } from "@/ui/merchants/merchants-list";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // The index of merchants this workspace actually uses — every merchant that tags
 // at least one of its transactions, each a link to that merchant's own listing.
 // Merchants aren't created here directly; a private one is minted by typing a new

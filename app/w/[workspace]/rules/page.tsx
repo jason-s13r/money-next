@@ -15,6 +15,10 @@ import { RuleRow } from "@/ui/rules/rule-row";
 import type { RuleCatalogs } from "@/ui/rules/rule-editor";
 import { AutoRefresh } from "@/ui/primitives/auto-refresh";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 export const metadata = { title: "Rules" };
 
 // How many recent runs to surface inline; the rest live on /rules/runs.

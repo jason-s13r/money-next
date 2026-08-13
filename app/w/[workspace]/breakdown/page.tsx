@@ -3,6 +3,11 @@ import { isPeriod, offsetForStartDate, periodStart, periodWindow, type Period } 
 import { firstParam } from "@/lib/search-params";
 import { ComparisonSection } from "@/ui/dashboard/comparison";
 import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
+import { connection } from "next/server";
+
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
 
 export const metadata = { title: "Income and spending" };
 
@@ -26,6 +31,8 @@ function parseWindow(searchParams: Record<string, string | string[] | undefined>
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 
 export default async function BreakdownPage(props: PageProps<"/w/[workspace]/breakdown">) {
+  // TODO: Cache Components adoption. Added to unblock the build: remove this connection() to re-trigger the error and review the fix options.
+  await connection();
   const now = new Date();
   const { period, offset } = parseWindow(await props.searchParams, now);
 

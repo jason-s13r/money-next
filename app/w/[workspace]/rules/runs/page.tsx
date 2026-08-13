@@ -4,6 +4,10 @@ import { formatDateTime } from "@/lib/format";
 import { Pagination, paginate, parsePage } from "@/ui/primitives/pagination";
 import { AutoRefresh } from "@/ui/primitives/auto-refresh";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 export const metadata = { title: "Rules log" };
 
 export default async function RuleRunsPage(props: PageProps<"/w/[workspace]/rules/runs">) {

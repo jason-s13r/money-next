@@ -195,8 +195,12 @@ export type BudgetSummary = {
  * being added, the same fold the merchants and labels indexes use, because a raw
  * sum across NZD and AUD would be a number of nothing.
  */
-export const getBudgets = cache(async (now: Date = new Date()): Promise<BudgetSummary[]> => {
+export const getBudgets = cache(async (asOf?: Date): Promise<BudgetSummary[]> => {
   await connection();
+  // TODO: Cache Components adoption. Defaulted after connection() rather than in the
+  // parameter list, which would evaluate before it: remove the connection() to
+  // re-trigger the error and review the fix options.
+  const now = asOf ?? new Date();
   const db = await getDb();
 
   const rows = await db.budget.findMany({

@@ -5,6 +5,17 @@ import { CSPProvider } from "@base-ui/react/csp-provider";
 import "./globals.css";
 import { ThemeProvider } from "@/ui/chrome/theme-provider";
 
+// Kept on purpose, not a leftover: the nonce read below is per-request, and a
+// prerendered shell is built when there is no request to mint one. Remove this
+// and every route gets a static shell whose scripts carry no nonce, which
+// `strict-dynamic` then refuses — no hydration, and it fails silently.
+//
+// TODO: revisit under a hash-based CSP (`experimental.sri`), where the fingerprint
+// is minted at build time and shells could prerender. Not a swap: SRI covers
+// files, not the inline theme and scroll-lock tags the nonce is passed to below,
+// and it trades `strict-dynamic` for a plain `'self'`. Its own change, deliberately.
+export const instant = false;
+
 // The nav used to be rendered here, for every page. It moved to
 // app/w/[workspace]/layout.tsx when the workspace moved into the URL: the nav's
 // links are all workspace-relative now, and this layout also wraps /login, which

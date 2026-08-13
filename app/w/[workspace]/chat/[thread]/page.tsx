@@ -8,6 +8,10 @@ import { Conversation } from "@/ui/chat/conversation";
 import { LogView } from "./log-view";
 import { ThreadHeader } from "./thread-header";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // One conversation.
 //
 // The page is a server component that hands the thread to client ones and gets out of

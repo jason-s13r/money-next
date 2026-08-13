@@ -13,6 +13,11 @@ import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
 import { SankeySection } from "@/ui/dashboard/sankey-section";
 import { getBalanceSummary } from "@/lib/server/metrics/balance";
 import { WindowPager } from "@/ui/dashboard/comparison/pager";
+import { connection } from "next/server";
+
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
 
 export const metadata = { title: "Money Flow" };
 
@@ -35,6 +40,8 @@ function parseWindow(searchParams: Record<string, string | string[] | undefined>
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
 
 export default async function BreakdownFlowPage(props: PageProps<"/w/[workspace]/breakdown/flow">) {
+  // TODO: Cache Components adoption. Added to unblock the build: remove this connection() to re-trigger the error and review the fix options.
+  await connection();
   const now = new Date();
   const { period, offset } = parseWindow(await props.searchParams, now);
 

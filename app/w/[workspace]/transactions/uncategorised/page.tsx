@@ -5,6 +5,10 @@ import { getUncategorisedTransactions } from "@/lib/server/queries/transactions"
 import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // A transactions listing, sibling of `recent`: the transactions with no category
 // yet. The absence of a category is not a category, so this lives under
 // transactions rather than under a category group.

@@ -6,6 +6,10 @@ import { getCardSuffixes, getCardTransactions } from "@/lib/server/queries/trans
 import { parseSort, withSort } from "@/lib/transactions/sort";
 import { formatMoney } from "@/lib/format";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 /** Matched exactly, not slugged: a suffix is already url-safe digits. */
 async function resolve(params: Promise<{ suffix: string }>) {
   const { suffix } = await params;

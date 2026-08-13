@@ -19,6 +19,10 @@ import { BudgetItems, type ItemRow } from "./items";
 import { BudgetLayers } from "./layers";
 import { BudgetSettings } from "./settings";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 export async function generateMetadata(props: PageProps<"/w/[workspace]/budgets/[budget]">) {
   const budget = await getBudget((await props.params).budget);
   return { title: budget?.name ?? "Budget" };

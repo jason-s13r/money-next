@@ -8,6 +8,10 @@ import { AutoRefresh } from "@/ui/primitives/auto-refresh";
 import { ConnectBankForm } from "./connect-form";
 import { ReplaceTokensForm } from "./replace-form";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 export const metadata = { title: "Sync history" };
 
 export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/sync">) {

@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 
 import { authDb } from "@/lib/server/db";
 import { getSession, requireUser } from "@/lib/server/auth/session";
 import { formatDateTime } from "@/lib/format";
 import { AccountSection } from "../section";
+import { SessionListFallback } from "../fallbacks";
 import { SessionList, type SessionView } from "../session-list";
 
 export const metadata: Metadata = { title: "Signed-in devices" };
@@ -12,18 +14,24 @@ export const metadata: Metadata = { title: "Signed-in devices" };
  * The devices your account is currently signed in on, and a way to end any but
  * this one. Account-level (`requireUser`), like the rest of the area.
  */
-export default async function SessionsPage() {
-  const user = await requireUser();
-  const sessions = await activeSessions(user.id);
-
+export default function SessionsPage() {
   return (
     <AccountSection
       title="Signed-in devices"
       description="Where your account is currently signed in. Sign out any you don't recognise."
     >
-      <SessionList sessions={sessions} />
+      <Suspense fallback={<SessionListFallback />}>
+        <Sessions />
+      </Suspense>
     </AccountSection>
   );
+}
+
+// Never cached, deliberately: this is the list you check *because* you suspect
+// something, so it reads live on every request behind the boundary above.
+async function Sessions() {
+  const user = await requireUser();
+  return <SessionList sessions={await activeSessions(user.id)} />;
 }
 
 /**

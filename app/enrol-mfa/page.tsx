@@ -4,6 +4,12 @@ import { redirect } from "next/navigation";
 import { getSession, requireMfa } from "@/lib/server/auth/session";
 import { EnrolForm } from "./enrol-form";
 
+// Kept on purpose: the session read below decides whether this page exists at
+// all — no session goes to /login, an already-enrolled one goes to /. Behind a
+// boundary those redirects would fire after the shell had painted, so someone
+// who should never see this page would watch it appear and then bounce.
+export const instant = false;
+
 export const metadata: Metadata = { title: "Set up two-factor" };
 
 /**

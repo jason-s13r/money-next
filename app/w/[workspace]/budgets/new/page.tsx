@@ -3,6 +3,10 @@ import { INFER_MONTHS } from "@/lib/budget/detect";
 import { BudgetForm } from "../budget-form";
 import { InferButton } from "./infer-button";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // Starting a budget, two ways.
 //
 // Inferring from history is offered first and deliberately: typing a household's

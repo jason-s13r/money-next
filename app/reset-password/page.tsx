@@ -2,6 +2,12 @@ import type { Metadata } from "next";
 
 import { ResetForm } from "./reset-form";
 
+// Kept on purpose: the token decides the heading, not just the body — an
+// incomplete link and a usable one are different pages that happen to share a
+// route. There is no honest static shell here, and wrapping the whole body in a
+// boundary to satisfy the validator would ship an empty one to say so.
+export const instant = false;
+
 export const metadata: Metadata = { title: "Reset password" };
 
 /**

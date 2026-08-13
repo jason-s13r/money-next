@@ -3,6 +3,10 @@ import { getChatThreads } from "@/lib/server/queries/chat";
 import { Link } from "@/ui/chrome/workspace-context";
 import { NewChat } from "./new-chat";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // The thread list.
 //
 // Only your own threads are here, and that is not a filter applied on the way out —

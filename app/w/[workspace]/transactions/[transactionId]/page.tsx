@@ -26,6 +26,10 @@ import { TransferLink } from "@/ui/transactions/detail/transfer-link";
 import { EditableField, Field, Section } from "@/ui/transactions/detail/transaction-fields";
 import { LabelCatalogProvider, LabelsCell } from "@/ui/transactions/labels-cell";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 export async function generateMetadata(props: PageProps<"/w/[workspace]/transactions/[transactionId]">) {
   const { transactionId } = await props.params;
   const tx = await getTransaction(transactionId);

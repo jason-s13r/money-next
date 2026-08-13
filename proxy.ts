@@ -83,14 +83,17 @@ const PUBLIC_PATHS = ["/login", "/enrol-mfa", "/invite", "/reset-password"];
  * stamps it onto its own scripts, so nothing has to be annotated by hand.
  *
  * It only works on a **dynamically rendered** page: a static one is built when
- * there is no request, so there is no nonce to mint. Every page here qualifies,
- * but by accident rather than design — they all reach `requireUser()` or
- * `requireWorkspace()`, which read cookies and headers, and reading either opts
- * a page into dynamic rendering. The one page that reached neither was the 404,
- * and it broke exactly this way; app/not-found.tsx now awaits `connection()` to
- * force the issue. If a page is ever added that touches no request data, it
- * needs the same treatment. `next build` names the ones at risk: anything marked
- * `○` rather than `ƒ`.
+ * there is no request, so there is no nonce to mint. The one page that reached
+ * neither `requireUser()` nor `requireWorkspace()` was the 404, and it broke
+ * exactly this way; app/not-found.tsx now awaits `connection()` to force the
+ * issue.
+ *
+ * Since Cache Components, what holds this together is the root layout's
+ * `instant = false` rather than each page happening to read cookies: it reads the
+ * nonce before any JSX, so every shell prerenders empty and the real render is
+ * per-request. That opt-out is load-bearing — see the note on it. `○` is no
+ * longer the only marker to watch: a `◐` route whose shell is *not* empty is
+ * serving script tags that never saw a nonce.
  *
  * ## The bug this replaces, because it is a good lesson
  *

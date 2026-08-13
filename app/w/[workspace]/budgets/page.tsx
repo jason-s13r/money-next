@@ -12,6 +12,10 @@ import { Link } from "@/ui/chrome/workspace-context";
 import { StatList } from "@/ui/primitives/stat-list";
 import { InferenceRuns } from "./inference-runs";
 
+// TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
+// See: https://nextjs.org/docs/app/guides/migrating-to-cache-components
+export const instant = false;
+
 // Every budget in the workspace, split by whether it is doing anything today.
 //
 // That split is the first question once seasonal budgets exist: a list that mixes
