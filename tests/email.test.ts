@@ -179,8 +179,11 @@ describe("message composition", () => {
       inviterName: null,
       inviteId: "inv_123",
     });
-    assert.doesNotMatch(message.html, /<script>/);
-    assert.match(message.html, /&lt;script&gt;/);
+    // Checked as a substring, not a tag-shaped regex: a regex written to match
+    // "<script>" passes happily on "<SCRIPT>" or "<script foo>", which browsers
+    // and mail clients render just the same. The "<" is the whole risk.
+    assert.equal(message.html.toLowerCase().includes("<script"), false);
+    assert.ok(message.html.includes("&lt;script&gt;"));
   });
 
   test("both parts are always present", () => {
