@@ -1,10 +1,12 @@
 import { defineConfig, globalIgnores } from "eslint/config";
 import nextVitals from "eslint-config-next/core-web-vitals";
 import nextTs from "eslint-config-next/typescript";
+import {version as reactVersion} from 'react';
 
 const eslintConfig = defineConfig([
   ...nextVitals,
   ...nextTs,
+  { settings: { react: { version: reactVersion } } },
   {
     // Unused locals/imports are dead weight — fail on them. (Underscore-prefixed
     // names are the opt-out for deliberately-ignored bindings.) Note this catches
