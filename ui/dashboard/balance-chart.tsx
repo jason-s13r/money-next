@@ -1,29 +1,37 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { formatMoneyWhole } from "@/lib/format";
 import { formatPeriodKey } from "@/lib/periods";
 import { runwayPhases } from "@/lib/budget/projection";
 import type { BalanceSeries } from "@/lib/server/metrics/balance-series";
 import { BalanceChartSvg } from "./balance-chart-svg";
+import { BalanceChartBrush } from "./balance-chart-brush";
 import { BalanceChartLegend, type LegendItem } from "./balance-chart-legend";
 import {
   AXIS_W,
+  type Bar,
+  brushDomain,
+  brushTicks,
   C_DOWN,
   C_PLANNED,
   C_UP,
   C_WORTH,
+  clampWindow,
   DAY_MS,
   DEFAULT_RANGE,
   FALLBACK_W,
   type Hover,
   compactMoney,
+  matchPreset,
   niceScale,
   PAD_T,
   parseDay,
   PLOT_H,
-  RANGES,
+  presetWindow,
+  rangeDays,
   type Row,
+  type Window,
   worthAt,
 } from "./balance-chart.util";
 
@@ -37,12 +45,15 @@ import {
 // $0 axis: where the workspace has a card or an overdraft, the plan keeps being
 // spendable after the balance is gone, and the line runs on to the marked credit
 // floor and stops there. Because a bar *is* the line's step
-// for that day, both share one dollar axis. The range buttons set how many days fill
-// the width (the zoom); the rest scrolls. Marks follow the house data-viz rules:
-// thin lines, a recessive grid, text in ink tokens, colour for identity.
-// Layout, palette, scale math and types live in `balance-chart.util.ts`; the SVG
-// rendering lives in `balance-chart-svg.tsx` and the legend/range controls in
-// `balance-chart-legend.tsx`.
+// for that day, both share one dollar axis, fitted to whatever the window shows.
+// What is shown is a window over the domain, and the overview strip underneath
+// both draws it and drags it; the range buttons are shortcuts that set it. Marks
+// follow the house data-viz rules: thin lines, a recessive grid, text in ink
+// tokens, colour for identity.
+// Layout, palette, scale math, window math and types live in
+// `balance-chart.util.ts`; the SVG rendering lives in `balance-chart-svg.tsx`,
+// the overview strip in `balance-chart-brush.tsx` and the legend/range controls
+// in `balance-chart-legend.tsx`.
 
 export function BalanceChart({ series }: { series: BalanceSeries }) {
   const {
@@ -84,10 +95,8 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     [],
   );
 
-  const containerRef = useRef<HTMLDivElement>(null);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLElement>(null);
   const [containerW, setContainerW] = useState(FALLBACK_W);
-  const [rangeKey, setRangeKey] = useState(DEFAULT_RANGE);
 
   useLayoutEffect(() => {
     const el = containerRef.current;
@@ -118,42 +127,109 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     [projectedNets, futureDays],
   );
 
+  // The visible slice of the domain: the one thing the plot's geometry is built
+  // from. It opens on the default range; from there the strip's handles drag it
+  // and the range buttons jump it. Re-fitted whenever the domain changes under
+  // it — a sync that extends history, or a forecast budget that lengthens the
+  // projections, must not leave the window pointing off the end of the data.
+  const [storedWin, setStoredWin] = useState<Window>(() =>
+    presetWindow(rangeDays(DEFAULT_RANGE), N, totalUnits),
+  );
+  const win = useMemo(() => clampWindow(storedWin, totalUnits), [storedWin, totalUnits]);
+
+  // The plot fills whatever the card leaves it. A floor rather than the card's
+  // real width so a narrow phone cannot drive the geometry to nothing.
+  const viewportW = Math.max(120, containerW - AXIS_W);
+
+  // What the overview strip draws over: not always the whole domain, because a
+  // month inside five years is a selection too thin to take hold of. Only a
+  // finished gesture may re-frame it — mid-drag it does no more than follow the
+  // window — so it is the settled frame that is kept, and the live one derived.
+  const [settledDomain, setSettledDomain] = useState<Window>(() =>
+    brushDomain(presetWindow(rangeDays(DEFAULT_RANGE), N, totalUnits), null, totalUnits, viewportW, true),
+  );
+  const brushWin = useMemo(
+    () => brushDomain(win, settledDomain, totalUnits, viewportW, false),
+    [win, settledDomain, totalUnits, viewportW],
+  );
+
+  const setWin = useCallback(
+    (next: Window, settled: boolean) => {
+      const fitted = clampWindow(next, totalUnits);
+      setStoredWin(fitted);
+      if (settled) setSettledDomain((prev) => brushDomain(fitted, prev, totalUnits, viewportW, true));
+    },
+    [totalUnits, viewportW],
+  );
+
   const geom = useMemo(() => {
-    const viewportW = Math.max(320, containerW - AXIS_W);
-    const range = RANGES.find((r) => r.key === rangeKey)!;
-    // The range fixes how many days fill the width; "Max" fits the whole thing.
     // Bar width is shared by the recorded and the planned days: a forward bar is
     // the same daily unit as a historic one, and drawing it any other size would
     // make the plan look like a different resolution.
-    const bw = Math.max(0.4, viewportW / (range.days ?? (totalUnits || 1)));
-    const plotW = totalUnits * bw;
+    const bw = viewportW / Math.max(1, win.end - win.start);
+    const fx = (unit: number) => (unit - win.start) * bw;
 
-    // One dollar axis, shared by the line, the bars and the projections. It spans
-    // the net-worth boundaries and $0; the net-flow bars root at $0, so their
-    // extents (a big in/out day) are folded in too, keeping any bar from
-    // clipping. The projected worths join them because a budget that plans to
-    // save climbs above every figure history has — an axis fitted to the past
-    // would run that line off the top of the plot. The planned bars come in on the
-    // same terms as the historic ones — they root at $0 too.
-    const projectedWorths = scenarios.flatMap((s) => s.points.map((p) => p.worth));
+    // The recorded days the window touches, and the planned ones — a day either
+    // side, so the line enters and leaves the frame instead of beginning at its
+    // edge. Everything below is built over these bounds rather than the whole
+    // domain: a drag re-runs this per frame, and the domain is a few thousand
+    // days.
+    const h1 = Math.min(N, Math.ceil(win.end) + 1);
+    const h0 = Math.max(0, Math.min(h1, Math.floor(win.start) - 1));
+    const p1 = Math.min(plannedNets.length, Math.max(0, Math.ceil(win.end - N) + 1));
+    const p0 = Math.max(0, Math.min(p1, Math.floor(win.start - N) - 1));
+
+    const visibleWorths = worthBoundaries.slice(h0, h1 + 1);
+    const visibleNets = nets.slice(h0, h1);
+    const visiblePlanned = plannedNets.slice(p0, p1);
+
+    // Where each projection stands as it crosses the window: the vertices inside
+    // it, plus its value at each edge — a window falling between two vertices
+    // contains none at all, and a line the scale never heard of would be drawn
+    // off the top of the plot.
+    const projectedWorths = scenarios.flatMap((s) => [
+      ...s.points
+        .filter((p) => N + p.day >= win.start - 1 && N + p.day <= win.end + 1)
+        .map((p) => p.worth),
+      ...[win.start - N, win.end - N].flatMap((day) => {
+        const worth = worthAt(s.points, day, currentWorth);
+        return worth === null ? [] : [worth];
+      }),
+    ]);
+
+    // One dollar axis, shared by the line, the bars and the projections, and
+    // fitted to what the window shows: a fortnight of 2021 read against 2026's
+    // peak is a flat line, and a zoom that could not change the scale would not
+    // be a zoom. $0 stays in it whatever the window — the net-flow bars are
+    // rooted there, and a scale that left it out would draw every one of them
+    // full height.
     const yScale = niceScale(
-      Math.min(0, ...worthBoundaries, ...nets, ...plannedNets, ...projectedWorths),
-      Math.max(0, ...worthBoundaries, ...nets, ...plannedNets, ...projectedWorths),
+      Math.min(0, ...visibleWorths, ...visibleNets, ...visiblePlanned, ...projectedWorths),
+      Math.max(0, ...visibleWorths, ...visibleNets, ...visiblePlanned, ...projectedWorths),
     );
 
-    const fx = (unit: number) => unit * bw;
     const fy = (v: number) => PAD_T + ((yScale.max - v) / (yScale.max - yScale.min)) * PLOT_H;
 
-    const linePts = worthBoundaries.map((w, i) => `${fx(i)} ${fy(w)}`);
-    const worthPath = `M${linePts.join(" L")}`;
+    const linePts: string[] = [];
+    for (let k = h0; k <= h1; k++) linePts.push(`${fx(k)} ${fy(worthBoundaries[k])}`);
     const zeroY = fy(0);
-    const worthArea = `${worthPath} L${fx(N)} ${zeroY} L${fx(0)} ${zeroY} Z`;
+    // Null where the window has moved wholly past the end of history: there is
+    // no line left in frame, only the projections.
+    const worthPath = linePts.length > 1 ? `M${linePts.join(" L")}` : null;
+    const worthArea = worthPath ? `${worthPath} L${fx(h1)} ${zeroY} L${fx(h0)} ${zeroY} Z` : null;
+
+    const historyBars: Bar[] = [];
+    for (let i = h0; i < h1; i++) historyBars.push({ key: i, x: fx(i), value: nets[i] });
+    const plannedBars: Bar[] = [];
+    for (let j = p0; j < p1; j++) plannedBars.push({ key: j, x: fx(N + j), value: plannedNets[j] });
 
     const nowX = fx(N);
 
     // Every projection leaves today's balance at the same point the history line
     // arrives at, then follows its own vertices. A straight-line scenario has one
-    // vertex and draws exactly the dash the chart always drew.
+    // vertex and draws exactly the dash the chart always drew. Whole lines, left
+    // for the SVG's own edges to crop — a projection is a handful of vertices,
+    // so there is nothing to be saved by clipping it here.
     const projections = scenarios
       .filter((s) => s.points.length > 0)
       .map((s) => ({
@@ -172,11 +248,23 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     const floor =
       creditFloor < 0 && creditFloor >= yScale.min ? { y: fy(creditFloor), value: creditFloor } : null;
 
-    return { bw, plotW, viewportW, yScale, fx, fy, worthPath, worthArea, nowX, projections, floor };
+    return {
+      bw,
+      viewportW,
+      yScale,
+      fx,
+      fy,
+      worthPath,
+      worthArea,
+      nowX,
+      historyBars,
+      plannedBars,
+      projections,
+      floor,
+    };
   }, [
-    containerW,
-    rangeKey,
-    totalUnits,
+    viewportW,
+    win,
     worthBoundaries,
     nets,
     plannedNets,
@@ -186,31 +274,47 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     scenarios,
   ]);
 
-  const { bw, plotW, fx, nowX } = geom;
+  const { bw, fx } = geom;
 
-  // Open with today centred in the view (history to its left, the projection to
-  // its right), and re-anchor there when the zoom changes.
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollLeft = Math.max(0, Math.min(plotW - el.clientWidth, nowX - el.clientWidth * 0.5));
-  }, [rangeKey, nowX, plotW]);
+  // The date a day-unit stands for, on either side of today: recorded days are
+  // named by the series, planned ones counted forward off the last of them.
+  const dateAt = useCallback(
+    (i: number) => {
+      const { y, m, d } = parseDay(days[Math.min(i, N - 1)]);
+      const base = Date.UTC(y, m - 1, d);
+      return new Date(i < N ? base : base + (i - N + 1) * DAY_MS);
+    },
+    [days, N],
+  );
+
+  // The strip's date band follows the strip's own frame, not the window: the
+  // frame is what is being scanned for somewhere to drag to, and dates borrowed
+  // from the plot above would be describing a different span of time.
+  const tickLabel = useMemo(
+    () => ({ month: (d: Date) => monthFmt.format(d), day: (d: Date) => dmFmt.format(d) }),
+    [monthFmt, dmFmt],
+  );
+  const brushDates = useMemo(
+    () => brushTicks(brushWin, viewportW, dateAt, tickLabel),
+    [brushWin, viewportW, dateAt, tickLabel],
+  );
 
   // Adaptive x-axis labels: individual days when zoomed in, else calendar
   // boundaries (month → quarter → year) as they get too dense to name each day.
-  // Labels continue past the history into the forecast so the projected lines
-  // are anchored to readable dates.
+  // Only the window's own days are walked, and labels run right through today
+  // into the forecast so the projected lines are anchored to readable dates.
   const xLabels = useMemo(() => {
     const out: { x: number; text: string }[] = [];
-    const at = (i: number) => fx(i + 0.5);
-
     const totalDays = N + futureDays;
+    const from = Math.max(0, Math.floor(win.start));
+    const to = Math.min(totalDays - 1, Math.ceil(win.end));
 
     if (bw >= 16) {
       const stride = Math.max(1, Math.round(64 / bw));
-      for (let i = 0; i < N; i += stride) {
-        const { y, m, d } = parseDay(days[i]);
-        out.push({ x: at(i), text: dmFmt.format(new Date(Date.UTC(y, m - 1, d))) });
+      // Anchored to a fixed grid rather than to the window's own edge, so the
+      // labels travel with the plot as it is dragged instead of reshuffling.
+      for (let i = Math.ceil(from / stride) * stride; i <= to; i += stride) {
+        out.push({ x: fx(i + 0.5), text: dmFmt.format(dateAt(i)) });
       }
       return out;
     }
@@ -218,51 +322,36 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     const monthPx = bw * 30.44;
     const mode = monthPx >= 46 ? "month" : monthPx * 3 >= 46 ? "quarter" : "year";
 
-    const pushLabel = (i: number, date: Date) => {
+    for (let i = from; i <= to; i++) {
+      const date = dateAt(i);
+      if (date.getUTCDate() !== 1) continue;
+      const m = date.getUTCMonth() + 1;
+      const isQ = m === 1 || m === 4 || m === 7 || m === 10;
+      if (mode === "quarter" && !isQ) continue;
+      if (mode === "year" && m !== 1) continue;
       const y = date.getUTCFullYear();
-      const m = date.getUTCMonth() + 1;
-      const text =
-        mode === "year"
-          ? String(y)
-          : m === 1
-            ? `${monthFmt.format(date)} '${String(y).slice(2)}`
-            : monthFmt.format(date);
-      out.push({ x: fx(i), text });
-    };
-
-    for (let i = 0; i < N; i++) {
-      const { y, m, d } = parseDay(days[i]);
-      if (d !== 1) continue;
-      const isQ = m === 1 || m === 4 || m === 7 || m === 10;
-      if (mode === "quarter" && !isQ) continue;
-      if (mode === "year" && m !== 1) continue;
-      pushLabel(i, new Date(Date.UTC(y, m - 1, d)));
-    }
-
-    const lastHistory = parseDay(days[N - 1]);
-    const lastHistoryDate = new Date(Date.UTC(lastHistory.y, lastHistory.m - 1, lastHistory.d));
-    for (let i = N; i < totalDays; i++) {
-      const date = new Date(lastHistoryDate.getTime() + (i - N + 1) * DAY_MS);
-      const d = date.getUTCDate();
-      if (d !== 1) continue;
-      const m = date.getUTCMonth() + 1;
-      const isQ = m === 1 || m === 4 || m === 7 || m === 10;
-      if (mode === "quarter" && !isQ) continue;
-      if (mode === "year" && m !== 1) continue;
-      pushLabel(i, date);
+      out.push({
+        x: fx(i),
+        text:
+          mode === "year"
+            ? String(y)
+            : m === 1
+              ? `${monthFmt.format(date)} '${String(y).slice(2)}`
+              : monthFmt.format(date),
+      });
     }
 
     return out;
-  }, [bw, N, days, dmFmt, monthFmt, fx, futureDays]);
+  }, [bw, N, dateAt, dmFmt, monthFmt, fx, futureDays, win]);
 
   const [hover, setHover] = useState<Hover | null>(null);
 
   const onMove = (e: React.MouseEvent<SVGSVGElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
-    const x = Math.max(0, Math.min(plotW, e.clientX - rect.left));
-    const unit = x / bw;
+    const x = Math.max(0, Math.min(viewportW, e.clientX - rect.left));
+    const unit = win.start + x / bw;
     if (unit <= N) {
-      const i = Math.min(N - 1, Math.floor(unit));
+      const i = Math.max(0, Math.min(N - 1, Math.floor(unit)));
       setHover({ kind: "history", x: fx(i + 1), i });
     } else {
       setHover({ kind: "future", x, unit });
@@ -378,14 +467,19 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
     })),
   ];
 
+  // Which range button, if any, is showing — none once the window has been
+  // dragged off every preset.
+  const rangeKey = useMemo(() => matchPreset(win, N, totalUnits), [win, N, totalUnits]);
+  const onRangeChange = useCallback(
+    (key: string) => setWin(presetWindow(rangeDays(key), N, totalUnits), true),
+    [setWin, N, totalUnits],
+  );
+
   return (
-    <figure className="m-0">
-      <BalanceChartLegend legend={legend} rangeKey={rangeKey} onRangeChange={setRangeKey} />
+    <figure ref={containerRef} className="m-0">
+      <BalanceChartLegend legend={legend} rangeKey={rangeKey} onRangeChange={onRangeChange} />
       <BalanceChartSvg
-        scrollRef={scrollRef}
         geom={geom}
-        nets={nets}
-        plannedNets={plannedNets}
         worthBoundaries={worthBoundaries}
         currentWorth={currentWorth}
         displayCurrency={displayCurrency}
@@ -396,6 +490,23 @@ export function BalanceChart({ series }: { series: BalanceSeries }) {
         onMove={onMove}
         onLeave={() => setHover(null)}
       />
+      {/* The overview strip, indented to sit under the plot rather than under
+          the axis gutter, so its selection lines up with what it selects. */}
+      <div className="mt-2 flex">
+        <div className="shrink-0" style={{ width: AXIS_W }} />
+        <BalanceChartBrush
+          width={viewportW}
+          totalUnits={totalUnits}
+          domain={brushWin}
+          N={N}
+          worthBoundaries={worthBoundaries}
+          scenarios={scenarios}
+          ticks={brushDates}
+          win={win}
+          onChange={setWin}
+          unitLabel={(unit) => fullFmt.format(dateAt(Math.max(0, Math.min(totalUnits - 1, Math.round(unit)))))}
+        />
+      </div>
     </figure>
   );
 }

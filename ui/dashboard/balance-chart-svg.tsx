@@ -1,8 +1,10 @@
 "use client";
 
+import { cn } from "@/lib/utils";
 import { formatMoneyWhole } from "@/lib/format";
 import {
   AXIS_W,
+  type Bar,
   C_DOWN,
   C_PLANNED,
   C_UP,
@@ -16,15 +18,25 @@ import {
 
 type Scale = { min: number; max: number; ticks: number[] };
 
+/** How close to an edge the tooltip stops being centred on the crosshair. Half a
+ *  roomy box: nothing here wraps, so the box is as wide as its longest row. */
+const TIP_EDGE = 90;
+
 type Geom = {
   bw: number;
-  plotW: number;
+  /** The plot's width — the window fills it exactly, so nothing scrolls. */
+  viewportW: number;
   yScale: Scale;
   fx: (unit: number) => number;
   fy: (v: number) => number;
-  worthPath: string;
-  worthArea: string;
+  /** Null when the window has moved wholly past the end of history. */
+  worthPath: string | null;
+  worthArea: string | null;
   nowX: number;
+  /** Only the bars the window shows: the recorded days, and the forward ones
+   *  carrying the flow the forecasts plan on average. */
+  historyBars: Bar[];
+  plannedBars: Bar[];
   /** One dashed line per forecast budget, in legend order. */
   projections: { id: string; color: string; path: string }[];
   /** Where the credit facility bottoms out, when a projection reaches for it —
@@ -34,11 +46,7 @@ type Geom = {
 };
 
 type ChartSvgProps = {
-  scrollRef: React.RefObject<HTMLDivElement | null>;
   geom: Geom;
-  nets: number[];
-  /** The forward bars: one averaged planned flow per day, index 0 = tomorrow. */
-  plannedNets: number[];
   worthBoundaries: number[];
   currentWorth: number;
   displayCurrency: string;
@@ -52,10 +60,7 @@ type ChartSvgProps = {
 };
 
 export function BalanceChartSvg({
-  scrollRef,
   geom,
-  nets,
-  plannedNets,
   worthBoundaries,
   currentWorth,
   displayCurrency,
@@ -66,8 +71,14 @@ export function BalanceChartSvg({
   onMove,
   onLeave,
 }: ChartSvgProps) {
-  const { bw, plotW, fx, fy, worthPath, worthArea, nowX } = geom;
+  const { bw, viewportW, fy, worthPath, worthArea, nowX } = geom;
   const money = (n: number) => formatMoneyWhole(n, displayCurrency);
+  // Today is only drawn when the window is actually looking at it — a divider
+  // pinned to the edge of a plot showing 2022 would be marking the wrong day.
+  const nowVisible = nowX >= 0 && nowX <= viewportW;
+  // The labels that hang off today follow the plot's left edge once it has
+  // scrolled past, rather than being cropped along with it.
+  const markX = Math.max(0, nowX);
 
   return (
     <div className="flex">
@@ -87,10 +98,11 @@ export function BalanceChartSvg({
         ))}
       </svg>
 
-      {/* Scrollable plot */}
-      <div ref={scrollRef} className="relative min-w-0 flex-1 overflow-x-auto">
+      {/* The plot — the window fills it exactly, and marks that fall outside are
+          cropped by the SVG's own edges. */}
+      <div className="relative min-w-0 flex-1">
         <svg
-          width={plotW}
+          width={viewportW}
           height={H}
           className="block"
           role="img"
@@ -100,7 +112,7 @@ export function BalanceChartSvg({
             geom.floor
               ? ` Projections continue below zero into available credit, down to ${money(geom.floor.value)}.`
               : ""
-          } Scroll horizontally for history.`}
+          } Use the time window below to change the dates shown.`}
           onMouseMove={onMove}
           onMouseLeave={onLeave}
         >
@@ -109,7 +121,7 @@ export function BalanceChartSvg({
             <line
               key={v}
               x1={0}
-              x2={plotW}
+              x2={viewportW}
               y1={fy(v)}
               y2={fy(v)}
               style={{ stroke: v === 0 ? "var(--viz-axis)" : "var(--viz-grid)" }}
@@ -118,16 +130,16 @@ export function BalanceChartSvg({
           ))}
 
           {/* Net-worth area (faint, grounds the line to zero) */}
-          <path d={worthArea} style={{ fill: C_WORTH, opacity: 0.06 }} />
+          {worthArea && <path d={worthArea} style={{ fill: C_WORTH, opacity: 0.06 }} />}
 
           {/* Net-flow bars: each rises (in) or drops (out) from the $0 line by
               the day's net flow — the same amount the net-worth line steps. */}
-          {nets.map((value, i) => {
-            const active = hover?.kind === "history" && hover.i === i;
+          {geom.historyBars.map(({ key, x, value }) => {
+            const active = hover?.kind === "history" && hover.i === key;
             return (
               <rect
-                key={i}
-                {...bar(value, fx(i), bw, fy)}
+                key={key}
+                {...bar(value, x, bw, fy)}
                 style={{ fill: value >= 0 ? C_UP : C_DOWN, opacity: active ? 1 : 0.9 }}
               />
             );
@@ -138,16 +150,14 @@ export function BalanceChartSvg({
               faint because it is a plan — the day it is drawn in green is the day
               it is mistaken for a transaction that happened. It sits under the
               lines, like its historic half does. */}
-          {plannedNets.map((value, i) => (
-            <rect
-              key={i}
-              {...bar(value, nowX + i * bw, bw, fy)}
-              style={{ fill: C_PLANNED, opacity: 0.55 }}
-            />
+          {geom.plannedBars.map(({ key, x, value }) => (
+            <rect key={key} {...bar(value, x, bw, fy)} style={{ fill: C_PLANNED, opacity: 0.55 }} />
           ))}
 
           {/* Net-worth line, on top of the candles */}
-          <path d={worthPath} fill="none" style={{ stroke: C_WORTH }} strokeWidth={2} strokeLinejoin="round" />
+          {worthPath && (
+            <path d={worthPath} fill="none" style={{ stroke: C_WORTH }} strokeWidth={2} strokeLinejoin="round" />
+          )}
 
           {/* Projections — dashed, so the plan never reads as recorded history.
               Colour is the only thing telling them apart, which is why each
@@ -169,11 +179,11 @@ export function BalanceChartSvg({
               spent forward and says nothing about what the past could have done.
               Solid-ish and in the warning ink — unlike the projections it is not
               a guess, it is the wall they stop at. */}
-          {geom.floor && (
+          {geom.floor && nowX < viewportW && (
             <>
               <line
-                x1={nowX}
-                x2={plotW}
+                x1={markX}
+                x2={viewportW}
                 y1={geom.floor.y}
                 y2={geom.floor.y}
                 style={{ stroke: C_DOWN, opacity: 0.5 }}
@@ -181,7 +191,7 @@ export function BalanceChartSvg({
                 strokeDasharray="6 3"
               />
               <text
-                x={nowX + 4}
+                x={markX + 4}
                 y={geom.floor.y - 5}
                 fontSize={11}
                 style={{ fill: "var(--text-muted)" }}
@@ -192,18 +202,22 @@ export function BalanceChartSvg({
           )}
 
           {/* Today divider */}
-          <line
-            x1={nowX}
-            x2={nowX}
-            y1={PAD_T}
-            y2={PLOT_Y1}
-            style={{ stroke: "var(--viz-axis)" }}
-            strokeWidth={1}
-            strokeDasharray="2 3"
-          />
-          <text x={nowX + 4} y={PAD_T + 11} fontSize={11} style={{ fill: "var(--text-muted)" }}>
-            today
-          </text>
+          {nowVisible && (
+            <>
+              <line
+                x1={nowX}
+                x2={nowX}
+                y1={PAD_T}
+                y2={PLOT_Y1}
+                style={{ stroke: "var(--viz-axis)" }}
+                strokeWidth={1}
+                strokeDasharray="2 3"
+              />
+              <text x={nowX + 4} y={PAD_T + 11} fontSize={11} style={{ fill: "var(--text-muted)" }}>
+                today
+              </text>
+            </>
+          )}
 
           {/* x-axis date labels */}
           {xLabels.map((l, idx) => (
@@ -256,10 +270,17 @@ export function BalanceChartSvg({
           )}
         </svg>
 
-        {/* Tooltip — inside the scroller, so it tracks the crosshair as it scrolls */}
+        {/* Tooltip — centred on the crosshair, except within a box's width of
+            either edge, where it flips to hang inside the plot instead of being
+            cut off by the card. */}
         {hover && info && (
           <div
-            className="pointer-events-none absolute top-0 z-10 -translate-x-1/2 rounded-md border border-current/10 bg-background px-2.5 py-1.5 text-xs shadow-sm"
+            className={cn(
+              "pointer-events-none absolute top-0 z-10 rounded-md border border-current/10 bg-background px-2.5 py-1.5 text-xs shadow-sm",
+              hover.x > viewportW - TIP_EDGE
+                ? "-translate-x-full"
+                : hover.x > TIP_EDGE && "-translate-x-1/2",
+            )}
             style={{ left: hover.x }}
           >
             <p className="mb-0.5 whitespace-nowrap font-medium">{info.label}</p>

@@ -37,7 +37,9 @@ export function BalanceChartLegend({
   onRangeChange,
 }: {
   legend: LegendItem[];
-  rangeKey: string;
+  /** The range the window currently matches, or null once it has been dragged
+   *  off every preset — then no button claims to be the one being shown. */
+  rangeKey: string | null;
   onRangeChange: (key: string) => void;
 }) {
   return (
@@ -87,12 +89,13 @@ export function BalanceChartLegend({
           </span>
         ))}
       </figcaption>
-      {/* Zoom — how many days fill the width. Resolution stays one day. A segmented
-          ToggleGroup gives arrow-key navigation and 32px tap targets; on a phone
-          the eight ranges overflow the row, so the track scrolls horizontally. */}
+      {/* Zoom — shortcuts that set the time window to a span centred on today.
+          Resolution stays one day. A segmented ToggleGroup gives arrow-key
+          navigation and 32px tap targets; on a phone the eight ranges overflow
+          the row, so the track scrolls horizontally. */}
       <div className="-mx-1 overflow-x-auto px-1 sm:mx-0 sm:overflow-visible sm:px-0">
         <ToggleGroup
-          value={[rangeKey]}
+          value={rangeKey ? [rangeKey] : []}
           onValueChange={(value) => {
             if (value[0]) onRangeChange(value[0]);
           }}
