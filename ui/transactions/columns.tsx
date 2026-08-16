@@ -11,6 +11,7 @@ import {
   formatDate,
   formatMoney,
 } from "@/lib/format";
+import { accountLabel } from "@/lib/account-name";
 import { slugify } from "@/lib/slug";
 import { positiveAmountClass } from "@/lib/ui/amount";
 import { MERCHANT_LOGO_FALLBACK } from "@/lib/ui/logo";
@@ -182,7 +183,7 @@ export function buildTransactionColumns({
               />
             ) : null}
             <Link href={`/accounts/${tx.account.id}`} className={link}>
-              {tx.account.name}
+              {accountLabel(tx.account)}
             </Link>
           </div>
         );

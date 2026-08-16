@@ -5,6 +5,7 @@ import Image from "next/image";
 import { Link } from "@/ui/chrome/workspace-context";
 import { LabelsCell } from "@/ui/transactions/labels-cell";
 import type { TransactionListItem } from "@/lib/server/queries/transactions";
+import { accountLabel } from "@/lib/account-name";
 import { formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 
@@ -49,7 +50,7 @@ export function TransactionRowDetails({ tx }: { tx: TransactionListItem }) {
               />
             ) : null}
             <Link href={`/accounts/${tx.account.id}`} className={link}>
-              {tx.account.name}
+              {accountLabel(tx.account)}
             </Link>
           </span>
         </Detail>

@@ -3,6 +3,7 @@
 import { Link, useCanEdit } from "@/ui/chrome/workspace-context";
 import { useState, useTransition } from "react";
 import type { TransferCandidate, TransferLeg } from "@/lib/server/matching/matching";
+import { accountLabel, type NamedAccount } from "@/lib/account-name";
 import { formatDate, formatMoney } from "@/lib/format";
 import { positiveAmountClass } from "@/lib/ui/amount";
 import {
@@ -36,7 +37,7 @@ function CandidateRow({
     amount: number;
     description: string;
     merchant: { name: string } | null;
-    account: { name: string; currency: string | null };
+    account: NamedAccount & { currency: string | null };
   };
   /** A qualifier under the account line — "conversion", "$0.76 fee". */
   note?: string;
@@ -57,7 +58,7 @@ function CandidateRow({
       <td className="py-2 pr-4">
         {tx.merchant?.name ?? tx.description}
         <span className="block text-xs opacity-60">
-          {tx.account.name}
+          {accountLabel(tx.account)}
           {note ? ` · ${note}` : ""}
         </span>
       </td>
@@ -151,7 +152,7 @@ export function TransferLink({
                     {leg.merchant?.name ?? leg.description}
                   </Link>
                   <span className="text-xs opacity-60">
-                    {formatDate(leg.date)} · {leg.account.name}
+                    {formatDate(leg.date)} · {accountLabel(leg.account)}
                   </span>
                 </div>
                 <div className="flex items-center gap-3">

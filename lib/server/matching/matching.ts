@@ -28,7 +28,7 @@ export { descriptionTokens } from "./tokens";
 // `satisfies` rather than a type annotation, so the literal shape survives and
 // Prisma still infers each row's payload from it.
 const MATCH_INCLUDE = {
-  account: { select: { name: true, currency: true } },
+  account: { select: { name: true, displayName: true, currency: true } },
   merchant: { select: { name: true } },
 } satisfies Prisma.TransactionInclude;
 

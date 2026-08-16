@@ -2,6 +2,7 @@
 // chat turn. Takes its scoped db as an argument for the same reason.
 import { catKey, type Catalog } from "../../../budget/llm";
 import type { ScopedDb } from "../../db";
+import { accountLabel } from "../../../account-name";
 import { money } from "../../money";
 import { displayFxFor, type DisplayFx } from "../../budget/fx";
 import { MAX_MONTHS } from "../client";
@@ -83,7 +84,7 @@ export async function loadHistory(db: ScopedDb, now: Date): Promise<History> {
       categoryGroup: { select: { name: true } },
       category: { select: { name: true } },
       merchant: { select: { name: true } },
-      account: { select: { name: true, currency: true } },
+      account: { select: { name: true, displayName: true, currency: true } },
       description: true,
       reference: true,
       particulars: true,
@@ -112,7 +113,7 @@ export async function loadHistory(db: ScopedDb, now: Date): Promise<History> {
       type: r.type,
       category: r.category?.name ?? null,
       merchant: r.merchant?.name ?? null,
-      account: r.account.name ?? null,
+      account: accountLabel(r.account),
       description: r.description,
       reference: r.reference,
       particulars: r.particulars,

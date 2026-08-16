@@ -1,6 +1,7 @@
 // No `import "server-only"`: shared with the worker's budget inference.
 import type { Prisma } from "../../../generated/prisma/client";
 import { distinctiveTokens } from "../../rules/learning/match";
+import { accountLabel } from "../../../account-name";
 import { money, moneySum } from "../../money";
 import { MAX_TOOL_ROWS } from "../client";
 import { readLearnedRules, matchesTransaction } from "../../rules/learning/read";
@@ -50,7 +51,7 @@ const ROW_SELECT = {
   category: { select: { name: true } },
   categoryGroup: { select: { name: true } },
   merchant: { select: { id: true, name: true } },
-  account: { select: { name: true, currency: true } },
+  account: { select: { name: true, displayName: true, currency: true } },
   labels: { select: { label: { select: { name: true } } } },
 } satisfies Prisma.TransactionSelect;
 
@@ -336,7 +337,7 @@ export async function buildWhere(
     ["merchant", (name: string) => ({ merchant: { is: named(name) } })],
     ["category", (name: string) => ({ category: { is: named(name) } })],
     ["area", (name: string) => ({ categoryGroup: { is: named(name) } })],
-    ["account", (name: string) => ({ account: { is: named(name) } })],
+    ["account", (name: string) => ({ account: { is: namedAccount(name) } })],
     ["label", (name: string) => ({ labels: { some: { label: { is: named(name) } } } })],
   ] as const) {
     const value = asText(args[arg]);
@@ -409,6 +410,17 @@ export async function buildWhere(
 
 const named = (name: string) => ({ name: { equals: name, mode: "insensitive" as const } });
 
+/**
+ * The same, for accounts — which answer to two names. The model is shown whatever
+ * the household calls each account (see `accountLabel`), so a filter it builds
+ * from what it was shown has to match the override; the provider's own name stays
+ * matchable because that is what the household may say out loud when reading their
+ * bank's app.
+ */
+const namedAccount = (name: string) => ({
+  OR: [{ name: { equals: name, mode: "insensitive" as const } }, { displayName: { equals: name, mode: "insensitive" as const } }],
+});
+
 /** Whether a name the model filtered on exists at all, as an error with the real list
  *  when it does not. Null when it is fine. */
 async function nameExists(
@@ -444,7 +456,18 @@ async function nameExists(
     account: {
       whole: true,
       one: (where: NameWhere) => ctx.db.account.findFirst({ where, select: NAME }),
-      many: (where: NameWhere) => ctx.db.account.findMany({ ...LIST, where, select: NAME }),
+      // Listed back under the names the model was shown, so "no account called X,
+      // here are the ones there are" offers names its next call can actually use.
+      many: async (where: NameWhere) =>
+        (
+          await ctx.db.account.findMany({
+            ...LIST,
+            where,
+            select: { name: true, displayName: true },
+          })
+        )
+          .map((row) => ({ name: accountLabel(row) }))
+          .sort((a, b) => a.name.localeCompare(b.name)),
     },
     label: {
       whole: true,
@@ -453,7 +476,7 @@ async function nameExists(
     },
   }[kind];
 
-  if (await of.one(named(name))) return null;
+  if (await of.one(kind === "account" ? namedAccount(name) : named(name))) return null;
 
   const label = kind === "area" ? "spending area" : kind;
   const error = `No ${label} called "${name}".`;
@@ -473,7 +496,7 @@ async function nameExists(
 /** The one column any of these lookups reads, and the one order they read it in. */
 const NAME = { name: true } as const;
 const LIST = { orderBy: { name: "asc" } } as const;
-type NameWhere = { name?: Prisma.StringFilter | string };
+type NameWhere = { name?: Prisma.StringFilter | string; OR?: NameWhere[]; displayName?: Prisma.StringFilter | string };
 
 /** Rows as the model reads them: display currency, names instead of ids for everything
  *  except the row itself, which it needs an id for in order to change it. */
@@ -488,7 +511,7 @@ async function describe(ctx: ToolContext, rows: Row[]) {
     area: row.categoryGroup?.name ?? null,
     category: row.category?.name ?? null,
     merchant: row.merchant?.name ?? null,
-    account: row.account.name,
+    account: accountLabel(row.account),
     labels: row.labels.map((join) => join.label.name),
     reference: row.reference,
     particulars: row.particulars,

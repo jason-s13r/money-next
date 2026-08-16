@@ -33,6 +33,14 @@ export const statements = {
   /// recategorise need not be able to rewrite the household's plan).
   budget: ["update"],
 
+  /// What a household calls its own accounts — the display name that overrides the
+  /// provider's wording. Its own statement for the same reason `budget` is: the one
+  /// above is explicitly about a *transaction*, and this is not a claim about the
+  /// past at all. It is also the widest-blast-radius rename in the app — an account
+  /// name appears on every listing, every transfer summary and in the chat — so it
+  /// is worth being able to grant apart from the row-by-row enrichment.
+  account: ["update"],
+
   /// Triggering an Akahu refresh and re-ingest. Its own statement because it
   /// spends someone else's rate limit (T3) rather than writing a row.
   sync: ["run"],
@@ -63,6 +71,7 @@ export const owner = ac.newRole({
   invitation: ["create", "cancel"],
   enrichment: ["update"],
   budget: ["update"],
+  account: ["update"],
   sync: ["run"],
   bankLink: ["create", "revoke"],
   chat: ["use"],
@@ -71,6 +80,7 @@ export const owner = ac.newRole({
 export const editor = ac.newRole({
   enrichment: ["update"],
   budget: ["update"],
+  account: ["update"],
   sync: ["run"],
   chat: ["use"],
 });

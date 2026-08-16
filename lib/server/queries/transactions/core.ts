@@ -5,6 +5,7 @@ import { scopedBatch } from "../../db";
 import { convert, FALLBACK_DISPLAY_CURRENCY, loadRates } from "../../currency";
 import { moneySum, transactionMoney } from "../../money";
 import type { Prisma } from "../../../generated/prisma/client";
+import { accountLabel, type NamedAccount } from "@/lib/account-name";
 import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";
 
 // The shared machinery every "what is in this bucket?" listing renders through:
@@ -42,7 +43,15 @@ export const DISPLAY_CURRENCY = FALLBACK_DISPLAY_CURRENCY;
 // each row's type. The `account` relation is redundant on a single-account page
 // (the column is hidden there) but keeps one row type across every listing.
 export const listInclude = {
-  account: { select: { id: true, name: true, currency: true, connection: { select: { logo: true } } } },
+  account: {
+    select: {
+      id: true,
+      name: true,
+      displayName: true,
+      currency: true,
+      connection: { select: { logo: true } },
+    },
+  },
   merchant: { select: { name: true, logo: true } },
   category: { select: { name: true } },
   categoryGroup: { select: { id: true, name: true } },
@@ -63,7 +72,7 @@ export type TransferSummary = { label: string };
 type TransferLegRow = {
   transferGroupId: string | null;
   accountId: string;
-  account: { name: string };
+  account: NamedAccount;
 };
 
 /**
@@ -103,7 +112,11 @@ export async function enrichTransactions<
       ? scopedBatch(db, [
           db.transaction.findMany({
             where: { transferGroupId: { in: groupIds } },
-            select: { transferGroupId: true, accountId: true, account: { select: { name: true } } },
+            select: {
+              transferGroupId: true,
+              accountId: true,
+              account: { select: { name: true, displayName: true } },
+            },
           }),
           db.transactionConflict.findMany({
             where: { status: "open", transactionId: { in: items.map((i) => i.id) } },
@@ -137,7 +150,7 @@ export async function enrichTransactions<
         ...new Set(
           (byGroup.get(i.transferGroupId) ?? [])
             .filter((l) => l.accountId !== i.accountId)
-            .map((l) => l.account.name),
+            .map((l) => accountLabel(l.account)),
         ),
       ].join(", ");
       const label = !counterparts
@@ -203,6 +216,10 @@ export function orderByForSort(sort: Sort): Prisma.TransactionOrderByWithRelatio
     case "description":
       return [{ description: dir }, tiebreak];
     case "account":
+      // The provider's name, not the household's: the sort must be a database
+      // ordering to page correctly, and Prisma cannot order by a fallback across
+      // two columns. Rows still group by account, which is what this sort is for
+      // — only the order the groups come in can disagree with the labels shown.
       return [{ account: { name: dir } }, tiebreak];
     case "category":
       return [{ category: { name: dir } }, tiebreak];

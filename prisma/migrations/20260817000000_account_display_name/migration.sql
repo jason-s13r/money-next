@@ -1,0 +1,23 @@
+-- Let a household rename its own accounts.
+--
+-- Provider names are written for the provider's benefit, not the reader's: Wise
+-- calls an account "{holder}'s NZD Balance", which in a table where every row
+-- belongs to the same household is three words of noise before the one word that
+-- distinguishes it. This column holds what the household calls it instead.
+--
+-- Deliberately a second column rather than an edit to `name`. The sync upserts
+-- every provider-supplied field on every run (see `syncAccounts`), so a rename
+-- written into `name` would survive exactly until the next sync. `displayName`
+-- is not in that upsert's attribute set at all, which is what makes the override
+-- durable — and keeping the provider's own name alongside means clearing the
+-- override falls back to whatever the bank calls the account *now*, not to a
+-- copy of what it called it the day someone renamed it.
+--
+-- Nullable, no default, no backfill: null means "no override", which is the state
+-- every existing account is in.
+--
+-- No grant change and no RLS policy change. `Account` is a tenant table whose DML
+-- is granted table-level to money_app and money_sync (rls_backstop migration), a
+-- table-level grant covers columns added later, and `tenant_isolation` keys off
+-- `workspaceId`, which this does not touch.
+ALTER TABLE "Account" ADD COLUMN "displayName" TEXT;

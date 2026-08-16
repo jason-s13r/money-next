@@ -10,6 +10,7 @@ import {
   getTransferCandidates,
   getTransferGroupLegs,
 } from "@/lib/server/matching/matching";
+import { accountLabel } from "@/lib/account-name";
 import { formatDateTime, formatMoney } from "@/lib/format";
 import { slugify } from "@/lib/slug";
 import { setTransactionCategory } from "./actions/category";
@@ -120,7 +121,7 @@ export default async function TransactionPage(
             </span>
           }
         />
-        <Field label="Account" value={account.name} href={`/accounts/${account.id}`} />
+        <Field label="Account" value={accountLabel(account)} href={`/accounts/${account.id}`} />
         <Field
           label="Balance after"
           value={tx.balance === null ? null : formatMoney(tx.balance, account.currency)}

@@ -361,7 +361,15 @@ model Account {
   bankLinkId String
   bankLink   BankLink @relation(fields: [bankLinkId], references: [id], onDelete: Restrict)
 
+  /// The provider's own name for the account, overwritten on every sync.
   name             String
+  /// What this household calls the account, when the provider's name is not what
+  /// they would call it — Wise names an account "{holder}'s NZD Balance", which is
+  /// three words of noise in a table where every row belongs to the same household.
+  /// Null means there is no override and the provider's `name` stands; nothing is
+  /// copied into it at ingest, so a rename survives a sync and clearing it goes
+  /// straight back to whatever the bank now calls the account.
+  displayName      String?
   /// ACTIVE | INACTIVE
   status           String
   /// CHECKING | SAVINGS | CREDITCARD | LOAN | KIWISAVER | ...

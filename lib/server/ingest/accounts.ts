@@ -73,6 +73,10 @@ export async function syncAccounts(
     // The shared shape of a create and an update: every field except `id`,
     // `workspaceId`, and `bankLinkId` (which only the create needs). Extracting
     // it means a new field can't drift into one side and not the other.
+    //
+    // `displayName` is absent on purpose, and must stay absent. It is the one
+    // account column a person writes rather than Akahu, so listing it here — even
+    // as `account.name` — would overwrite a household's rename on the next sync.
     const accountAttrs = {
       name: account.name,
       status: account.status,

@@ -3,6 +3,7 @@ import Image from "next/image";
 import { Link } from "@/ui/chrome/workspace-context";
 import type { PendingTransactionItem } from "@/lib/server/queries/pending";
 import { DEFAULT_CURRENCY as DISPLAY_CURRENCY, formatDate, formatMoney } from "@/lib/format";
+import { accountLabel } from "@/lib/account-name";
 import { positiveAmountClass } from "@/lib/ui/amount";
 import {
   Table,
@@ -73,7 +74,7 @@ export function PendingTable({
                           />
                         ) : null}
                         <Link href={`/accounts/${tx.account.id}`} className={link}>
-                          {tx.account.name}
+                          {accountLabel(tx.account)}
                         </Link>
                       </span>
                     </>

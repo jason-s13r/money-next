@@ -93,7 +93,7 @@ export async function searchTransferCandidates(sourceId: string, query: string) 
       amount: true,
       description: true,
       merchant: { select: { name: true } },
-      account: { select: { name: true, currency: true } },
+      account: { select: { name: true, displayName: true, currency: true } },
     },
   });
   // This is a server action returning to a client component, so `amount` must be

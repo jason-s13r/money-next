@@ -5,6 +5,7 @@ import {
   describeRecurrence,
   isFrequency,
 } from "../../../budget/recurrence";
+import { accountLabel } from "../../../account-name";
 import { money, moneyOrNull } from "../../money";
 import { MAX_TOOL_ROWS } from "../client";
 import type { Area } from "./history";
@@ -314,6 +315,7 @@ export const listAccounts: Tool = {
       orderBy: { name: "asc" },
       select: {
         name: true,
+        displayName: true,
         type: true,
         currency: true,
         balanceCurrent: true,
@@ -321,8 +323,11 @@ export const listAccounts: Tool = {
       },
     });
     return {
+      // Named as the household names them, so the model answers in the words they
+      // use — and so an account name it repeats back is one `get_transactions`
+      // will accept as a filter.
       accounts: accounts.map((account) => ({
-        account: account.name,
+        account: accountLabel(account),
         type: account.type,
         currency: account.currency,
         balance: round2OrNull(moneyOrNull(account.balanceCurrent)),

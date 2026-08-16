@@ -4,10 +4,13 @@ import { pageHref, paginate, Pagination, parsePage } from "@/ui/primitives/pagin
 import { StatList } from "@/ui/primitives/stat-list";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { PendingTable } from "@/ui/transactions/pending-table";
+import { AccountHeading } from "@/ui/accounts/account-name";
+import { requireWorkspace } from "@/lib/server/auth/session";
 import { getAccount } from "@/lib/server/queries/accounts";
 import { getAccountPendingTransactions } from "@/lib/server/queries/pending";
 import { getAccountTransactions } from "@/lib/server/queries/transactions";
 import { parseSort, withSort } from "@/lib/transactions/sort";
+import { accountLabel } from "@/lib/account-name";
 import { formatMoney } from "@/lib/format";
 
 // TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
@@ -17,7 +20,7 @@ export const instant = false;
 export async function generateMetadata(props: PageProps<"/w/[workspace]/accounts/[accountId]">) {
   const { accountId } = await props.params;
   const account = await getAccount(accountId);
-  return { title: account?.name ?? "Account" };
+  return { title: account ? accountLabel(account) : "Account" };
 }
 
 export default async function AccountPage(props: PageProps<"/w/[workspace]/accounts/[accountId]">) {
@@ -29,6 +32,11 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
   const account = await getAccount(accountId);
   if (!account) notFound();
 
+  // Renaming an account is `account.update`, which a viewer does not hold. The
+  // button is hidden for them; the action checks for itself (T9).
+  const { role } = await requireWorkspace();
+  const canEdit = role !== "viewer";
+
   const { items, total } = await getAccountTransactions(accountId, page, sort);
   // Pending holds sit atop the first page only, so they aren't repeated on every
   // paginated page of this account's settled ledger below.
@@ -39,24 +47,31 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
       <header className="mb-6">
-        <h1 className="flex items-center gap-3 text-2xl font-semibold">
-          {account.connection?.logo ? (
-            <Image
-              src={account.connection.logo}
-              alt=""
-              width={32}
-              height={32}
-              loading="lazy"
-              decoding="async"
-              className="h-8 w-8 rounded object-contain"
-            />
-          ) : null}
-          {account.name}
-        </h1>
-        <p className="mt-1 text-sm opacity-60">
-          {account.connection?.name ?? account.connectionId} · {account.type}
-          {account.formattedAccount ? ` · ${account.formattedAccount}` : ""}
-        </p>
+        <AccountHeading
+          accountId={account.id}
+          name={account.name}
+          displayName={account.displayName}
+          canEdit={canEdit}
+          logo={
+            account.connection?.logo ? (
+              <Image
+                src={account.connection.logo}
+                alt=""
+                width={32}
+                height={32}
+                loading="lazy"
+                decoding="async"
+                className="h-8 w-8 rounded object-contain"
+              />
+            ) : null
+          }
+          meta={
+            <>
+              {account.connection?.name ?? account.connectionId} · {account.type}
+              {account.formattedAccount ? ` · ${account.formattedAccount}` : ""}
+            </>
+          }
+        />
 
         <StatList
           className="mt-4"

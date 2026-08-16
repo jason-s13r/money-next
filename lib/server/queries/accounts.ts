@@ -3,6 +3,7 @@ import { connection } from "next/server";
 import { cache } from "react";
 import { getDb } from "../db/request";
 import { accountMoney, moneySum } from "../money";
+import { accountLabel } from "@/lib/account-name";
 
 // Account reads, and the net-worth roll-up across them. Like the rest of the read
 // layer these touch only the database (never Akahu) and await `connection()` first,
@@ -23,7 +24,9 @@ export async function getAccounts() {
 
   // Prisma can't order by a relation count, so sort in memory: active status
   // first, then accounts with any transactions ahead of empty ones, then
-  // connection and name.
+  // connection and name. Sorting here rather than in the query is also what lets
+  // the name leg follow the *displayed* label — a renamed account sorts where the
+  // reader sees it, not where the provider's wording would have put it.
   return accounts.toSorted((a, b) => {
     if (a.status !== b.status) return a.status.localeCompare(b.status);
     const aHasTx = a._count.transactions > 0 ? 1 : 0;
@@ -31,7 +34,7 @@ export async function getAccounts() {
     if (aHasTx !== bHasTx) return bHasTx - aHasTx;
     const byConnection = a.connection.name.localeCompare(b.connection.name);
     if (byConnection !== 0) return byConnection;
-    return a.name.localeCompare(b.name);
+    return accountLabel(a).localeCompare(accountLabel(b));
   });
 }
 

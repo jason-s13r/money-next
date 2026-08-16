@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import { drawableCredit, spendFloor } from "../lib/accounts";
+import { accountLabel } from "../lib/account-name";
 
 /**
  * Which limits are credit you may spend, and which are just the size of a debt.
@@ -99,5 +100,36 @@ describe("plain money stops at empty", () => {
 
   test("missing balances are not a hole in the floor", () => {
     assert.equal(spendFloor({ balanceCurrent: null, balanceAvailable: null, balanceLimit: null }), 0);
+  });
+});
+
+/**
+ * Which of an account's two names a reader sees.
+ *
+ * The fallback is one line of code and is called from a dozen render sites, which
+ * is exactly why it is worth pinning: the failure mode is not a crash but a page
+ * that quietly shows the bank's wording after somebody renamed the account, and
+ * nothing else in the app would notice.
+ */
+describe("an account is called what the household calls it", () => {
+  test("the provider's name stands until someone overrides it", () => {
+    assert.equal(accountLabel({ name: "Cash Management Account", displayName: null }), "Cash Management Account");
+  });
+
+  test("an override wins", () => {
+    // The case the field exists for: a provider name built out of the holder's
+    // full name, next to the one word that actually distinguishes the account.
+    assert.equal(
+      accountLabel({ name: "A B Citizen's NZD Balance", displayName: "Wise NZD" }),
+      "Wise NZD",
+    );
+  });
+
+  test("an emptied override falls back rather than rendering nothing", () => {
+    // The action stores null for a cleared field, so these are rows written some
+    // other way — a script, a hand-run UPDATE. A blank heading would be worse
+    // than the verbose name someone was trying to get away from.
+    assert.equal(accountLabel({ name: "Everyday", displayName: "" }), "Everyday");
+    assert.equal(accountLabel({ name: "Everyday", displayName: "   " }), "Everyday");
   });
 });

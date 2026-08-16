@@ -18,7 +18,15 @@ import { DISPLAY_CURRENCY } from "./transactions";
 // row needs far less than a settled one — just enough to name its account and
 // value it in the display currency.
 const pendingListInclude = {
-  account: { select: { id: true, name: true, currency: true, connection: { select: { logo: true } } } },
+  account: {
+    select: {
+      id: true,
+      name: true,
+      displayName: true,
+      currency: true,
+      connection: { select: { logo: true } },
+    },
+  },
 } satisfies Prisma.PendingTransactionInclude;
 
 /**

@@ -1,6 +1,7 @@
 import Image from "next/image";
 
 import { Link } from "@/ui/chrome/workspace-context";
+import { accountLabel } from "@/lib/account-name";
 import { formatMoney } from "@/lib/format";
 
 // The accounts listing table. Structurally typed on just the fields it shows, so
@@ -9,6 +10,7 @@ import { formatMoney } from "@/lib/format";
 type AccountRow = {
   id: string;
   name: string;
+  displayName: string | null;
   formattedAccount: string | null;
   connectionId: string;
   connection?: { name: string; logo: string | null } | null;
@@ -84,7 +86,7 @@ export function AccountsTable({
                   />
                 ) : null}
                 <Link href={`/accounts/${account.id}`} className={link}>
-                  {account.name}
+                  {accountLabel(account)}
                 </Link>
               </div>
               <div className="mt-0.5 font-mono text-xs opacity-50">
