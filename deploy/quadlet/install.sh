@@ -9,7 +9,7 @@
 #   - builds the app (runner) and tooling (build) images, unless --no-build
 #   - copies money.env to ~/.config/money/money.env (chmod 600)
 #   - derives the three per-role DATABASE_URL env files from the passwords
-#   - installs the Quadlet units to ~/.config/containers/systemd/
+#   - installs the Quadlet units to ~/.config/containers/systemd/money/
 #   - runs `systemctl --user daemon-reload`
 #
 # It does NOT start anything — see the printed next steps.
@@ -65,7 +65,7 @@ if [[ "$build" == 1 ]]; then
 fi
 
 conf="$HOME/.config/money"
-units="$HOME/.config/containers/systemd"
+units="$HOME/.config/containers/systemd/money"
 mkdir -p "$conf" "$units"
 
 echo "==> Writing secrets to $conf"
