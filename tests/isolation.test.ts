@@ -370,6 +370,10 @@ describe("the unscoped client stays unreachable", () => {
       // definition — the caller is outside every workspace and is asking which
       // one to join.
       "scripts/membership.ts",
+      // Shared by the two scripts that invite someone in. `Invite` is control
+      // plane for the same reason `Membership` is, and the invitee is outside
+      // the workspace by definition, often with no account at all.
+      "scripts/invite.ts",
       // The other bootstrap: sets a locked-out user's password from the shell,
       // looking them up by email. No session, no workspace — the whole point is
       // that the in-app paths are unreachable (see the file's header).

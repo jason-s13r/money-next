@@ -65,11 +65,11 @@ export const DESCRIPTIONS: Record<string, string> = {
   "user:list": "Every account, its workspaces, and whether it has a second factor",
   "user:delete": "Delete an account (not the workspaces it owns)",
   "user:rename": "Change a display name",
-  "user:password": "Set a password from the shell, for someone locked out",
+  "user:password": "Set a password, or email a reset link, for someone locked out",
 
-  "workspace:create": "Create a workspace and its first owner",
+  "workspace:create": "Create a workspace, for an owner who exists or one you invite",
   "workspace:list": "Every tenant, its members, and where its bank credentials come from",
-  "workspace:member": "Put an existing user into an existing workspace",
+  "workspace:member": "Add someone to a workspace, outright or by emailing an invite",
   "workspace:delete": "Delete a workspace and all its financial data",
 
   "email:list": "Queued and failed messages, with the reason each one failed",

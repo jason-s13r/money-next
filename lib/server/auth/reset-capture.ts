@@ -12,8 +12,8 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * *only* to the `sendResetPassword` callback. So to surface the link we have to
  * catch the token as it passes through that callback.
  *
- * An `AsyncLocalStorage` is the race-free way to do it. The owner action (and the
- * `user:password` script) run `requestPasswordReset` inside `withResetTokenCapture`;
+ * An `AsyncLocalStorage` is the race-free way to do it. The owner action (and
+ * `pnpm user:password --send-email`) run `requestPasswordReset` inside `withResetTokenCapture`;
  * Better Auth invokes `sendResetPassword` synchronously within that same async
  * context — it `await`s the callback rather than backgrounding it, because no
  * `advanced.backgroundTasks.handler` is configured — so `captureResetToken` finds
@@ -43,8 +43,8 @@ export const RESET_TOKEN_TTL_SECONDS = 60 * 60;
  *
  * That answer is load-bearing now that this instance can send mail. An active
  * bucket means the reset was asked for through one of *this app's* paths — an
- * owner on the members page, or `pnpm user:password` — because those are the only
- * callers that open one. No bucket means the request came from a bare POST to
+ * owner on the members page, or `pnpm user:password --send-email` — because those
+ * are the only callers that open one. No bucket means the request came from a bare POST to
  * `/api/auth/request-password-reset`, which Better Auth exposes publicly and this
  * app deliberately does not build a form for.
  *

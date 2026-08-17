@@ -53,6 +53,15 @@ function baseUrl(): string {
   return parsed.origin;
 }
 
+/**
+ * Exported for the CLI, which prints the link when SMTP is unconfigured and
+ * `enqueueEmail` no-ops. Same builder, so the printed link cannot drift.
+ */
+export const inviteUrl = (inviteId: string) => `${baseUrl()}/invite/${inviteId}`;
+
+export const resetUrl = (token: string) =>
+  `${baseUrl()}/reset-password?token=${encodeURIComponent(token)}`;
+
 const escapeHtml = (value: string) =>
   value
     .replaceAll("&", "&amp;")
@@ -106,7 +115,7 @@ export function inviteMessage(opts: {
         "you don't have an account yet. It only works for this email address.",
       "The invitation expires in three days.",
     ],
-    { label: "Accept the invitation", url: `${baseUrl()}/invite/${opts.inviteId}` },
+    { label: "Accept the invitation", url: inviteUrl(opts.inviteId) },
   );
 
   return {
@@ -126,7 +135,7 @@ export function inviteMessage(opts: {
  * mentioning rather than ignoring.
  */
 export function resetMessage(opts: { to: string; token: string }): OutboxMessage {
-  const url = `${baseUrl()}/reset-password?token=${encodeURIComponent(opts.token)}`;
+  const url = resetUrl(opts.token);
 
   const { text, html } = body(
     [

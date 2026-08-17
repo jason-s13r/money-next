@@ -5,6 +5,7 @@ import { betterAuth } from "better-auth";
 import { prismaAdapter } from "better-auth/adapters/prisma";
 import { nextCookies } from "better-auth/next-js";
 import { organization, twoFactor } from "better-auth/plugins";
+import type { OrganizationOptions } from "better-auth/plugins/organization";
 
 import { authDb } from "../db";
 import { inviteMessage, resetMessage } from "../email/messages";
@@ -24,6 +25,73 @@ function authSecret() {
   }
   return secret;
 }
+
+/**
+ * Exported because the CLI needs the *same* options object. `createInvitation`
+ * is the one endpoint here that requires a session, so `workspace:member
+ * --invite` goes a layer down to `getOrgAdapter`, which takes these as an
+ * argument — without the schema mapping below it writes to columns that do not
+ * exist. They cannot be read back at runtime: the plugin attaches them to
+ * endpoint contexts, not to `auth.$context`.
+ */
+export const organizationOptions = {
+  // Our tables, under their own names. `modelName` is the *Prisma client
+  // property*, not the model — the adapter does `db[modelName]`, so it is
+  // `membership`, not `Membership`.
+  schema: {
+    organization: {
+      modelName: "workspace",
+    },
+    member: {
+      modelName: "membership",
+      fields: { organizationId: "workspaceId" },
+    },
+    invitation: {
+      modelName: "invite",
+      fields: { organizationId: "workspaceId", inviterId: "invitedByUserId" },
+    },
+    session: {
+      // Nothing reads this: the URL names the workspace and the membership
+      // check decides. Mapped only because the plugin's endpoints write it.
+      fields: { activeOrganizationId: "activeWorkspaceId" },
+    },
+  },
+
+  ac,
+  roles: { owner, editor, viewer },
+  // The plugin holds the last-owner invariant for us: `leave` and
+  // `update-member-role` refuse to strip the final one.
+  creatorRole: "owner",
+
+  invitationExpiresIn: 60 * 60 * 24 * 3, // 3 days, as seconds.
+
+  // Pinned rather than inferred: nothing here ever sets `User.emailVerified`
+  // (an address is proven by having received the invite), so were the plugin's
+  // default to flip, every acceptance would fail on a column nothing writes.
+  requireEmailVerificationOnInvitation: false,
+
+  // Delivery is ours: `app/w/[workspace]/members` surfaces a copyable link,
+  // and the message below is queued as well when SMTP is configured. The
+  // plugin still owns the expiry, the role and the single-use redemption.
+  //
+  // The link is not the capability — accepting requires a session whose email
+  // matches the invite — so emailing it widens the window less than it looks.
+  // It does widen it: a link handed over directly is a narrower channel than
+  // one that rests in a mailbox at a third party indefinitely.
+  //
+  // Only the endpoint calls this; the adapter sits below it, so a shell invite
+  // queues its own message.
+  async sendInvitationEmail(data) {
+    await enqueueEmail(
+      inviteMessage({
+        to: data.email,
+        workspaceName: data.organization.name,
+        inviterName: data.inviter.user.name || null,
+        inviteId: data.id,
+      }),
+    );
+  },
+} satisfies OrganizationOptions;
 
 export const auth = betterAuth({
   database: prismaAdapter(authDb, { provider: "postgresql" }),
@@ -92,56 +160,7 @@ export const auth = betterAuth({
     // capability is what is expensive to retrofit onto live accounts.
     twoFactor(),
 
-    organization({
-      // Our tables, under their own names. `modelName` is the *Prisma client
-      // property*, not the model — the adapter does `db[modelName]`, so it is
-      // `membership`, not `Membership`.
-      schema: {
-        organization: {
-          modelName: "workspace",
-        },
-        member: {
-          modelName: "membership",
-          fields: { organizationId: "workspaceId" },
-        },
-        invitation: {
-          modelName: "invite",
-          fields: { organizationId: "workspaceId", inviterId: "invitedByUserId" },
-        },
-        session: {
-          // Nothing reads this: the URL names the workspace and the membership
-          // check decides. Mapped only because the plugin's endpoints write it.
-          fields: { activeOrganizationId: "activeWorkspaceId" },
-        },
-      },
-
-      ac,
-      roles: { owner, editor, viewer },
-      // The plugin holds the last-owner invariant for us: `leave` and
-      // `update-member-role` refuse to strip the final one.
-      creatorRole: "owner",
-
-      invitationExpiresIn: 60 * 60 * 24 * 3, // 3 days, as seconds.
-
-      // Delivery is ours: `app/w/[workspace]/members` surfaces a copyable link,
-      // and the message below is queued as well when SMTP is configured. The
-      // plugin still owns the expiry, the role and the single-use redemption.
-      //
-      // The link is not the capability — accepting requires a session whose email
-      // matches the invite — so emailing it widens the window less than it looks.
-      // It does widen it: a link handed over directly is a narrower channel than
-      // one that rests in a mailbox at a third party indefinitely.
-      async sendInvitationEmail(data) {
-        await enqueueEmail(
-          inviteMessage({
-            to: data.email,
-            workspaceName: data.organization.name,
-            inviterName: data.inviter.user.name || null,
-            inviteId: data.id,
-          }),
-        );
-      },
-    }),
+    organization(organizationOptions),
 
     // Must stay last — Better Auth applies plugin hooks in order, and this wraps
     // every endpoint so `set-cookie` survives a call from a server action.
