@@ -2,8 +2,23 @@
 # The `money` CLI — admin operations for a running instance. See cli/index.ts.
 #
 # A wrapper rather than a shebang on the TS entry point: tsx has to be in node
-# before node can read a `.ts` file at all. Paths resolve from this file, so the
-# `.env` loaded is always the repo's, whatever the working directory.
+# before node can read a `.ts` file at all.
 set -e
-root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
-exec node --import tsx --env-file-if-exists="$root/.env" "$root/cli/index.ts" "$@"
+
+# Resolved through symlinks, because the repo is `..` from the real file and not
+# from the link: the image puts this on PATH as /usr/local/bin/money, and npm
+# links it into node_modules/.bin. `readlink -f` is not POSIX, hence the loop.
+self=$0
+while [ -L "$self" ]; do
+  target=$(readlink "$self")
+  case $target in
+    /*) self=$target ;;
+    *) self=$(dirname -- "$self")/$target ;;
+  esac
+done
+
+# Run from the repo whatever the caller's directory: `--import tsx` is a bare
+# specifier, so node resolves it against the working directory. No command takes
+# a path argument, so nothing else depends on where it was invoked.
+cd -- "$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)"
+exec node --import tsx --env-file-if-exists=.env cli/index.ts "$@"
