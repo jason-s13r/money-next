@@ -4,7 +4,7 @@
 // table each sync so an `nzfcc_...` id resolves to a name and group without a
 // network hop, and so a category the standard adds shows up rather than never.
 //
-// No `import "server-only"`: scripts/ingest.ts imports this from plain Node.
+// No `server-only`: the sync worker imports this from plain Node, where it throws.
 
 export const NZFCC_CATEGORIES_URL = "https://nzfcc.org/downloads/categories.json";
 

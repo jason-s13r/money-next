@@ -364,20 +364,20 @@ describe("the unscoped client stays unreachable", () => {
       "app/account/actions.ts",
       // The bootstrap: creates the first user, who by definition has no session
       // and no membership yet.
-      "scripts/create-user.ts",
-      // Shared by the two scripts that place a person in a workspace. Resolving
+      "cli/commands/user/create.ts",
+      // Shared by the two commands that place a person in a workspace. Resolving
       // a workspace by slug and reading a membership are control-plane reads by
       // definition — the caller is outside every workspace and is asking which
       // one to join.
-      "scripts/membership.ts",
-      // Shared by the two scripts that invite someone in. `Invite` is control
+      "cli/lib/membership.ts",
+      // Shared by the two commands that invite someone in. `Invite` is control
       // plane for the same reason `Membership` is, and the invitee is outside
       // the workspace by definition, often with no account at all.
-      "scripts/invite.ts",
+      "cli/lib/invite.ts",
       // The other bootstrap: sets a locked-out user's password from the shell,
       // looking them up by email. No session, no workspace — the whole point is
       // that the in-app paths are unreachable (see the file's header).
-      "scripts/set-password.ts",
+      "cli/commands/user/password.ts",
       // Tenant lifecycle from the shell. A workspace cannot be created,
       // inspected or destroyed from inside one — there is no `[workspace]`
       // segment to authorize against and no site-admin role to authorize it
@@ -385,23 +385,23 @@ describe("the unscoped client stays unreachable", () => {
       // `Workspace`/`Membership`/`User`, the control plane; where any of them
       // touches tenant data (bank links, the counts in the delete preview) it
       // goes through `scopedDb`, one workspace at a time.
-      "scripts/create-workspace.ts",
-      "scripts/list-workspaces.ts",
-      "scripts/list-users.ts",
-      "scripts/add-member.ts",
-      "scripts/delete-workspace.ts",
-      "scripts/delete-user.ts",
+      "cli/commands/workspace/create.ts",
+      "cli/commands/workspace/list.ts",
+      "cli/commands/user/list.ts",
+      "cli/commands/workspace/add-member.ts",
+      "cli/commands/workspace/delete.ts",
+      "cli/commands/user/delete.ts",
       // Changing someone's display name: a `User` row found by email, with no
       // session to find it from. Same control-plane read as the two above, and
       // the column it writes carries no auth semantics (see the file's header).
-      "scripts/rename-user.ts",
+      "cli/commands/user/rename.ts",
       // One-shot that retires the bootstrap rows' placeholder ids. Reads the two
       // rows by their placeholder ids across tenants (control plane — there is at
       // most one of each instance-wide), renames the workspace and fixes the one
       // reference no FK cascade reaches (`Session.activeWorkspaceId`) through
       // `authDb`; the link rename, being a tenant-table write, goes through
       // `scopedDb`.
-      "scripts/unhook-bootstrap-ids.ts",
+      "cli/commands/unhook-bootstrap-ids.ts",
       // Queuing mail, and the worker draining that queue. An `EmailOutbox` row has
       // no workspace to scope it by: a password reset belongs to a person, and
       // `/account` can ask for one with no workspace in scope at all. Control
@@ -409,8 +409,8 @@ describe("the unscoped client stays unreachable", () => {
       // financial data by standing rule — an address, a link and prose.
       "lib/server/email/outbox.ts",
       "scripts/drain.ts",
-      "scripts/list-emails.ts",
-      "scripts/retry-emails.ts",
+      "cli/commands/email/list.ts",
+      "cli/commands/email/retry.ts",
       // This file.
       "tests/isolation.test.ts",
     ]);

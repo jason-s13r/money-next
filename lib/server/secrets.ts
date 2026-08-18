@@ -9,12 +9,10 @@
  * in the same store as the ciphertext. A stolen dump is then inert — the thing
  * that opens it was never in the dump.
  *
- * No `server-only`, for the same reason as akahu.ts next door: `pnpm link:token`
- * and the sync worker are plain Node and import this outside any request. In fact
- * the *web app* is the one place that must not import it — see the inventory test
- * in tests/secrets.test.ts, and the blanked TOKEN_ENCRYPTION_KEY on the `app`
- * container in compose.prod.yaml. Phase 7 already left the web role unable to call
- * Akahu; this keeps it unable to read the credential that would let it.
+ * No `server-only`: the CLI and the sync worker import this from plain Node,
+ * where it throws. The *web app* is the one place that must not import it at all
+ * — phase 7 left the web role unable to call Akahu, and this keeps it unable to
+ * read the credential that would let it.
  *
  * The app *does* need to write a token now (the connect form), which is a
  * different power from reading one and gets a different key: ./seal.ts is the
@@ -59,7 +57,7 @@ const PRIVATE_KEY_ENV = "TOKEN_PRIVATE_KEY";
 function keyHint(problem: string): Error {
   return new Error(
     `${KEY_ENV} ${problem}. Generate one with \`openssl rand -base64 32\` and set it ` +
-      `wherever the sync worker and \`pnpm link:token\` run. It is not needed by the web app.`,
+      `wherever the sync worker and \`money link token\` run. It is not needed by the web app.`,
   );
 }
 
@@ -144,7 +142,7 @@ export function decryptSecret(blob: string, aad: string): string {
   if (parts.length !== 4 || parts[0] !== VERSION) {
     throw new Error(
       `Not a ${VERSION} or ${SEAL_VERSION} encrypted secret. Re-set this link's tokens with ` +
-        "`pnpm link:token`.",
+        "`money link token`.",
     );
   }
 
@@ -171,7 +169,7 @@ export function decryptSecret(blob: string, aad: string): string {
     // nothing about which of them to go and check.
     throw new Error(
       "Could not decrypt this link's Akahu token: wrong TOKEN_ENCRYPTION_KEY, altered " +
-        "ciphertext, or a value copied from another link. Re-set it with `pnpm link:token`.",
+        "ciphertext, or a value copied from another link. Re-set it with `money link token`.",
     );
   }
 }
@@ -192,7 +190,7 @@ function privateKey(): KeyObject {
   if (!raw) {
     throw new Error(
       `${PRIVATE_KEY_ENV} is not set, so a token connected through the app's form cannot be ` +
-        "opened. Generate the pair with `pnpm link:keypair` and set the private half wherever " +
+        "opened. Generate the pair with `money link keypair` and set the private half wherever " +
         "the sync worker runs — never on the web app.",
     );
   }

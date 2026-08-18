@@ -12,7 +12,7 @@ import { NOT_SAVED, type ConnectBankState } from "./types";
 /**
  * Connect a bank by pasting a personal Akahu token pair.
  *
- * `pnpm link:token` remains the operator path and is still the better one — it
+ * `money link token` remains the operator path and is still the better one — it
  * verifies the pair against Akahu and shows which accounts it can see before
  * storing anything, which is the only check that catches a token for the *wrong*
  * Akahu account (that authenticates fine and quietly ingests somebody else's
@@ -55,7 +55,7 @@ export async function connectBank(
 
   // The database mints the id, and each blob is bound to it as additional
   // authenticated data — so the row must exist before the tokens can be sealed.
-  // Both statements in one transaction, exactly as `pnpm link:token` does it: a
+  // Both statements in one transaction, exactly as `money link token` does it: a
   // failure between them would otherwise leave a link claiming `stored` with
   // nothing stored, which fails hours later as a sync error.
   const link = await withScopedTx(db, async (tx) => {
@@ -157,14 +157,13 @@ function readPair(formData: FormData): Pair | ConnectBankState {
     return fail("Those look swapped — the app token goes in the first field.");
   }
 
-  // Checked before the paste is treated as usable, not at the write: `pnpm
-  // link:token` checks its key up front for the same reason, so that a
-  // misconfigured instance does not make someone hand over a bank credential
+  // Checked before the paste is treated as usable, not at the write: a
+  // misconfigured instance must not make someone hand over a bank credential
   // for nothing.
   if (!hasSealKey()) {
     return fail(
       "This instance has no TOKEN_PUBLIC_KEY set, so a token cannot be stored safely. " +
-        "Whoever runs it needs to generate one with `pnpm link:keypair`.",
+        "Whoever runs it needs to generate one with `money link keypair`.",
     );
   }
 

@@ -6,12 +6,9 @@ export { scopedDb, scopedBatch, withScopedTx, type ScopedDb, type ScopedTx } fro
  * `getDb()` — the request-scoped client — deliberately does *not* live here. It
  * is in ./request, because it needs the session and this module must not.
  *
- * The reason is `scripts/ingest.ts` (and the tests): they import `catalogDb`
- * and `scopedDb` from here and run in plain Node, outside any request. If this
- * module reached for the auth layer, the cron would need `server-only` to
- * resolve and `BETTER_AUTH_SECRET` to be set before it could sync a bank —
- * which is nonsense, and would also make the import graph circular, since the
- * auth layer needs `authDb` from here.
+ * The callers that run outside a request would otherwise need
+ * `BETTER_AUTH_SECRET` set before they could sync a bank. It would also make the
+ * import graph circular, since the auth layer needs `authDb` from here.
  *
  * So: this module is the database, and knows nothing about who is asking.
  * ./request is the database *for a request*, and is where the two meet.
@@ -50,6 +47,6 @@ export const catalogDb = internalDb;
  * tables were a shared catalog.
  *
  * This is not a general-purpose escape hatch. It is for `lib/server/auth/` and
- * the bootstrap script. Financial data goes through `getDb()` or `scopedDb(id)`.
+ * the CLI. Financial data goes through `getDb()` or `scopedDb(id)`.
  */
 export const authDb = internalDb;

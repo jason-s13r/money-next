@@ -1,0 +1,9 @@
+#!/bin/sh
+# The `money` CLI — admin operations for a running instance. See cli/index.ts.
+#
+# A wrapper rather than a shebang on the TS entry point: tsx has to be in node
+# before node can read a `.ts` file at all. Paths resolve from this file, so the
+# `.env` loaded is always the repo's, whatever the working directory.
+set -e
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+exec node --import tsx --env-file-if-exists="$root/.env" "$root/cli/index.ts" "$@"

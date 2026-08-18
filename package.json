@@ -18,27 +18,11 @@
     "db:roles": "tsx --env-file-if-exists=.env scripts/db-roles.ts",
     "db:setup": "prisma migrate deploy && tsx --env-file-if-exists=.env scripts/db-roles.ts",
     "db:studio": "prisma studio",
-    "worker:sync": "tsx --env-file-if-exists=.env scripts/ingest.ts",
     "worker:start": "tsx --env-file-if-exists=.env scripts/worker.ts",
-    "db:sync": "echo 'DEPRECATED: db:sync is now worker:sync — please update your command' >&2 && pnpm worker:sync",
-    "db:worker": "echo 'DEPRECATED: db:worker is now worker:start — please update your command' >&2 && pnpm worker:start",
-    "user:create": "tsx --env-file-if-exists=.env scripts/create-user.ts",
-    "user:list": "tsx --env-file-if-exists=.env scripts/list-users.ts",
-    "user:delete": "tsx --env-file-if-exists=.env scripts/delete-user.ts",
-    "user:rename": "tsx --env-file-if-exists=.env scripts/rename-user.ts",
-    "user:password": "tsx --env-file-if-exists=.env scripts/set-password.ts",
-    "workspace:create": "tsx --env-file-if-exists=.env scripts/create-workspace.ts",
-    "workspace:list": "tsx --env-file-if-exists=.env scripts/list-workspaces.ts",
-    "workspace:member": "tsx --env-file-if-exists=.env scripts/add-member.ts",
-    "workspace:delete": "tsx --env-file-if-exists=.env scripts/delete-workspace.ts",
-    "email:list": "tsx --env-file-if-exists=.env scripts/list-emails.ts",
-    "email:retry": "tsx --env-file-if-exists=.env scripts/retry-emails.ts",
-    "email:clear-failed": "tsx --env-file-if-exists=.env scripts/retry-emails.ts --clear-failed",
-    "unhook-bootstrap-ids": "tsx --env-file-if-exists=.env scripts/unhook-bootstrap-ids.ts",
-    "link:token": "tsx --env-file-if-exists=.env scripts/link-token.ts",
-    "link:keypair": "tsx scripts/link-keypair.ts",
-    "link:upgrade": "tsx --env-file-if-exists=.env scripts/link-upgrade.ts",
-    "help:commands": "tsx scripts/help.ts"
+    "money:cli": "./bin/money"
+  },
+  "bin": {
+    "money": "./bin/money"
   },
   "engines": {
     "node": "^20.19 || ^22.12 || >=24.0"
@@ -55,6 +39,7 @@
     "better-auth": "^1.6.25",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "commander": "^15.0.0",
     "lucide-react": "^1.28.0",
     "next": "16.3.0",
     "next-themes": "^0.4.6",

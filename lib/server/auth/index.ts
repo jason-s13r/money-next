@@ -28,11 +28,10 @@ function authSecret() {
 
 /**
  * Exported because the CLI needs the *same* options object. `createInvitation`
- * is the one endpoint here that requires a session, so `workspace:member
- * --invite` goes a layer down to `getOrgAdapter`, which takes these as an
- * argument — without the schema mapping below it writes to columns that do not
- * exist. They cannot be read back at runtime: the plugin attaches them to
- * endpoint contexts, not to `auth.$context`.
+ * is the one endpoint here that requires a session, so the CLI goes a layer down
+ * to `getOrgAdapter`, which takes these as an argument — without the schema
+ * mapping below it writes to columns that do not exist. They cannot be read back
+ * at runtime: the plugin attaches them to endpoint contexts, not `auth.$context`.
  */
 export const organizationOptions = {
   // Our tables, under their own names. `modelName` is the *Prisma client

@@ -14,7 +14,7 @@ import { DEFAULT_SORT, type Sort } from "@/lib/transactions/sort";
 // pages all call. The listing functions themselves live in `index.ts`.
 //
 // The dashboard reads only from the database. Nothing here calls Akahu — that
-// happens out-of-band in scripts/ingest.ts, so page loads never wait on a bank
+// happens out-of-band in the sync worker, so page loads never wait on a bank
 // refresh.
 //
 // Every query awaits `connection()` first, so that a query can't resolve during

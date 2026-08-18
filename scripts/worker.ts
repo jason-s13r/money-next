@@ -7,12 +7,12 @@
  * Phase 7 moved work off the request. The web app (`money_app`) no longer runs the
  * ingest or a whole-workspace rules pass in-request — it writes a `SyncRun` or a
  * `RuleRun` in the `queued` state and returns. This worker (`money_sync`) is what
- * actually does the work. Since `pnpm worker:sync` became an enqueuer too, this is the
+ * actually does the work. Since `money sync` became an enqueuer too, this is the
  * *only* process that calls Akahu or decrypts a stored token: scheduled syncs and
  * on-demand ones now arrive by the same road.
  *
- * The queue machinery itself is scripts/drain.ts, shared with `worker:sync --drain`.
- * What is left here is the loop and the process: poll, drain, sleep.
+ * The queue machinery itself is ./drain, shared with `money sync --drain`. What
+ * is left here is the loop and the process: poll, drain, sleep.
  *
  * Short-poll, not LISTEN/NOTIFY: a self-host wants the simplest thing that makes a
  * user-triggered job feel prompt, and a few seconds' latency is fine.
@@ -21,17 +21,13 @@
  * nothing breaks if a second drainer overlaps, since every claim is atomic.
  */
 
-// Bound in `main`, after the `--help` check, rather than imported statically:
-// scripts/drain.ts pulls in lib/server/db, which throws at module scope without
-// DATABASE_URL, so a static import would make `--help` fail on a machine that has
-// not been configured — which is the machine whose operator is reading it. Same
-// pattern as the bootstrap scripts. (Before `worker:sync` became an enqueuer this was
-// not achievable here: the ingest pipeline was imported at module scope.)
+// Bound in `main`, after the `--help` check: ./drain pulls in lib/server/db,
+// which throws at module scope without DATABASE_URL, so a static import would
+// make `--help` fail on the machine whose operator is reading it.
 let drain: typeof import("./drain");
 
-// See the note in list-workspaces.ts: every import here is dynamic, and a file
-// with no static import or export is not a module — its `const`s would land in
-// the global scope and collide with the next script's.
+// Every import here is dynamic, and a file with no static import or export is
+// not a module — its `const`s would land in the global scope.
 export {};
 
 const POLL_SECONDS = Number(process.env.WORKER_POLL_SECONDS ?? 5);
@@ -43,7 +39,7 @@ const USAGE = `Usage:
   pnpm worker:start --once     drain whatever is queued now, then exit
 
 Claims the SyncRun and RuleRun rows everything else enqueues — the app's "sync
-now" and "apply now" buttons, the scheduled \`pnpm worker:sync\`, and the rules pass
+now" and "apply now" buttons, the scheduled \`money sync\`, and the rules pass
 an ingest queues behind itself. This is the only process that calls Akahu or
 decrypts a stored token, so the web role needs neither. Also reaps runs whose
 worker died mid-job. Tuned by WORKER_POLL_SECONDS, WORKER_MAX_ATTEMPTS,

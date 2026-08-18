@@ -3,19 +3,14 @@
 // Phase 7 moved the work off the request: nothing that talks to Akahu or walks
 // every transaction runs in the web process any more. Instead a caller writes a
 // `queued` SyncRun or RuleRun — a tenant INSERT `money_app` already holds — and
-// the `money_sync` worker (scripts/worker.ts, scripts/drain.ts) claims it, runs
-// it and finalises it.
+// the `money_sync` worker claims it, runs it and finalises it.
 //
-// There are four enqueuers now and they must agree, which is why this module
-// exists rather than the `create` being written out at each one:
+// Four enqueuers must agree, which is why this module exists rather than the
+// `create` being written out at each one: the /sync button, the /rules "apply
+// now" button, the scheduled `money sync`, and the ingest queuing the rules pass
+// that follows it.
 //
-//   * the /sync page and nav button        (app/w/[workspace]/actions.ts)
-//   * the /rules "apply now" button        (app/w/[workspace]/rules/actions.ts)
-//   * the scheduled sync                   (scripts/ingest.ts, `pnpm worker:sync`)
-//   * the ingest itself, queuing the rules pass that follows it
-//                                          (lib/server/ingest/sync.ts)
-//
-// No `import "server-only"`: the last two run in plain Node, outside any request.
+// No `server-only`: the last two run in plain Node, where it throws.
 //
 // ## Coalescing
 //

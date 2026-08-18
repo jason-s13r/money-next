@@ -266,7 +266,7 @@ describe("sealSecret / decryptSecret", () => {
   });
 
   test("the two halves cannot be swapped between variables", () => {
-    // The mistake `pnpm link:keypair` prints two labelled lines to prevent, and
+    // The mistake `money link keypair` prints two labelled lines to prevent, and
     // the one whose OpenSSL error is least informative.
     process.env.TOKEN_PUBLIC_KEY = PAIR_A.private;
     assert.equal(hasSealKey(), false);
@@ -318,12 +318,12 @@ describe("sealSecret / decryptSecret", () => {
   test("a missing public key says what to do about it", () => {
     delete process.env.TOKEN_PUBLIC_KEY;
     assert.equal(hasSealKey(), false);
-    assert.throws(() => sealSecret("t", AAD_PK), /pnpm link:keypair/);
+    assert.throws(() => sealSecret("t", AAD_PK), /money link keypair/);
   });
 });
 
 /**
- * `pnpm link:upgrade` in miniature: the conversion itself, without the database.
+ * `money link upgrade` in miniature: the conversion itself, without the database.
  *
  * The script's own loop is bookkeeping; what would actually lose someone's bank
  * connection is the re-encryption being wrong in a way that still writes — so
@@ -451,7 +451,7 @@ describe("resolveToken", () => {
     );
 
     // Half a pair is the same answer: a row mid-way through an interrupted
-    // `pnpm link:token` must not sync with the env user token.
+    // `money link token` must not sync with the env user token.
     assert.throws(
       () =>
         resolveToken(

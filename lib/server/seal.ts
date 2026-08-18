@@ -5,7 +5,7 @@
  * symmetric, so a process that can encrypt a token can decrypt every token, and
  * the internet-facing service holding that key turns any compromise of it into a
  * live banking-read (T19). That was fine for as long as tokens only ever arrived
- * through `pnpm link:token`, which runs on the host.
+ * through `money link token`, which runs on the host.
  *
  * The connect form (app/w/[workspace]/sync/connect-form.tsx) needs the app to
  * *write* a credential it must never be able to *read*, and that is a shape
@@ -53,12 +53,12 @@ const KEY_ENV = "TOKEN_PUBLIC_KEY";
  */
 const OAEP_HASH = "sha256";
 
-/** Bits, matched by scripts/link-keypair.ts. See `sealSecret` for what it bounds. */
+/** Bits, matched by `money link keypair`. See `sealSecret` for what it bounds. */
 export const KEY_BITS = 3072;
 
 function keyHint(problem: string): Error {
   return new Error(
-    `${KEY_ENV} ${problem}. Generate a keypair with \`pnpm link:keypair\`, put the public ` +
+    `${KEY_ENV} ${problem}. Generate a keypair with \`money link keypair\`, put the public ` +
       `half here and the private half in TOKEN_PRIVATE_KEY wherever the sync worker runs. ` +
       `The app gets only this one — that is the point of there being two.`,
   );

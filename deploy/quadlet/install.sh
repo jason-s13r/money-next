@@ -128,18 +128,26 @@ Done. Next steps:
   systemctl --user status money-migrate.service
   journalctl --user -u money-app.service -f
 
-The operator CLIs (user:*, workspace:*, link:token, unhook-bootstrap-ids) live in
-the tooling image, not the app image, so they run inside money-worker. Several
+The admin CLI (money user, money workspace, money link, money sync, …) lives in the
+tooling image, not the app image, so it runs inside money-worker. Several commands
 prompt for a secret, hence -it. Worth an alias in ~/.bashrc:
 
-  alias moneycli='podman exec -it --env-file ~/.config/money/db-owner.env money-worker pnpm'
+  alias moneycli='podman exec -it --env-file ~/.config/money/db-owner.env money-worker money'
 
-  moneycli user:create --email you@example.com --name "Your Name" --owner
-  moneycli link:token --list
+  moneycli                     # every command, grouped
+  moneycli user create --email you@example.com --name "Your Name"
+  moneycli link token --list
 
-The owner connection is what makes one alias cover every script: money-worker runs
+Tab completion, once:
+
+  moneycli completion bash > ~/.bashrc.d/moneycli.sh
+
+An older alias ending in `pnpm` keeps working — `moneycli money:cli user create` —
+so upgrading the box and re-sourcing your shell profile are not the same step.
+
+The owner connection is what makes one alias cover every command: money-worker runs
 as money_sync, which has SELECT on Workspace and no access to User or Session at
-all, so anything touching the control plane needs the env-file override. link:token
+all, so anything touching the control plane needs the env-file override. `link token`
 is the exception that would rather have the container's own money_sync identity —
 drop the --env-file for that one if you care to.
 

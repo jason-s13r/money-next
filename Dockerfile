@@ -46,6 +46,9 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # The client is generated into lib/generated/prisma and is not in git.
 RUN pnpm prisma generate
 RUN pnpm build
+# The admin CLI on PATH, so `podman exec money-worker money user list` works and
+# the operator's alias does not have to carry `pnpm` (deploy/quadlet/install.sh).
+RUN ln -s /app/bin/money /usr/local/bin/money
 
 # ---- runner: the minimal standalone app image. No source, no Prisma CLI, no
 # tsx — migrations and the cron sync run on the `build` image instead. ----

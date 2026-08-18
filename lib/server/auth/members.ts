@@ -23,9 +23,7 @@ import { ROLES, type Role } from "./roles";
  * read. Writes carry the invariants that are dangerous to re-derive: the
  * last-owner rule, the single-use redemption, which roles may hand out which
  * roles. A `membership.delete()` written here would be a second, divergent
- * definition of what removing a member means — the same argument
- * `scripts/create-user.ts` makes for minting users through `signUpEmail` rather
- * than inserting a row.
+ * definition of what removing a member means.
  */
 
 export type WorkspaceMember = {

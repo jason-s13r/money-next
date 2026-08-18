@@ -9,11 +9,10 @@ import { enqueueSync } from "@/lib/server/queue";
 /**
  * Thrown when a sync is asked for in a workspace that has no bank connected.
  *
- * Not a fault: a workspace starts with no link and stays that way until an
- * operator runs `pnpm link:token` (the token never goes through a web form).
- * So the person clicking Sync has done nothing wrong, and "something went
- * wrong, trying again is safe" is both untrue and unhelpful — a retry cannot
- * succeed until somebody with shell access acts.
+ * Not a fault: a workspace starts with no link and stays that way until a bank
+ * is connected. So the person clicking Sync has done nothing wrong, and
+ * "something went wrong, trying again is safe" is both untrue and unhelpful —
+ * no retry succeeds until a link exists.
  *
  * Carries its own `digest`: in production Next strips a server error's
  * `message` before it reaches the browser, and a digest the error brought
@@ -80,7 +79,7 @@ async function enqueueSyncNow(db: ScopedDb) {
 
 /**
  * Queue an incremental sync: an Akahu refresh followed by a sync from the stored
- * high-water mark. The manual counterpart to the cron-driven `pnpm worker:sync`.
+ * high-water mark. The manual counterpart to the cron-driven `money sync`.
  *
  * Returns as soon as the job is queued — the worker does the actual fetch, which
  * can take several seconds, so the button is no longer blocked on it. `/sync`

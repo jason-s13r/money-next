@@ -1,26 +1,24 @@
 /**
- * Inviting someone from the shell, shared by `workspace:member --invite` and
- * `workspace:create --invite-owner`.
+ * Inviting someone from the shell.
  *
- * Not `auth.api.createInvitation`: that endpoint resolves the *caller's*
- * membership to check `invitation: ["create"]`, so unlike `createOrganization`
- * and `addMember` it has no sessionless mode. Everything below it does, so this
- * drops to `getOrgAdapter` — a public export, and what the endpoints are built
- * on. Same row; what is given up is the permission check (the authority here is
- * shell access) and `sendInvitationEmail`, hence the queueing below.
+ * Not `auth.api.createInvitation`: it resolves the *caller's* membership to
+ * check `invitation: ["create"]`, so unlike `createOrganization` and `addMember`
+ * it has no sessionless mode. This drops to `getOrgAdapter`, a public export and
+ * what the endpoints are built on. Same row; what is given up is the permission
+ * check (the authority here is shell access) and `sendInvitationEmail`.
  *
- * `invitedByUserId` is null throughout: the operator is often in no workspace at
- * all, and with `--invite-owner` nobody is. Naming one would invent an inviter.
+ * `invitedByUserId` stays null: the operator is often in no workspace, and with
+ * `--invite-owner` nobody is. Naming one would invent an inviter.
  */
 import type { User } from "better-auth";
 
-import type { Role } from "../lib/server/auth/roles";
+import type { Role } from "../../lib/server/auth/roles";
 
 type Workspace = { id: string; name: string; slug: string };
 
-/** Also used by `workspace:create --invite-owner`, for a memberless workspace. */
+/** Also used directly by `workspace create --invite-owner`, which has no members yet. */
 export async function orgAdapter() {
-  const { auth, organizationOptions } = await import("../lib/server/auth");
+  const { auth, organizationOptions } = await import("../../lib/server/auth");
   const { getOrgAdapter } = await import("better-auth/plugins/organization");
 
   // Variance wart in the library's types: `auth.$context` is typed against this
@@ -42,10 +40,9 @@ export type SentInvite = {
 /**
  * Create an invitation and queue its email, or re-send one already outstanding.
  *
- * A live invitation is re-sent as-is rather than refused, since the usual reason
- * for running the command twice is that the first message did not arrive. The
- * caller is told, because the expiry still runs from the first attempt. A lapsed
- * one is superseded instead.
+ * A live invitation is re-sent rather than refused — running the command twice
+ * usually means the first message did not arrive. The caller is told, since the
+ * expiry still runs from the first attempt. A lapsed one is superseded.
  */
 export async function sendInvite(args: {
   workspace: Workspace;
@@ -54,10 +51,10 @@ export async function sendInvite(args: {
   /** Pre-fills the signup form. A convenience, never a control. */
   name?: string;
 }): Promise<SentInvite> {
-  const { authDb } = await import("../lib/server/db");
-  const { emailEnabled } = await import("../lib/server/email/config");
-  const { inviteMessage, inviteUrl } = await import("../lib/server/email/messages");
-  const { enqueueEmail } = await import("../lib/server/email/outbox");
+  const { authDb } = await import("../../lib/server/db");
+  const { emailEnabled } = await import("../../lib/server/email/config");
+  const { inviteMessage, inviteUrl } = await import("../../lib/server/email/messages");
+  const { enqueueEmail } = await import("../../lib/server/email/outbox");
 
   // The endpoint lowercases before storing, so matching it is what makes "is
   // one already outstanding" the same question the app asks.

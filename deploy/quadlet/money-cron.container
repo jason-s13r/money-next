@@ -18,7 +18,7 @@ Pod=money.pod
 EnvironmentFile=%h/.config/money/money.env
 EnvironmentFile=%h/.config/money/db-sync.env
 # Blanked for the same reason as money-app, and newly true here: an enqueuer never
-# opens a token. Since `pnpm worker:sync` stopped doing the ingest itself, money-worker
+# opens a token. Since `money sync` stopped doing the ingest itself, money-worker
 # is the only container that decrypts one. `Environment=` is applied after
 # `EnvironmentFile=`, so this wins.
 Environment=TOKEN_ENCRYPTION_KEY=
@@ -29,7 +29,7 @@ Environment=TOKEN_PRIVATE_KEY=
 # money-worker stays the only container that authenticates to anything outside
 # the pod. Only the password — the rest of the SMTP settings are not secrets.
 Environment=SMTP_PASSWORD=
-Exec=sh -c "while true; do pnpm worker:sync || echo 'sync failed'; sleep ${SYNC_INTERVAL_SECONDS:-21600}; done"
+Exec=sh -c "while true; do money sync || echo 'sync failed'; sleep ${SYNC_INTERVAL_SECONDS:-21600}; done"
 
 [Service]
 Restart=always

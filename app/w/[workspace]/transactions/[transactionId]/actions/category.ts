@@ -8,7 +8,7 @@ import { getDb } from "@/lib/server/db/request";
 // Manual re-classification of a single transaction, and of the rows on the page
 // that look like it.
 //
-// A hand-set field is marked `source: "user"` so `scripts/ingest.ts` stops
+// A hand-set field is marked `source: "user"` so the ingest pipeline stops
 // overwriting it — instead the sync records a `TransactionConflict` when Akahu
 // later reports a different, non-null value. See the schema notes on
 // `Transaction.categorySource` and `TransactionConflict`.

@@ -4,7 +4,7 @@
  *   pnpm test
  *
  * `lib/server/queue.ts` is reached by the /sync button, the /rules "apply now"
- * button, the scheduled `pnpm worker:sync`, and the ingest queuing its own follow-up
+ * button, the scheduled `money sync`, and the ingest queuing its own follow-up
  * rules pass. What it decides — reuse the waiting run or write a new one, widen it
  * or leave it, clear the retry backoff or respect it — is invisible at every call
  * site and is exactly the kind of thing that gets "simplified" by someone reading

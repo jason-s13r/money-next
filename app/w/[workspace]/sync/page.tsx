@@ -74,13 +74,7 @@ export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/s
       {offerConnect ? <ConnectBankForm /> : null}
 
       {items.length === 0 ? (
-        <p className="py-8 text-center text-sm opacity-60">
-          {/* Two different empty states wearing one sentence until now. With no
-              bank connected the form above is the answer and this would be
-              advice to run a command that has nothing to sync; with a bank
-              connected it is the honest answer. */}
-          {links.length === 0 ? "No sync runs yet." : "No sync runs yet. Run `pnpm worker:sync`."}
-        </p>
+        <p className="py-8 text-center text-sm opacity-60">No sync runs yet.</p>
       ) : (
         <>
           <div className="overflow-x-auto">

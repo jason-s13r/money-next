@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { assertSlug, chooseSlug, slugBase, slugify, suggestName } from "../scripts/slug";
+import { assertSlug, chooseSlug, slugBase, slugify, suggestName } from "../cli/lib/slug";
 
 /**
  * The rules that turn a workspace's name into its URL.

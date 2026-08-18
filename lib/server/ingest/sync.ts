@@ -43,7 +43,7 @@ export type SyncCounts = {
 };
 
 /**
- * Run the same ingest pipeline used by `pnpm worker:sync`, but usable from a server
+ * Run the same ingest pipeline used by `money sync`, but usable from a server
  * action as well as from the cron script. `args.full` re-fetches the whole
  * history window; omitting it performs an incremental sync from the stored
  * high-water mark.

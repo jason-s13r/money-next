@@ -1,9 +1,9 @@
 // Reconciliation between an enrichment field the sync must not touch — one a user
-// or a rule owns — and what a later Akahu sync reports for it. Lives here rather
-// than in scripts/ingest.ts so it can be reused (a review-queue page, tests)
-// without importing the ingest entrypoint, which runs a sync on import.
+// or a rule owns — and what a later Akahu sync reports for it. Kept out of
+// ./sync.ts so a review-queue page or a test can reuse it without pulling in the
+// pipeline.
 //
-// No `import "server-only"`: scripts/ingest.ts imports this from plain Node.
+// No `server-only`: the sync worker imports this from plain Node, where it throws.
 
 import type { ScopedDb } from "../db";
 import type { Prisma, TransactionConflict } from "../../generated/prisma/client";

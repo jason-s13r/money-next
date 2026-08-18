@@ -79,12 +79,12 @@ pnpm db:setup          # = db:deploy + db:roles; in dev, `pnpm db:migrate` first
 
 # 5. Create the first account and its workspace
 #    Registration is invite-only, so the first user cannot come from the app.
-pnpm user:create --email you@example.com --name "Sam"
-pnpm workspace:create --owner you@example.com --name "Personal"
+money user create --email you@example.com --name "Sam"
+money workspace create --owner you@example.com --name "Personal"
 
 # 6. Pull your accounts and transactions from Akahu
 #    (--drain does the work here; without it the sync is queued for `pnpm worker:start`)
-pnpm worker:sync --drain
+money sync --drain
 
 # 7. Start the dev server
 pnpm dev
@@ -95,20 +95,33 @@ Open [http://localhost:3000](http://localhost:3000) and sign in.
 Everyone after the first user arrives through an invite link from
 `/w/<slug>/members`. A workspace that wants its own bank connection (rather than
 the instance-wide `AKAHU_*` pair) connects one from the app — which needs
-`TOKEN_PUBLIC_KEY` set, from `pnpm link:keypair` — or from the shell with
-`pnpm link:token`.
+`TOKEN_PUBLIC_KEY` set, from `money link keypair` — or from the shell with
+`money link token`.
 
 Nothing syncs and no budget is inferred unless a worker is draining the queues, so
 either keep `pnpm worker:start` running alongside `pnpm dev`, or pass `--drain` to
-`pnpm worker:sync` as step 6 does. The chat and the LLM budget inference need
+`money sync` as step 6 does. The chat and the LLM budget inference need
 `LLM_API` pointed at a local model; without one the budget button falls back to
 the deterministic seeder and `/chat` says no model is reachable.
 
 ## Commands
 
-Every script below takes `--help` and answers it without a database or any
-environment variables set — the machine whose operator is reading `--help` is
-usually the one that isn't configured yet.
+Two front doors, split by what they act on. **`pnpm`** scripts act on a checkout
+or a schema — dev server, build, migrations, the worker process. **`money`** is
+the admin CLI, and everything in it is an operation on a *running instance* that
+the app deliberately cannot perform: minting the first account, creating a
+tenant, storing a bank token, letting someone back in who has no session.
+
+```bash
+./bin/money --help            # every command, grouped
+pnpm money:cli user --help    # the same thing through pnpm
+money user password --help    # in the container, where bin/money is on PATH
+```
+
+Every command takes `--help` and answers it without a database or any environment
+variables set — the machine whose operator is reading `--help` is usually the one
+that isn't configured yet. `money completion bash|zsh|fish` prints a completion
+script to source.
 
 ### Development
 
@@ -138,18 +151,19 @@ usually the one that isn't configured yet.
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm worker:sync` | Queue an incremental sync for every active bank link (safe to re-run, cron-friendly). |
-| `pnpm worker:sync --full` | Queue a re-fetch of the whole history window. |
-| `pnpm worker:sync --days 90` | Queue an explicit lookback window. |
-| `pnpm worker:sync --workspace <slug\|id>` | Queue for one workspace instead of all of them. |
-| `pnpm worker:sync --watch` | Queue, then stay attached and report until the runs finish. |
-| `pnpm worker:sync --drain` | Queue, then run the queue down in this process (no worker needed). Mutually exclusive with `--watch`. |
+| `money sync` | Queue an incremental sync for every active bank link (safe to re-run, cron-friendly). |
+| `money sync --full` | Queue a re-fetch of the whole history window. |
+| `money sync --days 90` | Queue an explicit lookback window. |
+| `money sync --workspace <slug\|id>` | Queue for one workspace instead of all of them. |
+| `money sync --watch` | Queue, then stay attached and report until the runs finish. |
+| `money sync --drain` | Queue, then run the queue down in this process (no worker needed). Mutually exclusive with `--watch`. |
 | `pnpm worker:start` | Drain the queues forever — the process that actually calls Akahu. |
 | `pnpm worker:start --once` | Drain what's queued now, then exit. |
 
-`worker:sync` only enqueues: nothing syncs unless a worker is draining somewhere,
-so a stack with no `worker:start` wants `--drain`. `db:sync` and `db:worker` are
-deprecated aliases that print a warning and forward to these two.
+`money sync` only enqueues: nothing syncs unless a worker is draining somewhere,
+so a stack with no `worker:start` wants `--drain`. It is a `money` command rather
+than a pnpm script because it is an operation on a running instance; the worker
+process itself stays on pnpm, since it is a service and not an admin action.
 
 The same worker also drains **budget inference** runs. Inferring a budget talks to
 a local LLM (or the deterministic fallback), which is too slow to hold a request
@@ -160,39 +174,39 @@ worker draining for the same reason a syncing one does.
 ### Users
 
 Registration is invite-only and there is no site-admin surface, so these live in
-the shell. Passwords are always prompted for, never passed as a flag.
+the CLI. Passwords are always prompted for, never passed as a flag.
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm user:create --email <email> --name "<name>"` | Create an account. `--workspace <slug\|id>` places them straight away, `--role <owner\|editor\|viewer>` (default `viewer`) sets how. Only needed for the first account; everyone else arrives by invite. |
-| `pnpm user:list` | Every account with its memberships and roles, flagging those with no membership and no second factor. |
-| `pnpm user:rename --email <email> --name "<new name>"` | Change a display name, for an operator who can't sign in as them. |
-| `pnpm user:password --email <email>` | Set a password directly — the first owner, or when the reset-link flow itself is broken. Minimum 12 characters. |
-| `pnpm user:delete --email <email>` | Delete an account, its memberships and its sessions. Refused if they are the only owner of a workspace. Prompts first. |
+| `money user create --email <email> --name "<name>"` | Create an account. `--workspace <slug\|id>` places them straight away, `--role <owner\|editor\|viewer>` (default `viewer`) sets how. Only needed for the first account; everyone else arrives by invite. |
+| `money user list` | Every account with its memberships and roles, flagging those with no membership and no second factor. |
+| `money user rename --email <email> --name "<new name>"` | Change a display name, for an operator who can't sign in as them. |
+| `money user password --email <email>` | Set a password directly — the first owner, or when the reset-link flow itself is broken. Minimum 12 characters. |
+| `money user delete --email <email>` | Delete an account, its memberships and its sessions. Refused if they are the only owner of a workspace. Prompts first. |
 
 ### Workspaces
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm workspace:create --owner <email>` | Create a workspace owned by an existing user. `--name "<name>"` (default `"<their first name>'s Personal"`) and `--slug <slug>` are optional; a taken slug gets a short suffix. |
-| `pnpm workspace:list` | Every workspace with its members, roles and bank links — and where each link's Akahu credentials come from. Prints no secrets. |
-| `pnpm workspace:member --workspace <slug\|id> --email <email> --role <role>` | Add an existing user to an existing workspace. Adds only — change a role or remove someone at `/w/<slug>/members`. |
-| `pnpm workspace:delete --workspace <slug\|id>` | Delete a workspace and every row in it, cascading and irreversible. Requires the slug typed back. |
+| `money workspace create --owner <email>` | Create a workspace owned by an existing user. `--name "<name>"` (default `"<their first name>'s Personal"`) and `--slug <slug>` are optional; a taken slug gets a short suffix. |
+| `money workspace list` | Every workspace with its members, roles and bank links — and where each link's Akahu credentials come from. Prints no secrets. |
+| `money workspace add-member --workspace <slug\|id> --email <email> --role <role>` | Add an existing user to an existing workspace. Adds only — change a role or remove someone at `/w/<slug>/members`. |
+| `money workspace delete --workspace <slug\|id>` | Delete a workspace and every row in it, cascading and irreversible. Requires the slug typed back. |
 
 ### Bank links and tokens
 
 | Command | Purpose |
 | --- | --- |
-| `pnpm link:token --list` | List bank links and where each one's Akahu credentials come from (`env`, `stored`, and which encryption scheme). |
-| `pnpm link:token --workspace <slug\|id> --name "<name>"` | Create a bank link with its own stored Akahu token pair. |
-| `pnpm link:token --link <id>` | Replace a link's stored token pair. |
-| `pnpm link:token --link <id> --source env` | Revert a link to the instance-wide `AKAHU_*` pair. |
-| `pnpm link:keypair` | Print a fresh `TOKEN_PUBLIC_KEY` / `TOKEN_PRIVATE_KEY` pair for the app's connect-a-bank form. Writes nothing — where each half goes is a deployment decision. Run once per instance. |
-| `pnpm link:upgrade` | Report which stored tokens still use the symmetric scheme. |
-| `pnpm link:upgrade --apply` | Re-seal those to `TOKEN_PUBLIC_KEY`. Once no link reports `[symmetric]`, `TOKEN_ENCRYPTION_KEY` can come out of the worker and the CLI environment. |
-| `pnpm unhook-bootstrap-ids` | Give the bootstrap workspace and link generated ids (retires the `ws_bootstrap` / `link_bootstrap` placeholders). Run once; idempotent. |
+| `money link token --list` | List bank links and where each one's Akahu credentials come from (`env`, `stored`, and which encryption scheme). |
+| `money link token --workspace <slug\|id> --name "<name>"` | Create a bank link with its own stored Akahu token pair. |
+| `money link token --link <id>` | Replace a link's stored token pair. |
+| `money link token --link <id> --source env` | Revert a link to the instance-wide `AKAHU_*` pair. |
+| `money link keypair` | Print a fresh `TOKEN_PUBLIC_KEY` / `TOKEN_PRIVATE_KEY` pair for the app's connect-a-bank form. Writes nothing — where each half goes is a deployment decision. Run once per instance. |
+| `money link upgrade` | Report which stored tokens still use the symmetric scheme. |
+| `money link upgrade --apply` | Re-seal those to `TOKEN_PUBLIC_KEY`. Once no link reports `[symmetric]`, `TOKEN_ENCRYPTION_KEY` can come out of the worker and the CLI environment. |
+| `money unhook-bootstrap-ids` | Give the bootstrap workspace and link generated ids (retires the `ws_bootstrap` / `link_bootstrap` placeholders). Run once; idempotent. |
 
-A token is verified against Akahu before `link:token` stores it — it calls
+A token is verified against Akahu before `link token` stores it — it calls
 `/accounts` and prints what it can see, which is a better check than typing the
 token twice.
 
@@ -267,10 +281,13 @@ ui/                   React components (server and client)
 components/ui/        shadcn primitives
 prisma/               Schema and migrations
 deploy/quadlet/       Rootless Podman self-host: units, install.sh, money.env.example
-scripts/              Every `pnpm` command above (see the Commands section)
-  ingest.ts           worker:sync — enqueues a sync run per active link
+bin/money             The admin CLI's entry point (node --import tsx cli/index.ts)
+cli/                  The `money` CLI: program.ts builds the tree, commands/ is one
+                      file per command, lib/ the helpers they share
+scripts/              The pnpm-side processes, not admin commands
   worker.ts           worker:start — drains the queues
-  drain.ts            the queue machinery both share
+  drain.ts            the queue machinery it and `money sync --drain` share
+  db-roles.ts         db:roles — LOGIN and passwords for the RLS roles
 tests/                node --test suite; isolation.test.ts connects as money_app
                       and proves RLS holds
 ```
@@ -316,9 +333,9 @@ Optional:
 | --- | --- |
 | `REQUIRE_MFA` | `"true"` forces TOTP enrolment before any data. |
 | `INSECURE_HTTP` | `1` for a plain-http LAN deployment: drops `upgrade-insecure-requests` from the CSP and suppresses HSTS, both of which would otherwise make an http-only origin unreachable. |
-| `TOKEN_PUBLIC_KEY` | From `pnpm link:keypair`. Seals a stored Akahu token; the app gets this half. |
+| `TOKEN_PUBLIC_KEY` | From `money link keypair`. Seals a stored Akahu token; the app gets this half. |
 | `TOKEN_PRIVATE_KEY` | Opens one. Worker and CLI only, never the app. |
-| `TOKEN_ENCRYPTION_KEY` | The older symmetric scheme for the same rows. Retireable via `pnpm link:upgrade --apply`. |
+| `TOKEN_ENCRYPTION_KEY` | The older symmetric scheme for the same rows. Retireable via `money link upgrade --apply`. |
 | `ID_NAMESPACE` | Prefixes ids this app mints. Defaults to `app`. |
 | `LLM_API` | A local OpenAI-compatible endpoint, e.g. `127.0.0.1:11434` (Ollama). Unset ⇒ deterministic seeder only, and `/chat` reports no model. |
 | `LLM_API_KEY` | Bearer token, only if the endpoint wants one (Ollama does not). |
@@ -333,7 +350,7 @@ Optional:
 | `WORKER_MAX_ATTEMPTS` | Tries before a run is failed for good; default 3. |
 | `WORKER_BACKOFF_SECONDS` | Base of the retry backoff; default 30. |
 | `WORKER_STALE_MINUTES` | When a `running` row is reaped as abandoned; default 15. |
-| `SYNC_WATCH_POLL_SECONDS` | How often `worker:sync --watch` re-reads; default 2. |
+| `SYNC_WATCH_POLL_SECONDS` | How often `money sync --watch` re-reads; default 2. |
 
 Compose and the quadlet units additionally read `POSTGRES_USER`, `POSTGRES_PASSWORD`,
 `POSTGRES_DB`, `APP_PORT` and `SYNC_INTERVAL_SECONDS` from the same file; `next dev`
@@ -341,11 +358,11 @@ ignores them.
 
 The `AKAHU_*` pair is instance-wide, so it really serves one person's accounts. A
 second workspace that wants its own bank connection connects one from the app, or
-uses `pnpm link:token`; either way the token pair is stored on the bank link
+uses `money link token`; either way the token pair is stored on the bank link
 itself. The app's connect form seals with `TOKEN_PUBLIC_KEY` and cannot read back
 what it stored — only `TOKEN_PRIVATE_KEY` opens it, and that half belongs wherever
 the sync worker and CLI run, never on the web app. `TOKEN_ENCRYPTION_KEY` is the
-older symmetric scheme for the same rows; `pnpm link:upgrade --apply` converts
+older symmetric scheme for the same rows; `money link upgrade --apply` converts
 them so it can be retired. No key of either kind belongs in the database it opens.
 
 `LLM_API` is checked for a loopback or private address before anything is sent to

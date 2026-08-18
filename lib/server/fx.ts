@@ -1,9 +1,8 @@
 // Historical FX reference rates from the European Central Bank, served by the
-// Frankfurter project. Mirrored into the local `FxRate` table each sync (see
-// scripts/ingest.ts) so cross-currency transfer matching resolves without a
-// network hop, the same way the NZFCC catalog is mirrored (see lib/nzfcc.ts).
+// Frankfurter project. Mirrored into the local `FxRate` table each sync so
+// cross-currency transfer matching resolves without a network hop.
 //
-// No `import "server-only"`: scripts/ingest.ts imports this from plain Node.
+// No `server-only`: the sync worker imports this from plain Node, where it throws.
 
 // Frankfurter's stable v1 host. Rates are quoted against a base passed as `?base=`,
 // so `rate` is units of the symbol currency per 1 unit of the base. The ECB

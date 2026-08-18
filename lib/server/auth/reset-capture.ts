@@ -12,28 +12,24 @@ import { AsyncLocalStorage } from "node:async_hooks";
  * *only* to the `sendResetPassword` callback. So to surface the link we have to
  * catch the token as it passes through that callback.
  *
- * An `AsyncLocalStorage` is the race-free way to do it. The owner action (and
- * `pnpm user:password --send-email`) run `requestPasswordReset` inside `withResetTokenCapture`;
- * Better Auth invokes `sendResetPassword` synchronously within that same async
- * context — it `await`s the callback rather than backgrounding it, because no
+ * An `AsyncLocalStorage` is the race-free way to do it. Callers run
+ * `requestPasswordReset` inside `withResetTokenCapture`; Better Auth invokes
+ * `sendResetPassword` synchronously within that same async context — it `await`s
+ * the callback rather than backgrounding it, because no
  * `advanced.backgroundTasks.handler` is configured — so `captureResetToken` finds
  * the active bucket and drops the token in. A concurrent request gets its own
  * bucket; a stray public POST to `/api/auth/request-password-reset` runs with no
  * bucket at all, so its token is generated, goes nowhere, and expires unused.
  *
- * Not `server-only`: `scripts/set-password.ts` imports this from a plain Node
- * process, and `server-only` throws outside a bundler's react-server condition.
- * It is server code by where it is called from, not by a guard.
+ * No `server-only`: the CLI imports this from plain Node, where it throws.
  */
 const bucket = new AsyncLocalStorage<{ token?: string }>();
 
 /**
- * How long a reset token stays valid, in seconds. Better Auth's setting, kept
- * here rather than inline in ./index so that `pnpm email:retry` can import it
- * without pulling in the whole auth config — a plain Node script cannot load
- * `better-auth/next-js`. That script needs it to refuse to re-send a message
- * whose link has already died, which is worse than not sending: the person
- * clicks it, gets an error, and concludes the reset is broken.
+ * How long a reset token stays valid, in seconds. Better Auth's setting, but
+ * kept out of ./index so a plain Node caller can read it without loading
+ * `better-auth/next-js` — the outbox needs it to refuse to re-send a message
+ * whose link has already died.
  */
 export const RESET_TOKEN_TTL_SECONDS = 60 * 60;
 
@@ -42,9 +38,8 @@ export const RESET_TOKEN_TTL_SECONDS = 60 * 60;
  * reports whether one was.
  *
  * That answer is load-bearing now that this instance can send mail. An active
- * bucket means the reset was asked for through one of *this app's* paths — an
- * owner on the members page, or `pnpm user:password --send-email` — because those
- * are the only callers that open one. No bucket means the request came from a bare POST to
+ * bucket means the reset was asked for through one of *this app's* paths, since
+ * those are the only callers that open one. No bucket means a bare POST to
  * `/api/auth/request-password-reset`, which Better Auth exposes publicly and this
  * app deliberately does not build a form for.
  *

@@ -42,10 +42,15 @@ from the `User` table. So run it in the worker with the **owner** connection:
 
 ```bash
 podman exec -it --env-file ~/.config/money/db-owner.env money-worker \
-  pnpm user:create --email you@example.com --name "Your Name" --owner
+  money user create --email you@example.com --name "Your Name"
+podman exec -it --env-file ~/.config/money/db-owner.env money-worker \
+  money workspace create --owner you@example.com --name "Personal"
 ```
 
-`-it` is required — the script reads the password from the terminal. After that,
+Two steps, not one: a user needs no workspace and a workspace needs a user, which
+is what keeps the bootstrap acyclic (see `money user create --help`).
+
+`-it` is required — the command reads the password from the terminal. After that,
 everyone else arrives through an invite link. Link Akahu and the worker/cron will
 populate transactions.
 

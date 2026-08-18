@@ -100,8 +100,8 @@ services:
       postgres:
         condition: service_healthy
 
-  # The clock. Same tooling image as migrate, because `scripts/ingest.ts` (pnpm
-  # worker:sync) needs tsx and the TS source, which the app image doesn't carry.
+  # The clock. Same tooling image as migrate, because `money sync` needs tsx and
+  # the TS source, which the app image doesn't carry.
   #
   # It enqueues and stops: one `queued` SyncRun per ACTIVE bank link in every
   # workspace, written through a workspace-scoped client as `money_sync`, and
@@ -113,7 +113,7 @@ services:
     build:
       context: .
       target: build
-    command: ["sh", "-c", "while true; do pnpm worker:sync || echo 'sync failed'; sleep \"${SYNC_INTERVAL_SECONDS:-21600}\"; done"]
+    command: ["sh", "-c", "while true; do money sync || echo 'sync failed'; sleep \"${SYNC_INTERVAL_SECONDS:-21600}\"; done"]
     restart: unless-stopped
     env_file: .env
     environment:

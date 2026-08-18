@@ -1,7 +1,7 @@
 import { AkahuClient } from "akahu";
 import { decryptSecret, tokenAad } from "./secrets";
 
-// No `server-only` here either — scripts/ingest.ts imports this from plain Node.
+// No `server-only`: the sync worker imports this from plain Node, where it throws.
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -53,7 +53,7 @@ export const TOKEN_LINK_SELECT = {
  * existing single-user install is precisely a `BankLink` in that state and must
  * keep syncing across this change without the operator doing anything.
  *
- * `stored` is the per-link pair, set by `pnpm link:token` and decrypted here. Two
+ * `stored` is the per-link pair, set by `money link token` and decrypted here. Two
  * workspaces with two different people's tokens then sync independently, and no
  * workspace is special.
  *
@@ -80,7 +80,7 @@ export function resolveToken(link: TokenLink): AkahuCredentials {
       if (!link.appTokenCipher || !link.userTokenCipher) {
         throw new Error(
           `Bank link ${link.id} is set to tokenSource="${link.tokenSource}" but has no stored ` +
-            "credentials. Set them with `pnpm link:token --link " + link.id + "`.",
+            "credentials. Set them with `money link token --link " + link.id + "`.",
         );
       }
       return {

@@ -15,8 +15,8 @@ import { serialiseTransactions } from "./serialise";
 // through ./index's `catalogDb`, which is this same client under a name that
 // says why.
 //
-// Deliberately no `import "server-only"` here: this module is also imported by
-// scripts/ingest.ts, which runs in plain Node where `server-only` throws.
+// No `server-only`: the CLI and the sync worker import this from plain Node,
+// where it throws.
 
 const databaseUrl = process.env.DATABASE_URL;
 if (!databaseUrl) {
