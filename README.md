@@ -17,7 +17,7 @@ Built with [Next.js](https://nextjs.org) 16, React 19, TypeScript, Tailwind CSS 
 - **Merchants and labels** — an index of every merchant that tags at least one transaction (with the ones you minted yourself flagged), and of your own free-text labels, each with its own listing.
 - **Accounts** — list of connected accounts with balances, available funds, and transaction counts; per-account transaction history with running balances.
 - **Rules** — a GoRules Zen decision graph that auto-enriches transactions (category, merchant, transfer linking). Rules are taught from a single classified transaction and run automatically on every sync.
-- **Sync history** — audit log of every ingest run, with manual refresh and full historical sync buttons.
+- **Sync history** — audit log of every ingest run, each showing what it imported against what it saw and linking to those transactions, with manual refresh and full historical sync buttons.
 - **Workspaces and members** — data lives in a workspace; people are invited into one with an owner/editor/viewer role, and Postgres Row-Level Security is what actually keeps one workspace out of another's rows.
 
 ## Data model
@@ -36,20 +36,20 @@ Key tables:
 - `User`, `Session`, `AuthAccount`, `Verification`, `TwoFactor` — Better Auth's tables: accounts, sessions, password/reset state, and TOTP enrolment.
 - `BankLink` — one workspace's connection to Akahu, holding either a pointer to the instance-wide `AKAHU_*` pair (`tokenSource: "env"`) or its own encrypted token pair.
 - `Account`, `Connection` — mirrored from Akahu `/accounts`.
-- `Transaction` — mirrored from Akahu `/transactions`, with nullable enrichment fields (merchant, category, conversion, card suffix, etc.).
+- `Transaction` — mirrored from Akahu `/transactions`, with nullable enrichment fields (merchant, category, conversion, card suffix, etc.). `syncRunId` names the run that first imported it, written on insert only.
 - `PendingTransaction` — the not-yet-settled rows, replaced wholesale for a workspace on each sync rather than reconciled; they have no stable Akahu id to key on.
 - `Merchant`, `Category`, `CategoryGroup` — mirrored enrichment catalogs. A group is stored once and referenced, not copied onto every row.
-- `Label`, `TransactionLabel` — your own free-text tags, and their join to transactions. The join is explicit rather than an implicit Prisma m-n so it can carry its own `workspaceId` for RLS.
+- `Label`, `TransactionLabel` — your own free-text tags, and their join to transactions. The join is explicit rather than an implicit Prisma m-n so it can carry its own `workspaceId` for RLS. Older `ingested-<date>` and `category-rule-*` tags the app wrote for itself are still there and inert; a transaction links to its run now.
 - `TransferGroup` — user-linked legs of internal transfers; excluded from income/spend metrics.
 - `FxRate` — ECB reference rates from [frankfurter.dev](https://frankfurter.dev), used to value multi-currency transactions and balances.
 - `BalanceSnapshot` — point-in-time balances captured on each sync.
 - `Budget`, `BudgetItem` — a plan and its recurring line items. A budget is either a base (`baseBudgetId` null) or a layer that adds onto one; deleting a base cascades to its layers. A base with `forecast` set is one of the forward projections drawn on the dashboard — this replaced a separate `Forecast` table, whose name and colour now come from the budget itself. Items carry provenance (`inferred`, `inferredSource`, `basis`) so a still-guessed figure is marked as such.
 - `BudgetInferenceRun` — the queue and audit log for background budget inference; drained by the same worker as syncs and rules (see [Sync](#sync)).
 - `RuleDocument`, `RuleRun` — decision graphs and the runs over them.
-- `FieldChange` — append-only log of every change to a transaction's category, merchant or transfer link, with what made it (`akahu` | `user` | `rule`) and who or which run. Supersedes `RuleApplication`, which only logged the rules engine's third of that.
+- `FieldChange` — append-only log of every change to a transaction's category, merchant or transfer link, with what made it (`akahu` | `user` | `rule`) and who or which run — `ruleRunId` or `syncRunId`. Supersedes `RuleApplication`, which only logged the rules engine's third of that.
 - `TransactionConflict` — raised when a user-set enrichment field diverges from a later Akahu sync.
 - `ChatThread`, `ChatMessage` — conversations with the local model, including the transcript an unattended budget inference writes as it runs.
-- `SyncState`, `SyncRun` — incremental sync high-water mark and run history.
+- `SyncState`, `SyncRun` — incremental sync high-water mark and run history. A run owns the transactions it imported and the log rows it wrote. Ids are opaque for the reason `RuleRun`'s are: the run reaches a URL (`money reindex-sync-runs` retires the counters an existing instance still holds).
 
 Categories follow the [NZFCC](https://nzfcc.org) standard. Spending groups are mapped to essential/discretionary in [lib/categories.ts](lib/categories.ts).
 

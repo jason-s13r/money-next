@@ -26,7 +26,7 @@ export default async function RuleRunPage(props: PageProps<"/w/[workspace]/rules
   // id belonging to another workspace is exactly as unknown as a made-up one.
   const data = await getRuleRun(id);
   if (!data) notFound();
-  const { run, applications } = data;
+  const { run, applications, transactionCount } = data;
 
   return (
     <main className="mx-auto w-full max-w-5xl p-2">
@@ -39,6 +39,7 @@ export default async function RuleRunPage(props: PageProps<"/w/[workspace]/rules
           className="mt-4"
           stats={[
             { label: "Evaluated", value: run.evaluated.toLocaleString("en-NZ") },
+            { label: "Transactions", value: transactionCount.toLocaleString("en-NZ") },
             { label: "Categorised", value: run.categorised.toLocaleString("en-NZ") },
             { label: "Merchants", value: run.merchantsSet.toLocaleString("en-NZ") },
             { label: "Transfers", value: run.transfersLinked.toLocaleString("en-NZ") },

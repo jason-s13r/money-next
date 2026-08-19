@@ -26,6 +26,7 @@ import { Command } from "commander";
 import { register as completion } from "./commands/completion";
 import { register as email } from "./commands/email";
 import { register as link } from "./commands/link";
+import { register as reindexSyncRuns } from "./commands/reindex-sync-runs";
 import { register as sync } from "./commands/sync";
 import { register as unhookBootstrapIds } from "./commands/unhook-bootstrap-ids";
 import { register as user } from "./commands/user";
@@ -45,6 +46,7 @@ export function buildProgram(): Command {
   email(program);
   sync(program);
   unhookBootstrapIds(program);
+  reindexSyncRuns(program);
   completion(program);
 
   // Bare `money` prints the help rather than Commander's "missing command"

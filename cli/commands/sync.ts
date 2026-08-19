@@ -72,7 +72,7 @@ worker is down doesn't build up a backlog of identical jobs.
 }
 
 /** A queued run, and enough about it to narrate what happens to it next. */
-type Queued = { workspaceId: string; runId: number; link: string; existing: boolean };
+type Queued = { workspaceId: string; runId: string; link: string; existing: boolean };
 
 /**
  * Write a queued SyncRun for every ACTIVE link in every workspace.

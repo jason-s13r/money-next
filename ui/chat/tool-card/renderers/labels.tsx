@@ -29,8 +29,8 @@ export function Labels({ result }: { result: Record<string, unknown> }) {
             <TableRow key={i}>
               <TableCell>
                 {str(row.label)}
-                {row.managedByTheApp ? (
-                  <span className="ml-2 text-muted-foreground">automatic</span>
+                {row.legacyAppTag ? (
+                  <span className="ml-2 text-muted-foreground">legacy</span>
                 ) : null}
               </TableCell>
               <TableCell className="text-right tabular-nums">{str(row.transactions)}</TableCell>

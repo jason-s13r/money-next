@@ -60,6 +60,7 @@ export type FieldChangeEntry = {
 export type ChangeContext = {
   actorUserId?: string | null;
   ruleRunId?: string | null;
+  syncRunId?: string | null;
 };
 
 /**
@@ -81,6 +82,7 @@ export function changeRows(
     source,
     actorUserId: ctx?.actorUserId ?? null,
     ruleRunId: ctx?.ruleRunId ?? null,
+    syncRunId: ctx?.syncRunId ?? null,
     ...entry,
   }));
 }

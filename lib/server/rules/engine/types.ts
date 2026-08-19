@@ -47,8 +47,7 @@ export type RuleInput = {
  * opposite leg when it can do so unambiguously.
  *
  * `labelName` is a name, not an id, and it need not exist yet — the runner
- * get-or-creates it (`ensureLabelId`), the same way the sync's dated tag works. It
- * replaces the tag the runner would otherwise derive from what changed; a rule
+ * get-or-creates it (`tagTransactions`). It is the only tag a run writes; a rule
  * that sets nothing else applies no label, since only a changed transaction is
  * tagged.
  */

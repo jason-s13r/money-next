@@ -47,7 +47,7 @@ export default async function RuleRunsPage(props: PageProps<"/w/[workspace]/rule
               <tr className="border-b border-current/20 text-left">
                 <th className="py-2 pr-4 font-medium">When</th>
                 <th className="py-2 pr-4 font-medium">Trigger</th>
-                <th className="py-2 pr-4 text-right font-medium">Edits</th>
+                <th className="py-2 pr-4 text-right font-medium">Edits / seen</th>
                 <th className="py-2 pr-4 text-right font-medium">Category</th>
                 <th className="py-2 pr-4 text-right font-medium">Merchant</th>
                 <th className="py-2 pr-4 text-right font-medium">Transfers</th>
@@ -68,6 +68,10 @@ export default async function RuleRunsPage(props: PageProps<"/w/[workspace]/rule
                   <td className="py-2 pr-4 capitalize">{run.trigger}</td>
                   <td className="py-2 pr-4 text-right font-mono tabular-nums">
                     {run._count.changes.toLocaleString("en-NZ")}
+                    <span className="opacity-40">
+                      {" / "}
+                      {run.evaluated.toLocaleString("en-NZ")}
+                    </span>
                   </td>
                   <td className="py-2 pr-4 text-right font-mono tabular-nums opacity-70">
                     {run.categorised.toLocaleString("en-NZ")}

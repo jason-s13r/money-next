@@ -506,6 +506,12 @@ model Transaction {
   updatedAt DateTime? @db.Timestamptz(3)
   syncedAt  DateTime  @default(now()) @db.Timestamptz(3)
 
+  /// The run that first imported this row — written on insert only, so it names
+  /// the arrival rather than the last sync to re-fetch it in the overlap window.
+  /// `SetNull`: pruning an audit row must not take the money with it.
+  syncRunId String?
+  syncRun   SyncRun? @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+
   // A transaction's nature is derived, not stored: money in (`amount > 0`) is
   // income; money out (`amount < 0`) is spending, categorised when Akahu supplied
   // a `categoryGroup` and uncategorised otherwise. No classifier writes here.
@@ -523,6 +529,7 @@ model Transaction {
   @@index([merchantId])
   @@index([transferGroupId])
   @@index([connectionId])
+  @@index([syncRunId])
   // Trigram indexes for the free-text search, which runs as ILIKE '%term%' and
   // so can use no btree index. Declared here rather than as raw SQL in the
   // migration, or `migrate dev` reads them as drift and offers to drop them.
@@ -1025,7 +1032,7 @@ model SyncState {
 
 /// Audit log of ingest runs, so a silently failing cron is visible.
 model SyncRun {
-  id Int @id @default(autoincrement())
+  id String @id @default(cuid())
 
   workspaceId String
   workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
@@ -1076,6 +1083,10 @@ model SyncRun {
   transactionsSynced Int @default(0)
 
   error String?
+
+  /// What this run brought in, and what it changed on rows it already held.
+  transactions Transaction[]
+  changes      FieldChange[]
 
   @@index([workspaceId, startedAt])
   @@index([startedAt])
@@ -1335,6 +1346,11 @@ model FieldChange {
   ruleRunId String?
   ruleRun   RuleRun? @relation(fields: [ruleRunId], references: [id], onDelete: Cascade)
 
+  /// The same, when `source` is `akahu`. `SetNull` rather than the `Cascade`
+  /// above: a rule run's report *is* its changes, but a sync's outlive it.
+  syncRunId String?
+  syncRun   SyncRun? @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+
   /// The value before and after. Ids for joining back, labels stored alongside so
   /// a reader needs no join for the values themselves — and so the history still
   /// reads correctly after a category is renamed or a merchant deleted, which is
@@ -1351,6 +1367,7 @@ model FieldChange {
   /// the workspace the scoped client already filters on.
   @@index([workspaceId, transactionId, createdAt])
   @@index([ruleRunId])
+  @@index([syncRunId])
   @@index([transactionId])
 }
 

@@ -101,10 +101,11 @@ async function claimAndRunSync(db: ScopedDb): Promise<boolean> {
     // `full` and `days` come off the row, not from this process: whoever enqueued
     // the run — a button, a cron, a person at a terminal — chose the window, and
     // the runner's job is to reproduce it.
-    const counts = await runSync(link satisfies SyncLink, {
-      full: next.full,
-      days: next.days ?? undefined,
-    });
+    const counts = await runSync(
+      link satisfies SyncLink,
+      { full: next.full, days: next.days ?? undefined },
+      next.id,
+    );
     await db.syncRun.update({
       where: { id: next.id },
       data: { status: "success", finishedAt: new Date(), ...counts },

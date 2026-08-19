@@ -17,7 +17,6 @@ import { buildExpression, deriveMatch, normalizeToken } from "../lib/server/rule
 import { parseMatch, readLearnedRules } from "../lib/server/rules/learning/read";
 import { updateLearnedRule, validateEdit } from "../lib/server/rules/learning/edit";
 import { upsertLearnedRule } from "../lib/server/rules/learning/upsert";
-import { ruleLabelName } from "../lib/server/labels";
 
 /**
  * Learned rules, evaluated for real. No network and no database: the graph is a
@@ -235,15 +234,3 @@ describe("updateLearnedRule", () => {
   });
 });
 
-describe("ruleLabelName", () => {
-  test("names the effect, slugified so it reaches its own label page", () => {
-    assert.equal(ruleLabelName({ field: "category", toLabel: "Health" }), "category-rule-health");
-    assert.equal(ruleLabelName({ field: "merchant", toLabel: "I.R.D" }), "merchant-rule-i-r-d");
-    assert.equal(ruleLabelName({ field: "transfer", toLabel: "some other leg" }), "transfer-rule");
-  });
-
-  test("declines to name a tag after something that slugs to nothing", () => {
-    assert.equal(ruleLabelName({ field: "merchant", toLabel: "!!!" }), null);
-    assert.equal(ruleLabelName({ field: "category", toLabel: null }), null);
-  });
-});

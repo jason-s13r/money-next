@@ -15,7 +15,15 @@ const FIELD_LABEL: Record<string, string> = {
   category: "Category",
   merchant: "Merchant",
   transfer: "Transfer",
+  label: "Label",
 };
+
+/** The run behind an entry, when one made it. A `user` change has none. */
+function runHref(entry: HistoryEntry) {
+  if (entry.ruleRunId) return `/rules/runs/${entry.ruleRunId}`;
+  if (entry.syncRunId) return `/sync/${entry.syncRunId}`;
+  return null;
+}
 
 /**
  * Who made the change, in the reader's terms.
@@ -79,9 +87,9 @@ export function TransactionHistory({ entries }: { entries: HistoryEntry[] }) {
             </span>
             <Change entry={entry} />
             <span className="ml-auto whitespace-nowrap text-xs text-muted">
-              {entry.ruleRunId ? (
+              {runHref(entry) ? (
                 <Link
-                  href={`/rules/runs/${entry.ruleRunId}`}
+                  href={runHref(entry)!}
                   className="underline underline-offset-2 hover:text-foreground"
                 >
                   {sourceLabel(entry)}

@@ -59,7 +59,11 @@ export type SyncCounts = {
  * data, identical for everyone, and so run unscoped, once per pass rather than
  * once per workspace.
  */
-export async function runSync(link: SyncLink, args: SyncArgs): Promise<SyncCounts> {
+export async function runSync(
+  link: SyncLink,
+  args: SyncArgs,
+  runId: string,
+): Promise<SyncCounts> {
   const db = scopedDb(link.workspaceId);
   const capturedAt = startOfUtcDay(new Date());
 
@@ -75,7 +79,7 @@ export async function runSync(link: SyncLink, args: SyncArgs): Promise<SyncCount
   await syncConnections(accounts);
 
   await syncAccounts(db, link, accounts, capturedAt);
-  const syncedIds = await syncTransactions(db, link, args, accounts, akahu);
+  const syncedIds = await syncTransactions(db, link, args, accounts, akahu, runId);
   await syncPendingTransactions(db, link, accounts, akahu);
 
   await syncFxRates();

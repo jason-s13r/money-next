@@ -2,7 +2,6 @@ import type { Account as AkahuAccount, Transaction as AkahuTransaction } from "a
 import type { AkahuContext } from "../akahu";
 import { changeRows, type FieldChangeEntry } from "../changes";
 import { scopedBatch, type ScopedDb } from "../db";
-import { ensureLabelId, ingestedLabelName } from "../labels";
 import { reconcileConflict } from "./conflicts";
 import type { Prisma } from "../../generated/prisma/client";
 import { OTHER_INCOME_GROUP } from "./nzfcc";
@@ -72,8 +71,8 @@ type ReconcileContext = {
   categories: Map<string, { id: string; name: string; direction: string; groupId: string | null }>;
   txOps: Prisma.PrismaPromise<unknown>[];
   conflictOps: Prisma.PrismaPromise<unknown>[];
-  newIds: string[];
   changes: FieldChangeEntry[];
+  runId: string;
   db: ScopedDb;
 };
 
@@ -95,8 +94,8 @@ function reconcileTransaction(tx: AkahuTransaction, ctx: ReconcileContext): void
     categories,
     txOps,
     conflictOps,
-    newIds,
     changes,
+    runId,
     db,
   } = ctx;
 
@@ -233,11 +232,12 @@ function reconcileTransaction(tx: AkahuTransaction, ctx: ReconcileContext): void
     });
   }
 
-  if (!prior) newIds.push(tx._id);
   txOps.push(
     db.transaction.upsert({
       where: { id: tx._id },
-      create: { id: tx._id, workspaceId: db.$workspaceId, ...row },
+      // `syncRunId` on create only: a row re-fetched from the overlap window keeps
+      // the run that first brought it in.
+      create: { id: tx._id, workspaceId: db.$workspaceId, syncRunId: runId, ...row },
       update: update as Prisma.TransactionUpdateInput,
     }),
   );
@@ -249,6 +249,7 @@ export async function syncTransactions(
   args: SyncArgs,
   accounts: AkahuAccount[],
   akahu: AkahuContext,
+  runId: string,
 ): Promise<string[]> {
   const knownAccountIds = new Set(accounts.map((a) => a._id));
   const token = akahu.userToken;
@@ -273,13 +274,6 @@ export async function syncTransactions(
   let synced = 0;
   let skipped = 0;
   let newest: Date | undefined = state?.lastTransactionDate ?? undefined;
-
-  // The dated tag every first-time arrival in this run gets (`ingested-<date>`,
-  // see `ingestedLabelName`). Its id is resolved lazily on the first page that
-  // has a new transaction, so a sync that ingests nothing new mints no empty
-  // label; after that it's reused across pages.
-  const ingestLabelName = ingestedLabelName(new Date());
-  let ingestLabelId: string | undefined;
 
   do {
     const page = await akahu.client.transactions.list(token, {
@@ -325,14 +319,11 @@ export async function syncTransactions(
 
     const txOps: Prisma.PrismaPromise<unknown>[] = [];
     const conflictOps: Prisma.PrismaPromise<unknown>[] = [];
-    // Transactions seen for the first time on this page, to date-tag as fresh
-    // arrivals. A row already in `priorById` is a re-fetch from the overlap
-    // window, not an arrival, so it is not re-tagged.
-    const newIds: string[] = [];
     // What this page actually changed, for the field change log. Only rows we
     // hold already can produce one: a transaction we are seeing for the first
     // time has no `from` to have changed from, and its arrival is already
-    // recorded by the row itself (`syncedAt`, and a `source` of `akahu`).
+    // recorded by the row itself (`syncedAt`, `syncRunId`, and a `source` of
+    // `akahu`).
     const changes: FieldChangeEntry[] = [];
 
     const ctx: ReconcileContext = {
@@ -344,8 +335,8 @@ export async function syncTransactions(
       categories,
       txOps,
       conflictOps,
-      newIds,
       changes,
+      runId,
       db,
     };
 
@@ -363,20 +354,11 @@ export async function syncTransactions(
       }
     }
 
-    // Resolve the dated ingestion label the first time a page brings new rows, so
-    // its join writes can go inside the same atomic batch below — a fresh arrival
-    // and its "ingested-<date>" tag commit together or not at all. These ids are
-    // created in this very batch (above), so they can't already carry the tag;
-    // the createMany needs no skip-existing check.
-    if (newIds.length > 0) {
-      ingestLabelId ??= await ensureLabelId(db, ingestLabelName);
-    }
-
     // One write transaction per page keeps this fast and means a crash
     // mid-page can't leave a partially-applied page behind. Groups lead, then the
     // categories that point at them, then merchants — so every transaction that
     // follows finds the rows it points at; conflict ops and log rows trail the
-    // transaction upserts they describe, as do the fresh-arrival tag rows.
+    // transaction upserts they describe.
     //
     // The log rows belong *in* this transaction rather than after it: a log that
     // records a change the crash rolled back is worse than no log, because it is
@@ -406,20 +388,13 @@ export async function syncTransactions(
         }),
       ),
       ...txOps,
-      ...(newIds.length > 0 && ingestLabelId
-        ? [
-            db.transactionLabel.createMany({
-              data: newIds.map((transactionId) => ({
-                workspaceId: db.$workspaceId,
-                transactionId,
-                labelId: ingestLabelId!,
-              })),
-            }),
-          ]
-        : []),
       ...conflictOps,
       ...(changes.length > 0
-        ? [db.fieldChange.createMany({ data: changeRows(db.$workspaceId, "akahu", changes) })]
+        ? [
+            db.fieldChange.createMany({
+              data: changeRows(db.$workspaceId, "akahu", changes, { syncRunId: runId }),
+            }),
+          ]
         : []),
     ]);
 

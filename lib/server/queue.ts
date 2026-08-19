@@ -48,7 +48,7 @@ export type Enqueued<Id> = { id: Id; existing: boolean };
 export async function enqueueSync(
   db: ScopedDb,
   opts: { bankLinkId: string; full?: boolean; days?: number; clearBackoff?: boolean },
-): Promise<Enqueued<number>> {
+): Promise<Enqueued<string>> {
   const waiting = await db.syncRun.findFirst({
     where: { status: "queued", bankLinkId: opts.bankLinkId },
     orderBy: { startedAt: "asc" },

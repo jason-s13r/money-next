@@ -13,8 +13,9 @@ export type HistoryEntry = {
   source: string;
   /** The person who made it, when there was one and they still exist. */
   actorName: string | null;
-  /** Set when a rule made it, so the entry can link to that run's report. */
+  /** Set when a rule or a sync made it, so the entry can link to that run. */
   ruleRunId: string | null;
+  syncRunId: string | null;
   fromLabel: string | null;
   toLabel: string | null;
   createdAt: Date;
@@ -41,6 +42,7 @@ export async function getTransactionHistory(transactionId: string): Promise<Hist
       field: true,
       source: true,
       ruleRunId: true,
+      syncRunId: true,
       fromLabel: true,
       toLabel: true,
       createdAt: true,
@@ -54,6 +56,7 @@ export async function getTransactionHistory(transactionId: string): Promise<Hist
     source: row.source,
     actorName: row.actor?.name ?? null,
     ruleRunId: row.ruleRunId,
+    syncRunId: row.syncRunId,
     fromLabel: row.fromLabel,
     toLabel: row.toLabel,
     createdAt: row.createdAt,

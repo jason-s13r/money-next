@@ -18,12 +18,12 @@ import { asText, type Tool } from "./registry";
 // inventing one is the point. That is why `create_label` exists at all and why
 // `add_label_to_transactions` will mint one on the way past when asked.
 //
-// Two families of reserved name are worth knowing about and are called out in
-// `list_labels`: `ingested-<date>`, which every sync stamps on that run's arrivals, and
-// `category-rule-<slug>` / `merchant-rule-<slug>` / `transfer-rule`, which mark what a
-// rule run changed. They are ordinary rows — the app re-creates them by name when it
-// needs them — so nothing stops a model deleting one, and the label saying what it is
-// for is the only thing that discourages it.
+// Two families of reserved name predate the run links (`Transaction.syncRunId`,
+// `FieldChange.ruleRunId`) and are called out in `list_labels`: `ingested-<date>`, which
+// the sync used to stamp on a run's arrivals, and `category-rule-<slug>` /
+// `merchant-rule-<slug>` / `transfer-rule`, which marked what a rule run changed.
+// Nothing writes either any more. They are ordinary rows left on old transactions, and
+// tidying one up is now safe rather than futile.
 
 export const listLabels: Tool = {
   name: "list_labels",
@@ -68,10 +68,9 @@ export const listLabels: Tool = {
           id: label.id,
           transactions: running.count,
           net: Math.round(running.net * 100) / 100,
-          // The two the app writes for itself. Said out loud because they look like
-          // anybody's tags and are not: renaming one only makes the next sync create it
-          // again under the old name, beside the renamed one.
-          ...(AUTOMATIC.test(label.name) ? { managedByTheApp: true } : {}),
+          // Said out loud because they look like anybody's tags and are not — they
+          // are the app's own, from before a transaction linked to its run.
+          ...(LEGACY_AUTOMATIC.test(label.name) ? { legacyAppTag: true } : {}),
         };
       }),
     };
@@ -270,9 +269,9 @@ export const removeLabelFromTransactions: Tool = {
   },
 };
 
-/** The tags the app writes for itself — a dated one per sync, and one per effect a
- *  rule had. See lib/server/labels.ts. */
-const AUTOMATIC = /^(ingested-\d{4}-\d{2}-\d{2}|(category|merchant)-rule-.+|transfer-rule)$/;
+/** Tags the app used to write for itself — a dated one per sync, and one per effect a
+ *  rule had. Nothing creates these now; see lib/server/labels.ts. */
+const LEGACY_AUTOMATIC = /^(ingested-\d{4}-\d{2}-\d{2}|(category|merchant)-rule-.+|transfer-rule)$/;
 
 export const LABEL_READ_TOOLS: Tool[] = [listLabels];
 

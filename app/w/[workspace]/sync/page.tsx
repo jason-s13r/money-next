@@ -1,3 +1,4 @@
+import { Link } from "@/ui/chrome/workspace-context";
 import { getSyncRuns, SYNC_RUNS_PER_PAGE } from "@/lib/server/queries/runs";
 import { formatDateTime } from "@/lib/format";
 import { requireWorkspace } from "@/lib/server/auth/session";
@@ -92,8 +93,13 @@ export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/s
             <tbody>
               {items.map((run) => (
                 <tr key={run.id} className="border-b border-current/10">
-                  <td className="py-2 pr-4 font-mono tabular-nums">
-                    {formatDateTime(run.startedAt)}
+                  <td className="py-2 pr-4">
+                    <Link
+                      href={`/sync/${run.id}`}
+                      className="font-mono tabular-nums underline underline-offset-2"
+                    >
+                      {formatDateTime(run.startedAt)}
+                    </Link>
                   </td>
                   <td className="py-2 pr-4">
                     <SyncStatusBadge status={run.status} />
@@ -102,7 +108,17 @@ export default async function SyncHistoryPage(props: PageProps<"/w/[workspace]/s
                     {run.accountsSynced.toLocaleString("en-NZ")}
                   </td>
                   <td className="py-2 pr-4 text-right font-mono tabular-nums">
-                    {run.transactionsSynced.toLocaleString("en-NZ")}
+                    {run._count.transactions.toLocaleString("en-NZ")}
+                    <span className="opacity-40">
+                      {" / "}
+                      {/* Rows the run upserted — the whole fetched window, which the
+                          7-day overlap makes larger than the arrivals, and which
+                          excludes any dropped for an unknown account. Only written
+                          on success, so a failed run has no honest total to show. */}
+                      {run.status === "success"
+                        ? run.transactionsSynced.toLocaleString("en-NZ")
+                        : "—"}
+                    </span>
                   </td>
                   <td className="py-2 pr-4 font-mono tabular-nums">
                     {run.finishedAt ? formatDuration(run.startedAt, run.finishedAt) : "—"}

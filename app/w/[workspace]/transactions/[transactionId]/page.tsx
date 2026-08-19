@@ -269,7 +269,11 @@ export default async function TransactionPage(
         <Field label="Hash" value={tx.hash} mono />
         <Field label="Created (Akahu)" value={formatDateTime(tx.createdAt)} />
         <Field label="Updated (Akahu)" value={formatDateTime(tx.updatedAt)} />
-        <Field label="Synced locally" value={formatDateTime(tx.syncedAt)} />
+        <Field
+          label="Synced locally"
+          value={formatDateTime(tx.syncedAt)}
+          href={tx.syncRunId ? `/sync/${tx.syncRunId}` : null}
+        />
       </Section>
     </main>
   );

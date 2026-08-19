@@ -233,3 +233,11 @@ export function getTypeTransactions(type: string, page: number, sort: Sort = DEF
 export function getLabelTransactions(name: string, page: number, sort: Sort = DEFAULT_SORT) {
   return listTransactions({ labels: { some: { label: { is: { name } } } } }, page, sort);
 }
+
+/**
+ * What one sync run brought in. `syncRunId` is written on insert only, so this is
+ * the run's arrivals rather than everything it re-fetched in the overlap window.
+ */
+export function getSyncRunTransactions(runId: string, page: number, sort: Sort = DEFAULT_SORT) {
+  return listTransactions({ syncRunId: runId }, page, sort);
+}

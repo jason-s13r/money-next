@@ -30,10 +30,26 @@ export async function getSyncRuns(page: number) {
       orderBy: { startedAt: "desc" },
       skip: (page - 1) * SYNC_RUNS_PER_PAGE,
       take: SYNC_RUNS_PER_PAGE,
+      // Counted through the relation rather than stored on the row, so it can
+      // never disagree with the transactions /sync/<id> lists.
+      include: { _count: { select: { transactions: true } } },
     }),
     db.syncRun.count(),
   ]);
   return { items, total };
+}
+
+/**
+ * One sync run, for `/sync/<id>`. The scoped client filters by workspace, so
+ * another workspace's run is exactly as unknown as a made-up id.
+ */
+export async function getSyncRun(id: string) {
+  await connection();
+  const db = await getDb();
+  return db.syncRun.findUnique({
+    where: { id },
+    include: { bankLink: { select: { name: true } } },
+  });
 }
 
 /** The rules execution log — runs newest first, each with its edit count. */
@@ -120,5 +136,7 @@ export async function getRuleRun(id: string) {
     };
   });
 
-  return { run, applications };
+  // The table below lists one row per *change*, so a transaction whose category and
+  // merchant were both set appears twice; the header says how many there really were.
+  return { run, applications, transactionCount: txIds.length };
 }

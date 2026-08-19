@@ -34,19 +34,18 @@ const BUDGET_B = "budget_test_queue_b";
 
 const db = scopedDb(WS);
 
-/** Park a queued run out of a live worker's reach (see the file comment). */
+/** Park a queued run out of a live worker's reach (see the file comment).
+ *  Every queue's ids are cuids now, so each helper names the table it means. */
 const PARKED = new Date(Date.now() + 60 * 60 * 1000);
 
-async function park(id: number | string) {
-  if (typeof id === "number") {
-    await db.syncRun.update({ where: { id }, data: { nextAttemptAt: PARKED } });
-  } else {
-    await db.ruleRun.update({ where: { id }, data: { nextAttemptAt: PARKED } });
-  }
+async function parkSync(id: string) {
+  await db.syncRun.update({ where: { id }, data: { nextAttemptAt: PARKED } });
 }
 
-/** The `park` twin for inference runs — string ids collide with rule runs' by type,
- *  so this one names the table it means. */
+async function parkRule(id: string) {
+  await db.ruleRun.update({ where: { id }, data: { nextAttemptAt: PARKED } });
+}
+
 async function parkInference(id: string) {
   await db.budgetInferenceRun.update({ where: { id }, data: { nextAttemptAt: PARKED } });
 }
@@ -79,7 +78,7 @@ after(async () => {
 describe("enqueueSync", () => {
   test("writes a queued run when there is nothing waiting", async () => {
     const first = await enqueueSync(db, { bankLinkId: LINK_A });
-    await park(first.id);
+    await parkSync(first.id);
 
     assert.equal(first.existing, false);
     const row = await db.syncRun.findUnique({ where: { id: first.id } });
@@ -90,7 +89,7 @@ describe("enqueueSync", () => {
 
   test("reuses the run already waiting for that link", async () => {
     const first = await enqueueSync(db, { bankLinkId: LINK_A });
-    await park(first.id);
+    await parkSync(first.id);
     const second = await enqueueSync(db, { bankLinkId: LINK_A });
 
     assert.deepEqual(second, { id: first.id, existing: true });
@@ -101,9 +100,9 @@ describe("enqueueSync", () => {
     // Two links in one workspace are two different Akahu connections; a run
     // waiting for one says nothing about the other.
     const a = await enqueueSync(db, { bankLinkId: LINK_A });
-    await park(a.id);
+    await parkSync(a.id);
     const b = await enqueueSync(db, { bankLinkId: LINK_B });
-    await park(b.id);
+    await parkSync(b.id);
 
     assert.equal(b.existing, false);
     assert.notEqual(a.id, b.id);
@@ -112,7 +111,7 @@ describe("enqueueSync", () => {
 
   test("a --full request widens the incremental run already waiting", async () => {
     const first = await enqueueSync(db, { bankLinkId: LINK_A });
-    await park(first.id);
+    await parkSync(first.id);
     await enqueueSync(db, { bankLinkId: LINK_A, full: true });
 
     const row = await db.syncRun.findUnique({ where: { id: first.id } });
@@ -121,7 +120,7 @@ describe("enqueueSync", () => {
 
   test("a longer --days widens a waiting run; a shorter one leaves it alone", async () => {
     const first = await enqueueSync(db, { bankLinkId: LINK_A, days: 30 });
-    await park(first.id);
+    await parkSync(first.id);
 
     await enqueueSync(db, { bankLinkId: LINK_A, days: 90 });
     assert.equal((await db.syncRun.findUnique({ where: { id: first.id } }))?.days, 90);
@@ -134,7 +133,7 @@ describe("enqueueSync", () => {
 
   test("a person clears the retry backoff; a timer does not", async () => {
     const first = await enqueueSync(db, { bankLinkId: LINK_A });
-    await park(first.id);
+    await parkSync(first.id);
 
     // A cron tick arriving mid-backoff must leave the wait in place — resetting
     // it on every tick means a backoff longer than the cron interval never
@@ -158,7 +157,7 @@ describe("enqueueSync", () => {
     await db.syncRun.update({ where: { id: first.id }, data: { status: "success" } });
 
     const second = await enqueueSync(db, { bankLinkId: LINK_A });
-    await park(second.id);
+    await parkSync(second.id);
 
     assert.equal(second.existing, false, "a finished run must not swallow a fresh request");
     assert.notEqual(second.id, first.id);
@@ -170,7 +169,7 @@ describe("enqueueRules", () => {
     // Deliberately mixed triggers: two links finishing their syncs and a person
     // clicking "apply now" all want the same pass over the same workspace.
     const first = await enqueueRules(db, { trigger: "sync" });
-    await park(first.id);
+    await parkRule(first.id);
     const second = await enqueueRules(db, { trigger: "manual" });
 
     assert.deepEqual(second, { id: first.id, existing: true });
@@ -179,7 +178,7 @@ describe("enqueueRules", () => {
 
   test("keeps the first asker's trigger", async () => {
     const first = await enqueueRules(db, { trigger: "sync" });
-    await park(first.id);
+    await parkRule(first.id);
     await enqueueRules(db, { trigger: "manual" });
 
     // Both do identical work, so rewriting the trigger would only make the log
@@ -189,7 +188,7 @@ describe("enqueueRules", () => {
 
   test("a person clears the retry backoff; the ingest does not", async () => {
     const first = await enqueueRules(db, { trigger: "manual" });
-    await park(first.id);
+    await parkRule(first.id);
 
     await enqueueRules(db, { trigger: "sync" });
     assert.deepEqual(

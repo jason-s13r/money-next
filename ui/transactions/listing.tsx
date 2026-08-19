@@ -17,6 +17,7 @@ export function Listing({
   page,
   totalPages,
   empty,
+  notice,
   children,
 }: {
   title: React.ReactNode;
@@ -27,6 +28,8 @@ export function Listing({
   totalPages: number;
   /** Shown instead of the table and pager when the bucket holds nothing. */
   empty: string;
+  /** Shown above either, so a failed run's error survives an empty bucket. */
+  notice?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const isEmpty = totalPages === 0;
@@ -42,6 +45,8 @@ export function Listing({
 
         <StatList stats={stats} className="mt-4" />
       </header>
+
+      {notice}
 
       {isEmpty ? (
         <p className="py-8 text-center text-sm opacity-60">{empty}</p>
