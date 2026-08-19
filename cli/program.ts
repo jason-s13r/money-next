@@ -47,19 +47,6 @@ export function buildProgram(): Command {
   unhookBootstrapIds(program);
   completion(program);
 
-  program.addHelpText(
-    "after",
-    `
-Development, database and worker commands are pnpm scripts, not part of this:
-
-  pnpm dev | build | start | lint | typecheck | test
-  pnpm db:up | db:down | db:setup | db:migrate | db:deploy | db:roles | db:studio
-  pnpm worker:start        drain the queues forever — the process that calls Akahu
-
-Run \`pnpm run\` for that list. Everything above takes --help.
-`,
-  );
-
   // Bare `money` prints the help rather than Commander's "missing command"
   // error — it has to be the thing you can type from memory.
   program.action(() => program.help());
