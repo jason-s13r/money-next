@@ -165,8 +165,18 @@ export function flowSankey(comparison: Comparison, periodIndex: number): SankeyD
   // --- Column 1: income subcategories ---
   // Each node remembers the real subcategories it stands for, so the merchant
   // column to its left can name them even for the folded "Other Income" bucket.
-  const incomeTotal = period.incomeTotal;
-  const threshold = incomeTotal > 0 ? incomeTotal * INCOME_THRESHOLD : 0;
+  // Drawn, not `period.incomeTotal`: a subcategory that nets negative over the
+  // period — a clawback larger than the receipts it offsets — has no rect to draw,
+  // so it is left out here and the balance below is struck against what is actually
+  // on the diagram. Take the stated total instead and Savings would absorb the
+  // difference as if it were money, which is the one error a flow diagram cannot
+  // survive: every column would stop summing to the one beside it.
+  let drawnIncome = 0;
+  for (const label of incomeSubcategories) {
+    drawnIncome += Math.max(0, period.incomeDetail.get(label)?.total ?? 0);
+  }
+
+  const threshold = drawnIncome > 0 ? drawnIncome * INCOME_THRESHOLD : 0;
   let otherIncomeValue = 0;
   const otherIncomeSources: string[] = [];
   const incomeSourcesByNodeId = new Map<string, string[]>();
@@ -341,7 +351,9 @@ export function flowSankey(comparison: Comparison, periodIndex: number): SankeyD
   });
 
   // --- Balance node: Savings ---
-  const net = period.incomeTotal - period.spendTotal;
+  // Struck against the two columns as drawn (see `drawnIncome`), so the surplus or
+  // shortfall is exactly what the rects on either side leave over.
+  const net = drawnIncome - middleColumnTotal;
   let savingsId: string | null = null;
 
   if (net < 0) {

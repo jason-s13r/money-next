@@ -36,12 +36,18 @@ export function median(values: number[]): number | null {
  * are left out, so the total reads as "a normal month" rather than being jolted
  * by a one-off. The shape is shared by the spending burn and the periodic-income
  * forecast — the only difference is which rows fed the series.
+ *
+ * A month counts toward the recurrence test if it moved at all, in either direction:
+ * the series are netted, so a month carrying only a refund (or an income clawback)
+ * lands below zero, and testing for a positive would read that as a month the
+ * category went quiet — dropping a genuinely monthly bill out of the forecast on the
+ * strength of one credit.
  */
 export function forecastTotal(catMonths: Map<string, Map<string, number>>, keys: string[]): number {
   let total = 0;
   for (const series of catMonths.values()) {
     const monthly = keys.map((k) => series.get(k) ?? 0);
-    if (monthly.filter((v) => v > 0).length < RECUR_MIN_MONTHS) continue;
+    if (monthly.filter((v) => v !== 0).length < RECUR_MIN_MONTHS) continue;
     total += recencyWeightedMean(monthly);
   }
   return total;

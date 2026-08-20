@@ -14,27 +14,39 @@ const signedWhole = (net: number) => `${net >= 0 ? "+" : "−"}${formatMoneyWhol
 /**
  * One stacked bar on the shared axis. Segments are separated by a 2px gap in the
  * surface colour rather than a border: a stroke would add ink that isn't data.
+ *
+ * The bar's length is `total` — the side's net — while the segments divide it in
+ * proportion to each other. The two can differ: a category that nets negative over
+ * the period (a clawback filed under the income it offsets) has no width to draw,
+ * so it leaves the segments summing to more than the bar they sit in. Length
+ * follows the figure printed beside it, since that is what the bar is a picture of;
+ * the segments then say what the composition of it was.
  */
 function StackedBar({
   segments,
   categories,
   max,
+  total,
 }: {
   segments: [string, number][];
   categories: string[];
   max: number;
+  total: number;
 }) {
-  const total = segments.reduce((sum, [, value]) => sum + value, 0);
+  const drawn = segments.reduce((sum, [, value]) => sum + value, 0);
 
   return (
     <div className="h-4 w-full rounded-[2px] bg-current/5">
-      <div className="flex h-full gap-[2px]" style={{ width: `${(total / max) * 100}%` }}>
+      <div
+        className="flex h-full gap-[2px]"
+        style={{ width: `${(Math.max(0, total) / max) * 100}%` }}
+      >
         {segments.map(([category, value]) => (
           <div
             key={category}
             className="h-full min-w-[2px] first:rounded-l-[2px] last:rounded-r-[4px]"
             style={{
-              width: `${(value / total) * 100}%`,
+              width: `${(value / drawn) * 100}%`,
               backgroundColor: slotColor(categories, category),
             }}
             title={`${category}: ${formatMoneyWhole(value)}`}
@@ -96,6 +108,7 @@ export function PeriodCard({
               segments={segmentsFor(bucket, [...order])}
               categories={[...order]}
               max={max}
+              total={total}
             />
             <span className="text-right font-mono text-xs tabular-nums text-secondary">
               {formatMoneyWhole(total)}

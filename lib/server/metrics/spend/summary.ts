@@ -5,8 +5,9 @@ import { getDb } from "../../db/request";
 import {
   FORECAST_EXCLUDED_CATEGORY_IDS,
   isEssential,
+  isIncomeGroup,
   isKnownGroup,
-  PERIODIC_INCOME_GROUP_ID,
+  OTHER_INCOME_GROUP_ID,
 } from "../../../categories";
 import { displayConverter, getDisplayCurrency } from "../../currency";
 import { money } from "../../money";
@@ -22,8 +23,8 @@ import {
 // Spending over the last twelve complete months: the essential-spend median that
 // anchors the emergency runway, and the recurs-most-months forecast that anchors
 // the "life goes on" runway. There is no classifier, so a transaction's nature is
-// read from the sign of `amount` and whether it carries a `categoryGroup` (see
-// docs/metrics.md, Part 0).
+// read from the `categoryGroup` it carries (see docs/metrics.md, Part 0) — its
+// sign says only whether it adds to that group or nets off it.
 //
 // Month bucketing happens in JavaScript against an explicit NZ timezone rather
 // than in SQL, so the boundary can't drift with the server's timezone: 287
@@ -38,19 +39,24 @@ export async function getSpendSummary(): Promise<SpendSummary> {
   const db = await getDb();
 
   const cutoff = new Date(Date.now() - FETCH_DAYS * 24 * 60 * 60 * 1000);
-  // Categorised spending (money out Akahu tagged with a `categoryGroup`) plus
-  // periodic income (money in filed under "Periodic Income"). The spending drives
-  // the essential/median runway and the burn forecast; the periodic income is the
-  // recurring receipt the forecast runway is allowed to net off against. Both the
+  // Categorised spending (everything Akahu tagged with a spending `categoryGroup`)
+  // plus periodic income (everything filed under "Periodic Income"). The spending
+  // drives the essential/median runway and the burn forecast; the periodic income is
+  // the recurring receipt the forecast runway is allowed to net off against. Both the
   // uncategorised outflow no group could name and one-off "Other Income" are left
   // out — neither describes a normal month.
+  //
+  // Neither side is filtered by sign, and that is the point: money moves both ways
+  // inside a category. A refund filed under Food gives back groceries already
+  // counted, and a debit filed under an income category — tax clawed back off
+  // interest earned — reduces the interest it was charged on. Ask only for the
+  // negatives and the refund never lands, so the burn stays overstated; ask only for
+  // the positives and the clawback never lands, so the income does. Each is fetched
+  // with its group and nets inside it below.
   const rows = await db.transaction.findMany({
     where: {
       date: { gte: cutoff },
-      OR: [
-        { amount: { lt: 0 }, categoryGroupId: { not: null } },
-        { amount: { gt: 0 }, categoryGroupId: PERIODIC_INCOME_GROUP_ID },
-      ],
+      categoryGroupId: { not: null, notIn: [OTHER_INCOME_GROUP_ID] },
     },
     select: {
       date: true,
@@ -95,9 +101,11 @@ export async function getSpendSummary(): Promise<SpendSummary> {
     const raw = money(row.amount);
     const amount = toDisplay(raw, row.account.currency, row.date);
 
-    // Money in is periodic income (the query lets no other inflow through): feed
-    // its own recurrence-tested series and take no further part in the spend side.
-    if (raw > 0) {
+    // An income group is periodic income (the query lets no other one through):
+    // feed its own recurrence-tested series and take no further part in the spend
+    // side. Signed, so a clawback subtracts from the month it lands in rather than
+    // reading as a month's spending.
+    if (isIncomeGroup(group)) {
       const catKey = row.category?.name ?? group;
       let series = incomeMonths.get(catKey);
       if (!series) incomeMonths.set(catKey, (series = new Map()));
@@ -105,6 +113,8 @@ export async function getSpendSummary(): Promise<SpendSummary> {
       continue;
     }
 
+    // Positive is money out, so a refund is negative spend and nets off the month
+    // and the category it belongs to.
     const spend = -amount;
 
     if (!isKnownGroup(group)) unknownGroups.add(group);

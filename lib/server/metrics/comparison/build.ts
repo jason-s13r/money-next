@@ -1,4 +1,4 @@
-import { INCOME_GROUP_IDS, INCOME_GROUP_NAMES } from "../../../categories";
+import { INCOME_GROUP_IDS, INCOME_GROUP_NAMES, isIncomeGroup } from "../../../categories";
 import { displayFxFor } from "../../budget/fx";
 import type { ScopedDb } from "../../db";
 import { money, moneySum } from "../../money";
@@ -28,12 +28,14 @@ const ranked = (totals: Map<string, number>) =>
 const rankedMerchants = (totals: Map<string, number>) =>
   [...totals.keys()].some((m) => m !== UNKNOWN_MERCHANT) ? ranked(totals) : [];
 
-/** Whether a category appears in any period's bucket. */
+/** Whether a category appears in any period's bucket. Any movement counts, in
+ *  either direction: the buckets hold signed nets, so a category can be worth
+ *  showing while summing to less than nothing. */
 const present = (
   periods: PeriodBreakdown[],
   pick: (p: PeriodBreakdown) => Map<string, number>,
   category: string,
-) => periods.some((p) => (pick(p).get(category) ?? 0) > 0);
+) => periods.some((p) => (pick(p).get(category) ?? 0) !== 0);
 
 /** Build a blank period keyed by `key`. */
 const blank = (key: string, currentKey: string): PeriodBreakdown => ({
@@ -154,12 +156,26 @@ export async function buildComparison(
     if (!bucket) continue;
 
     const raw = money(row.amount);
-    const value = Math.abs(toDisplay(raw, row.account.currency, row.date));
+    const signed = toDisplay(raw, row.account.currency, row.date);
 
-    if (raw > 0) {
+    // The category decides which side a row falls on; its sign only decides whether
+    // it adds to that side or nets off it. A debit filed under an income category —
+    // a tax clawback against interest earned — belongs with the interest it offsets,
+    // and a refund filed under Food belongs with the groceries it gives back. Split
+    // by sign alone and each would land on the wrong side twice over: inventing a
+    // phantom row there while leaving the figure it was meant to reduce overstated.
+    // Only an uncategorised row has nothing to go on, so there the sign still decides.
+    const group = row.categoryGroup?.name ?? null;
+    const income = group ? isIncomeGroup(group) : signed > 0;
+    // Positive is "more of this side", either way: money in on the income side,
+    // money out on the spending side. So every total below sums in one direction and
+    // an offsetting row simply subtracts.
+    const value = income ? signed : -signed;
+
+    if (income) {
       bucket.incomeTotal += value;
       const label = row.category?.name ?? UNCATEGORISED;
-      if (!incomeGroupOf.has(label)) incomeGroupOf.set(label, row.categoryGroup?.name ?? null);
+      if (!incomeGroupOf.has(label)) incomeGroupOf.set(label, group);
       const detail = bucket.incomeDetail.get(label) ?? { total: 0, merchants: new Map() };
       detail.total += value;
       const merchant = row.merchant?.name ?? UNKNOWN_MERCHANT;
@@ -169,11 +185,11 @@ export async function buildComparison(
       continue;
     }
 
-    const category = row.categoryGroup?.name ?? UNCATEGORISED;
+    const category = group ?? UNCATEGORISED;
     bucket.spend.set(category, (bucket.spend.get(category) ?? 0) + value);
     bucket.spendTotal += value;
 
-    if (row.categoryGroup && row.category?.name) {
+    if (group && row.category?.name) {
       const subcategory = row.category.name;
       const byCategory = bucket.spendDetail.get(category) ?? new Map<string, SpendDetail>();
       const detail = byCategory.get(subcategory) ?? { total: 0, merchants: new Map() };
