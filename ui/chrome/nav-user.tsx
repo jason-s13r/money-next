@@ -2,7 +2,14 @@
 
 import NextLink from "next/link";
 import { useRouter } from "next/navigation";
-import { CheckIcon, ChevronsUpDownIcon, LogOutIcon, UserRoundIcon, UsersIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronsUpDownIcon,
+  LogOutIcon,
+  SettingsIcon,
+  UserRoundIcon,
+  UsersIcon,
+} from "lucide-react";
 
 import { authClient } from "@/lib/auth-client";
 import { workspacePath } from "@/lib/workspace-path";
@@ -125,6 +132,10 @@ export function NavUser({
             <DropdownMenuItem render={<Link href="/members" />}>
               <UsersIcon />
               Members
+            </DropdownMenuItem>
+            <DropdownMenuItem render={<Link href="/settings" />}>
+              <SettingsIcon />
+              Workspace settings
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>

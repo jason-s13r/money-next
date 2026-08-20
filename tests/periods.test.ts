@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
 import {
+  DEFAULT_TAX_YEAR,
   fetchCutoff,
   formatPeriodKey,
   formatPeriodShort,
@@ -13,7 +14,11 @@ import {
   periodKey,
   periodStart,
   periodWindow,
+  taxYearChoices,
+  taxYearOf,
+  transactionPeriodKey,
   type Period,
+  type TaxYear,
 } from "../lib/periods";
 
 /**
@@ -28,8 +33,10 @@ import {
  *     previous day, enough to visibly move a month.
  *   - **The ISO week year.** In late December and early January it differs from
  *     the calendar year, which is exactly why the code isn't `ceil(day / 7)`.
- *   - **The tax year.** It runs April–March and is named for the year it *ends*
- *     in, so every boundary case is off by one in one direction or the other.
+ *   - **The tax year.** It is named for the year it *ends* in, so every boundary
+ *     case is off by one in one direction or the other — and since where it starts
+ *     is now a workspace setting rather than a constant, the off-by-one has to come
+ *     out right for a January and a mid-month start too.
  *
  * The round-trip properties at the end are the ones that catch a whole class of
  * mistake at once: whatever `periodKey` decides, `periodStart` and `periodEnd`
@@ -47,6 +54,18 @@ import {
  * an NZ wall clock would beg the question.
  */
 const nzDay = (iso: string) => new Date(`${iso}T00:00:00Z`);
+
+/** The default: NZ's 1 April. Named so the assertions read as claims about a
+ *  configured year rather than about a constant baked into the module. */
+const NZ = DEFAULT_TAX_YEAR;
+/** 1 January — the one start whose year opens and closes in the same calendar
+ *  year, and so the one that breaks a naming rule written as "start year + 1". */
+const CALENDAR: TaxYear = { startMonth: 1, startDay: 1 };
+/** 6 April, the UK's: a start that splits its own month, which a month-only
+ *  comparison gets wrong. */
+const UK: TaxYear = { startMonth: 4, startDay: 6 };
+/** 1 July, Australia's. */
+const AU: TaxYear = { startMonth: 7, startDay: 1 };
 
 /** Midday UTC: how a bank actually stamps a transaction, and — in NZ — the evening
  *  of that day or the early hours of the *next* one. The reason this module exists. */
@@ -87,7 +106,7 @@ describe("periodKey", () => {
     assert.equal(periodKey(date, "month"), "2026-07");
     assert.equal(periodKey(date, "quarter"), "2026-Q3");
     assert.equal(periodKey(date, "year"), "2026");
-    assert.equal(periodKey(date, "taxyear"), "FY2027");
+    assert.equal(periodKey(date, "taxyear", NZ), "FY2027");
   });
 
   test("a bank's midday-UTC stamp buckets to the NZ day, which is the next one", () => {
@@ -101,7 +120,7 @@ describe("periodKey", () => {
 
   test("keys sort lexicographically in time order, which is what they are for", () => {
     for (const period of PERIODS) {
-      const keys = periodWindow(date, period, 6);
+      const keys = periodWindow(date, period, 6, 0, NZ);
       assert.deepEqual(keys, [...keys].sort(), `${period} keys are not sorted`);
     }
   });
@@ -149,23 +168,125 @@ describe("the ISO week year", () => {
 
 describe("the tax year", () => {
   test("runs 1 April to 31 March and is named for the year it ends in", () => {
-    assert.equal(periodKey(nzDay("2026-04-01"), "taxyear"), "FY2027");
-    assert.equal(periodKey(nzDay("2027-03-31"), "taxyear"), "FY2027");
+    assert.equal(periodKey(nzDay("2026-04-01"), "taxyear", NZ), "FY2027");
+    assert.equal(periodKey(nzDay("2027-03-31"), "taxyear", NZ), "FY2027");
     // A day either side is a different tax year.
-    assert.equal(periodKey(nzDay("2026-03-31"), "taxyear"), "FY2026");
-    assert.equal(periodKey(nzDay("2027-04-01"), "taxyear"), "FY2028");
+    assert.equal(periodKey(nzDay("2026-03-31"), "taxyear", NZ), "FY2026");
+    assert.equal(periodKey(nzDay("2027-04-01"), "taxyear", NZ), "FY2028");
   });
 
   test("its span opens on 1 April of the year before its name", () => {
-    assert.equal(periodStart("FY2027", "taxyear").toISOString(), "2026-04-01T00:00:00.000Z");
-    assert.equal(periodEnd("FY2027", "taxyear").toISOString(), "2027-04-01T00:00:00.000Z");
+    assert.equal(periodStart("FY2027", "taxyear", NZ).toISOString(), "2026-04-01T00:00:00.000Z");
+    assert.equal(periodEnd("FY2027", "taxyear", NZ).toISOString(), "2027-04-01T00:00:00.000Z");
   });
 
   test("the key carries the full ending year so it sorts with the rest", () => {
     assert.ok("FY2027" < "FY2028");
     // The abbreviated label is only for display.
     assert.equal(formatPeriodShort("FY2027", "taxyear"), "FY27");
-    assert.equal(formatPeriodKey("FY2027", "taxyear"), "FY27 (Apr 2026 – Mar 2027)");
+    assert.equal(formatPeriodKey("FY2027", "taxyear", NZ), "FY27 (Apr 2026 – Mar 2027)");
+  });
+});
+
+describe("a tax year that starts somewhere else", () => {
+  test("a 1 January start opens and closes in the year it is named for", () => {
+    // The one start where "named for the year it ends in" is *not* "start year
+    // + 1" — and so the one that breaks any naming rule written that way.
+    assert.equal(periodKey(nzDay("2026-01-01"), "taxyear", CALENDAR), "FY2026");
+    assert.equal(periodKey(nzDay("2026-12-31"), "taxyear", CALENDAR), "FY2026");
+    assert.equal(periodKey(nzDay("2025-12-31"), "taxyear", CALENDAR), "FY2025");
+
+    assert.equal(
+      periodStart("FY2026", "taxyear", CALENDAR).toISOString(),
+      "2026-01-01T00:00:00.000Z",
+    );
+    assert.equal(
+      periodEnd("FY2026", "taxyear", CALENDAR).toISOString(),
+      "2027-01-01T00:00:00.000Z",
+    );
+  });
+
+  test("a 6 April start splits its own month", () => {
+    // The case a month-only comparison gets wrong: both of these are in April,
+    // and they are in different tax years.
+    assert.equal(periodKey(nzDay("2026-04-05"), "taxyear", UK), "FY2026");
+    assert.equal(periodKey(nzDay("2026-04-06"), "taxyear", UK), "FY2027");
+
+    assert.equal(periodStart("FY2027", "taxyear", UK).toISOString(), "2026-04-06T00:00:00.000Z");
+    // The label names the month the last day sits in, which is April either side.
+    assert.equal(formatPeriodKey("FY2027", "taxyear", UK), "FY27 (Apr 2026 – Apr 2027)");
+  });
+
+  test("a 1 July start is the Australian year", () => {
+    assert.equal(periodKey(nzDay("2025-07-01"), "taxyear", AU), "FY2026");
+    assert.equal(periodKey(nzDay("2026-06-30"), "taxyear", AU), "FY2026");
+    assert.equal(formatPeriodKey("FY2026", "taxyear", AU), "FY26 (Jul 2025 – Jun 2026)");
+  });
+
+  test("start, key and end agree with each other for every configured start", () => {
+    // The round trip that catches a whole class of off-by-one at once: whatever
+    // `periodKey` decides, the span `periodStart`/`periodEnd` describe has to
+    // contain it, or a window's filter and its labels mean different things.
+    for (const tax of [NZ, CALENDAR, UK, AU, { startMonth: 10, startDay: 28 }]) {
+      for (const key of periodWindow(nzDay("2026-07-14"), "taxyear", 4, 0, tax)) {
+        const start = periodStart(key, "taxyear", tax);
+        const end = periodEnd(key, "taxyear", tax);
+
+        assert.equal(periodKey(start, "taxyear", tax), key, `${key} start`);
+        // A day before the end is the last day of this year; the end itself is
+        // the next year's first.
+        assert.equal(
+          periodKey(new Date(end.getTime() - 86_400_000), "taxyear", tax),
+          key,
+          `${key} last day`,
+        );
+        assert.notEqual(periodKey(end, "taxyear", tax), key, `${key} end is exclusive`);
+      }
+    }
+  });
+
+  test("moving the start moves which year a date is in", () => {
+    // The same instant, three settings, three answers. This is what a workspace
+    // is choosing when it changes the setting.
+    const date = nzDay("2026-05-20");
+    assert.equal(taxYearOf(date, NZ), 2027);
+    assert.equal(taxYearOf(date, CALENDAR), 2026);
+    assert.equal(taxYearOf(date, AU), 2026);
+  });
+});
+
+describe("a transaction's own tax year", () => {
+  // 20 May 2026 is in FY2027 under NZ's April start.
+  const date = nzDay("2026-05-20");
+
+  test("falls out of its date when nobody has said otherwise", () => {
+    assert.equal(transactionPeriodKey({ date, taxYear: null }, "taxyear", NZ), "FY2027");
+  });
+
+  test("is the override when one is set — the case tax payments exist for", () => {
+    // A terminal tax payment made in May 2026 settling the year that closed in
+    // March 2026. Its date is right and the year its date implies is not.
+    assert.equal(transactionPeriodKey({ date, taxYear: 2026 }, "taxyear", NZ), "FY2026");
+  });
+
+  test("does not move the row out of the month or year its date names", () => {
+    // The override says which year the money is *for*, not that it happened at a
+    // different time. Every other bucket ignores it.
+    for (const period of ["day", "week", "month", "quarter", "year"] as const) {
+      assert.equal(
+        transactionPeriodKey({ date, taxYear: 2026 }, period, NZ),
+        periodKey(date, period),
+        `${period} should ignore the override`,
+      );
+    }
+  });
+
+  test("the years on offer bracket the row's own, and include it", () => {
+    const choices = taxYearChoices(date, NZ);
+    assert.ok(choices.includes(2027), "its own year is always a choice");
+    // Newest first, and further back than forward: a payment settling a closed
+    // year can arrive years late, paying forward reaches one year.
+    assert.deepEqual(choices, [2028, 2027, 2026, 2025, 2024, 2023, 2022]);
   });
 });
 
@@ -207,7 +328,7 @@ describe("periodWindow", () => {
 
   test("every window is distinct keys — a step that lands twice would double a total", () => {
     for (const period of PERIODS) {
-      const keys = periodWindow(now, period, 8);
+      const keys = periodWindow(now, period, 8, 0, NZ);
       assert.equal(new Set(keys).size, keys.length, `${period} repeats a key`);
     }
   });
@@ -224,10 +345,10 @@ describe("offsetForStartDate", () => {
   test("round-trips: the offset it returns opens a window at that period", () => {
     for (const period of PERIODS) {
       for (const offset of [0, 1, 3, 7]) {
-        const window = periodWindow(now, period, 6, offset);
-        const start = periodStart(window[0], period);
+        const window = periodWindow(now, period, 6, offset, NZ);
+        const start = periodStart(window[0], period, NZ);
         assert.equal(
-          offsetForStartDate(now, period, 6, start),
+          offsetForStartDate(now, period, 6, start, NZ),
           offset,
           `${period} at offset ${offset} did not round-trip`,
         );
@@ -251,8 +372,8 @@ describe("periodStart and periodEnd", () => {
     ];
     for (const [period, key, next] of cases) {
       assert.equal(
-        periodEnd(key, period).getTime(),
-        periodStart(next, period).getTime(),
+        periodEnd(key, period, NZ).getTime(),
+        periodStart(next, period, NZ).getTime(),
         `${period} ${key} does not end where ${next} begins`,
       );
     }
@@ -272,10 +393,10 @@ describe("periodStart and periodEnd", () => {
     // a knife edge — but only an hour: `periodStart` is UTC midnight and the
     // bucketing resolves in NZ time, so half a day would step into the next date.
     for (const period of PERIODS) {
-      for (const key of periodWindow(nzDay("2026-07-14"), period, 8)) {
-        const start = periodStart(key, period);
+      for (const key of periodWindow(nzDay("2026-07-14"), period, 8, 0, NZ)) {
+        const start = periodStart(key, period, NZ);
         const inside = new Date(start.getTime() + 60 * 60 * 1000);
-        assert.equal(periodKey(inside, period), key, `${period} ${key} did not round-trip`);
+        assert.equal(periodKey(inside, period, NZ), key, `${period} ${key} did not round-trip`);
       }
     }
   });
@@ -285,7 +406,7 @@ describe("fetchCutoff", () => {
   test("reaches back past the window it is fetching for", () => {
     const now = nzDay("2026-07-14");
     for (const period of PERIODS) {
-      const oldest = periodStart(periodWindow(now, period, 6)[0], period);
+      const oldest = periodStart(periodWindow(now, period, 6, 0, NZ)[0], period, NZ);
       assert.ok(
         fetchCutoff(now, period, 6) <= oldest,
         `${period}: the cutoff would miss the window's own first period`,
@@ -321,8 +442,8 @@ describe("formatting", () => {
   test("every period formats to something non-empty", () => {
     const now = nzDay("2026-07-14");
     for (const period of PERIODS) {
-      for (const key of periodWindow(now, period, 3)) {
-        assert.ok(formatPeriodKey(key, period).length > 0, `${period} ${key} long form`);
+      for (const key of periodWindow(now, period, 3, 0, NZ)) {
+        assert.ok(formatPeriodKey(key, period, NZ).length > 0, `${period} ${key} long form`);
         assert.ok(formatPeriodShort(key, period).length > 0, `${period} ${key} short form`);
       }
     }

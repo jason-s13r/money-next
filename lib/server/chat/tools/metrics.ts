@@ -1,6 +1,6 @@
 // No `import "server-only"`: like its neighbours in this directory, the registry it
 // belongs to is loaded by the worker as well as by a chat turn.
-import { PERIODS, formatPeriodKey, isPeriod, type Period } from "../../../periods";
+import { PERIODS, formatPeriodKey, isPeriod, type Period, type TaxYear } from "../../../periods";
 import { buildComparison } from "../../metrics/comparison/build";
 import type { Comparison, PeriodBreakdown } from "../../metrics/comparison/types";
 import { asInt, asText, type Tool } from "./registry";
@@ -100,10 +100,10 @@ function envelope(comparison: Comparison, currency: string) {
 
 /** What one period is called in the window, keyed and spelled out. `2026-07` is what
  *  to pass back; `Jul 2026` is what to say to a person. */
-function named(p: PeriodBreakdown, period: Period) {
+function named(p: PeriodBreakdown, period: Period, tax: TaxYear) {
   return {
     period: p.key,
-    label: formatPeriodKey(p.key, period),
+    label: formatPeriodKey(p.key, period, tax),
     // The period in progress. Its totals are a fraction of a period and comparing them
     // with a whole one is the single easiest mistake to make with this data.
     ...(p.partial ? { partial: true } : {}),
@@ -115,7 +115,7 @@ export function totalsBreakdown(comparison: Comparison, currency: string) {
   return {
     ...envelope(comparison, currency),
     periods: comparison.periods.map((p) => ({
-      ...named(p, comparison.period),
+      ...named(p, comparison.period, comparison.taxYear),
       income: round2(p.incomeTotal),
       spend: round2(p.spendTotal),
       net: round2(p.incomeTotal - p.spendTotal),
@@ -158,7 +158,7 @@ export function areaBreakdown(comparison: Comparison, currency: string, wanted: 
       const rest = round2(total - accounted);
 
       return {
-        ...named(p, comparison.period),
+        ...named(p, comparison.period, comparison.taxYear),
         total: round2(total),
         categories,
         ...(rest > 0 ? { uncategorised: rest } : {}),

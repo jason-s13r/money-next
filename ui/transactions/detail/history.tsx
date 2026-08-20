@@ -16,6 +16,7 @@ const FIELD_LABEL: Record<string, string> = {
   merchant: "Merchant",
   transfer: "Transfer",
   label: "Label",
+  taxYear: "Tax year",
 };
 
 /** The run behind an entry, when one made it. A `user` change has none. */

@@ -29,6 +29,7 @@ import {
   type Tool,
   type ToolContext,
 } from "../lib/server/chat/tools/registry";
+import { DEFAULT_TAX_YEAR } from "../lib/periods";
 import { buildWhere } from "../lib/server/chat/tools/transactions";
 import {
   areaBreakdown,
@@ -380,6 +381,7 @@ describe("get_period_breakdown reshapes the screen's own figures", () => {
 
   const comparison: Comparison = {
     period: "month",
+    taxYear: DEFAULT_TAX_YEAR,
     periods: [june, july],
     spendCategories: ["Housing", "Lifestyle"],
     incomeSubcategories: ["Wages", "Refunds"],

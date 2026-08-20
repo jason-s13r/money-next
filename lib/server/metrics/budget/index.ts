@@ -239,6 +239,9 @@ export async function getBudgetVsActual(
 
   const shared = {
     period,
+    // Both sides read it from the same workspace row, so either would do; naming
+    // the actual side says which one the three views agree with.
+    taxYear: actual.taxYear,
     spendCategories,
     incomeSubcategories,
     incomeGroups,

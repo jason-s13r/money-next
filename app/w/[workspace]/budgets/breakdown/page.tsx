@@ -13,6 +13,7 @@ import {
   isBudgetView,
   type BudgetView,
 } from "@/lib/server/metrics/budget";
+import { getTaxYear } from "@/lib/server/queries/tax-year";
 import { Link } from "@/ui/chrome/workspace-context";
 import { ComparisonTable } from "@/ui/dashboard/comparison/table";
 import { WindowPager } from "@/ui/dashboard/comparison/pager";
@@ -48,10 +49,16 @@ export default async function BudgetBreakdownPage(
   const rawPeriod = firstParam(searchParams.period);
   const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
 
+  // Read before the window is parsed: snapping `?from=` onto a tax-year window
+  // needs to know where the household's year starts.
+  const taxYear = await getTaxYear();
+
   const rawFrom = firstParam(searchParams.from);
   const from = rawFrom ? new Date(rawFrom) : null;
   const offset =
-    from && !Number.isNaN(from.getTime()) ? offsetForStartDate(now, period, WINDOW, from) : 0;
+    from && !Number.isNaN(from.getTime())
+      ? offsetForStartDate(now, period, WINDOW, from, taxYear)
+      : 0;
 
   const rawView = firstParam(searchParams.view);
   const view: BudgetView = rawView && isBudgetView(rawView) ? rawView : "budget";
@@ -98,7 +105,8 @@ export default async function BudgetBreakdownPage(
     return `/budgets/breakdown?${params}`;
   };
 
-  const windowStart = (o: number) => periodStart(periodWindow(now, period, WINDOW, o)[0], period);
+  const windowStart = (o: number) =>
+    periodStart(periodWindow(now, period, WINDOW, o, taxYear)[0], period, taxYear);
   const earlierHref = data.actual.hasOlder
     ? query({ from: isoDate(windowStart(offset + STEP)) })
     : null;

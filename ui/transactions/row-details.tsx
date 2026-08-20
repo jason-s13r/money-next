@@ -94,6 +94,20 @@ export function TransactionRowDetails({ tx }: { tx: TransactionListItem }) {
         </dl>
       ) : null}
 
+      {/* Only when someone has said this row belongs to a different tax year than
+          its date. Shown here rather than as a column because it is the exception
+          — nearly every row's tax year follows from its date and saying so on all
+          of them would be a column of noise. The span is not spelled out: the
+          workspace's year boundary is not on this row, and `FY2026` is enough to
+          notice an override and click through to check it. */}
+      {tx.taxYear !== null ? (
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-4">
+          <Detail label="Tax year">
+            FY{tx.taxYear} <span className="text-xs opacity-60">set by hand</span>
+          </Detail>
+        </dl>
+      ) : null}
+
       {/* Line 3: the editable labels. */}
       <div>
         <dt className="text-xs opacity-60">Labels</dt>

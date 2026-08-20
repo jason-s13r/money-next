@@ -37,6 +37,22 @@ model Workspace {
   logo     String?
   metadata String?
 
+  /// When this household's tax year opens, as a month and a day of that month.
+  /// The close is not stored because it is not a free choice: a tax year is a
+  /// year, so it ends the day before the next one opens, and two columns could
+  /// only ever disagree. NZ's 1 April is the default; 1 January (a calendar tax
+  /// year), 1 July (AU) and 6 April (UK) are the other common answers.
+  ///
+  /// A tax year is *named* by the calendar year it ends in — `FY2027` is
+  /// 1 Apr 2026 – 31 Mar 2027 — which holds for every start but 1 January, where
+  /// the span opens and closes in the same year. See `lib/periods.ts`.
+  ///
+  /// `taxYearStartDay` is capped at 28 by the settings action rather than by a
+  /// constraint here: a 29–31 start would fall out of the calendar in some years
+  /// and there is no non-arbitrary rule for where it lands instead.
+  taxYearStartMonth Int @default(4)
+  taxYearStartDay   Int @default(1)
+
   createdAt DateTime @default(now()) @db.Timestamptz(3)
   updatedAt DateTime @updatedAt @db.Timestamptz(3)
 
@@ -493,6 +509,22 @@ model Transaction {
   /// URL of a merchant logo image for this transaction, when Akahu provides one.
   logo String?
 
+  /// The tax year this row belongs to, overriding the one its `date` falls in.
+  /// Held as the calendar year the tax year *ends* in — `2027` is the workspace's
+  /// FY2027 — which is what the `FY####` period key carries, and stays meaningful
+  /// if the household later moves the start of its year.
+  ///
+  /// Null for nearly every row, and that is the normal state: a transaction is
+  /// relevant to the tax year it happened in unless someone says otherwise. The
+  /// exceptions are the transactions that are *about* a tax year rather than in
+  /// it — a terminal tax payment or an IRD refund settling a year that has already
+  /// closed — where the date is right and the year it implies is not.
+  ///
+  /// Only the `taxyear` bucketing reads it. A row moved to another tax year still
+  /// sits in the month, quarter and calendar year its date names: this says which
+  /// year the money is *for*, not that it happened at a different time.
+  taxYear Int?
+
   /// The transfer this row is one leg of. A group holds two *or more* legs, so it
   /// spans not just a simple out/in pair but a multi-currency conversion and a
   /// separate fee row too, and "is this a transfer" is a `transferGroupId: null`
@@ -530,6 +562,10 @@ model Transaction {
   @@index([transferGroupId])
   @@index([connectionId])
   @@index([syncRunId])
+  // The override is a sparse column read by exactly one query: "which rows has
+  // someone pushed into this tax year?", which the comparison builder asks so a
+  // row dated outside the window still reaches its bucket.
+  @@index([workspaceId, taxYear])
   // Trigram indexes for the free-text search, which runs as ILIKE '%term%' and
   // so can use no btree index. Declared here rather than as raw SQL in the
   // migration, or `migrate dev` reads them as drift and offers to drop them.

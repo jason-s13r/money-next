@@ -1,5 +1,5 @@
-// Setting a transaction's category or merchant by hand — the one path every
-// caller goes through. Writing the field, logging the rows that actually
+// Setting a transaction's category, merchant or tax year by hand — the one path
+// every caller goes through. Writing the field, logging the rows that actually
 // changed and clearing the settled conflict have to commit together: under the
 // scoped client each would otherwise be its own transaction, and a failure
 // between them leaves the field changed with nothing in the log to say so.
@@ -140,6 +140,67 @@ export async function applyEnrichment(
 
     // The rows the scoped read could see, which is exactly the set `updateMany`
     // wrote — both are filtered by the same client.
+    return priors.length;
+  });
+}
+
+/**
+ * Say which tax year these transactions belong to, or hand them back to the one
+ * their dates fall in (`taxYear: null`).
+ *
+ * A sibling of `applyEnrichment` rather than another `EnrichmentField`, because
+ * that function's whole shape is built around a field Akahu also writes: it
+ * resolves the value against a catalog to prove the caller may name it, stamps a
+ * `…Source` column so the next sync stops overwriting, and settles the conflict
+ * the disagreement raised. None of that applies here. A tax year is a number, not
+ * a row that could belong to another workspace; Akahu has no opinion about it, so
+ * there is no source to record and nothing that could ever conflict.
+ *
+ * What is shared is the part that matters: the write and its log rows commit
+ * together, and the log records only the rows that actually changed.
+ *
+ * `taxYear` is the calendar year the tax year ends in — see the schema. This does
+ * not validate it: the callers are server actions that bound it against the row's
+ * own date, and a bare integer has no workspace-scoped meaning to check here.
+ *
+ * Returns how many of the named transactions were in this workspace and therefore
+ * written, on the same terms as `applyEnrichment`.
+ */
+export async function applyTaxYear(
+  db: ScopedDb,
+  transactionIds: string[],
+  taxYear: number | null,
+): Promise<number> {
+  if (transactionIds.length === 0) return 0;
+
+  return withScopedTx(db, async (tx) => {
+    // Inside the transaction for the reason `readPriors` is: the log claims what
+    // the field *was*, so it has to read the snapshot the update writes over.
+    const priors = await tx.transaction.findMany({
+      where: { id: { in: transactionIds } },
+      select: { id: true, taxYear: true },
+    });
+
+    await tx.transaction.updateMany({
+      where: { id: { in: transactionIds } },
+      data: { taxYear },
+    });
+
+    // Labels, no ids: `FY2027` names a span, not a row. Null reads as a cleared
+    // field in the history panel, which is what clearing the override is.
+    const label = (year: number | null) => (year === null ? null : `FY${year}`);
+    await recordUserChanges(
+      tx,
+      priors
+        .filter((prior) => prior.taxYear !== taxYear)
+        .map((prior) => ({
+          transactionId: prior.id,
+          field: "taxYear" as const,
+          fromLabel: label(prior.taxYear),
+          toLabel: label(taxYear),
+        })),
+    );
+
     return priors.length;
   });
 }

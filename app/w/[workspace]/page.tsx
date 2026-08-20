@@ -3,8 +3,16 @@ import { getBalanceSummary } from "@/lib/server/metrics/balance";
 import { getReviewQueue, getSpendSummary } from "@/lib/server/metrics/spend";
 import { getRunways } from "@/lib/server/metrics/runway";
 import { getComparison } from "@/lib/server/metrics/comparison";
+import { getTaxYear } from "@/lib/server/queries/tax-year";
 import { getBalanceSeries } from "@/lib/server/metrics/balance-series";
-import { isPeriod, offsetForStartDate, periodStart, periodWindow, type Period } from "@/lib/periods";
+import {
+  isPeriod,
+  offsetForStartDate,
+  periodStart,
+  periodWindow,
+  type Period,
+  type TaxYear,
+} from "@/lib/periods";
 import { firstParam } from "@/lib/search-params";
 import { ComparisonCards } from "@/ui/dashboard/comparison";
 import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
@@ -26,14 +34,23 @@ const DEFAULT_PERIOD: Period = "month";
 const WINDOW = 3;
 const STEP = 3;
 
-function parseWindow(searchParams: Record<string, string | string[] | undefined>, now: Date) {
+// `taxYear` is needed even to read `?from=`: a tax-year window cannot be snapped
+// to without knowing where the household's year starts.
+function parseWindow(
+  searchParams: Record<string, string | string[] | undefined>,
+  now: Date,
+  taxYear: TaxYear,
+) {
   const rawPeriod = firstParam(searchParams.period);
   const rawFrom = firstParam(searchParams.from);
 
   const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
 
   const from = rawFrom ? new Date(rawFrom) : null;
-  const offset = from && !Number.isNaN(from.getTime()) ? offsetForStartDate(now, period, WINDOW, from) : 0;
+  const offset =
+    from && !Number.isNaN(from.getTime())
+      ? offsetForStartDate(now, period, WINDOW, from, taxYear)
+      : 0;
 
   return { period, offset };
 }
@@ -44,7 +61,8 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
   // TODO: Cache Components adoption. Added to unblock the build: remove this connection() to re-trigger the error and review the fix options.
   await connection();
   const now = new Date();
-  const { period, offset } = parseWindow(await props.searchParams, now);
+  const taxYear = await getTaxYear();
+  const { period, offset } = parseWindow(await props.searchParams, now, taxYear);
 
   const [balances, spend, comparison, review] = await Promise.all([
     getBalanceSummary(),
@@ -54,7 +72,8 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
   ]);
 
   const base = `/breakdown?period=${period}`;
-  const windowStart = (o: number) => periodStart(periodWindow(now, period, WINDOW, o)[0], period);
+  const windowStart = (o: number) =>
+    periodStart(periodWindow(now, period, WINDOW, o, taxYear)[0], period, taxYear);
   const earlierHref = comparison.hasOlder ? `${base}&from=${isoDate(windowStart(offset + STEP))}` : null;
   const moreRecentHref =
     offset > 0 ? (offset - STEP <= 0 ? base : `${base}&from=${isoDate(windowStart(offset - STEP))}`) : null;

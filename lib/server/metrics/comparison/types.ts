@@ -42,6 +42,14 @@ export function netOf(p: PeriodBreakdown): number {
 
 export type Comparison = {
   period: import("../../../periods").Period;
+  /**
+   * Where the workspace's tax year starts. Carried on the result rather than
+   * fetched again by whoever renders it: `formatPeriodKey` needs it to spell out
+   * a `FY####` span, and the renderers are client components with no database.
+   * Here it is also a guarantee — the labels describe the same year boundary the
+   * buckets were built against, because they read the same value.
+   */
+  taxYear: import("../../../periods").TaxYear;
   periods: PeriodBreakdown[];
   /** Stable slot order, computed over the whole window so a category keeps its
    *  colour from one period to the next. Colour follows the entity, not its rank

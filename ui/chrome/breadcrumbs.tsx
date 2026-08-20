@@ -47,6 +47,7 @@ const staticTitles: Record<string, string> = {
   "/rules/runs": "Rules log",
   "/sync": "Sync history",
   "/members": "Members",
+  "/settings": "Settings",
   "/transactions/uncategorised": "Uncategorised",
 };
 

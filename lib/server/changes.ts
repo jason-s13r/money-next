@@ -28,8 +28,15 @@ import type { ScopedTx } from "./db";
  * the run report can show it. Tags a person adds are not logged — they are nobody
  * else's to disagree with (see the label actions) — and neither are the tags a run
  * derives from what it changed, for the same reason `categoryGroupId` is absent.
+ *
+ * `taxYear` is the exception to that last rule and it is worth saying why, since a
+ * person's own labels are *not* logged. A tax-year override is an assertion about
+ * which year a payment belongs to, made to a household's tax figures, and it is
+ * exactly the sort of claim someone comes back to a year later asking who decided
+ * and when. Nothing writes it but a person: Akahu has no opinion here and no rule
+ * sets it, so every row logged for this field is a `user` row.
  */
-export const CHANGE_FIELDS = ["category", "merchant", "transfer", "label"] as const;
+export const CHANGE_FIELDS = ["category", "merchant", "transfer", "label", "taxYear"] as const;
 export type ChangeField = (typeof CHANGE_FIELDS)[number];
 
 /**
@@ -46,6 +53,7 @@ export type ChangeSource = (typeof CHANGE_SOURCES)[number];
  *
  * `transfer` sets labels only: the other leg's description is the readable thing,
  * and a transfer group is not a value that a `fromId`/`toId` pair could name.
+ * `taxYear` does the same, for the same reason: `FY2027` is a span, not a row.
  */
 export type FieldChangeEntry = {
   transactionId: string;

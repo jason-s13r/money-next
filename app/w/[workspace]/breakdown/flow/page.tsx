@@ -7,11 +7,13 @@ import {
   periodStart,
   periodWindow,
   type Period,
+  type TaxYear,
 } from "@/lib/periods";
 import { firstParam } from "@/lib/search-params";
 import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
 import { SankeySection } from "@/ui/dashboard/sankey-section";
 import { getBalanceSummary } from "@/lib/server/metrics/balance";
+import { getTaxYear } from "@/lib/server/queries/tax-year";
 import { WindowPager } from "@/ui/dashboard/comparison/pager";
 import { connection } from "next/server";
 
@@ -25,14 +27,23 @@ const DEFAULT_PERIOD: Period = "month";
 const WINDOW = 1;
 const STEP = 1;
 
-function parseWindow(searchParams: Record<string, string | string[] | undefined>, now: Date) {
+// `taxYear` is needed even to read `?from=`: a tax-year window cannot be snapped
+// to without knowing where the household's year starts.
+function parseWindow(
+  searchParams: Record<string, string | string[] | undefined>,
+  now: Date,
+  taxYear: TaxYear,
+) {
   const rawPeriod = firstParam(searchParams.period);
   const rawFrom = firstParam(searchParams.from);
 
   const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
 
   const from = rawFrom ? new Date(rawFrom) : null;
-  const offset = from && !Number.isNaN(from.getTime()) ? offsetForStartDate(now, period, WINDOW, from) : 0;
+  const offset =
+    from && !Number.isNaN(from.getTime())
+      ? offsetForStartDate(now, period, WINDOW, from, taxYear)
+      : 0;
 
   return { period, offset };
 }
@@ -43,7 +54,8 @@ export default async function BreakdownFlowPage(props: PageProps<"/w/[workspace]
   // TODO: Cache Components adoption. Added to unblock the build: remove this connection() to re-trigger the error and review the fix options.
   await connection();
   const now = new Date();
-  const { period, offset } = parseWindow(await props.searchParams, now);
+  const taxYear = await getTaxYear();
+  const { period, offset } = parseWindow(await props.searchParams, now, taxYear);
 
   const [comparison, balances] = await Promise.all([getComparison(period, WINDOW, offset, now), getBalanceSummary()]);
 
@@ -51,12 +63,13 @@ export default async function BreakdownFlowPage(props: PageProps<"/w/[workspace]
   // of the Comparison it is derived from, and this way only the diagram crosses.
   const sankeyPeriods = comparison.periods.map((p, i) => ({
     key: p.key,
-    label: formatPeriodKey(p.key, comparison.period),
+    label: formatPeriodKey(p.key, comparison.period, comparison.taxYear),
     data: flowSankey(comparison, i),
   }));
 
   const base = `/breakdown/flow?period=${period}`;
-  const windowStart = (o: number) => periodStart(periodWindow(now, period, WINDOW, o)[0], period);
+  const windowStart = (o: number) =>
+    periodStart(periodWindow(now, period, WINDOW, o, taxYear)[0], period, taxYear);
   const earlierHref = comparison.hasOlder ? `${base}&from=${isoDate(windowStart(offset + STEP))}` : null;
   const moreRecentHref =
     offset > 0 ? (offset - STEP <= 0 ? base : `${base}&from=${isoDate(windowStart(offset - STEP))}`) : null;

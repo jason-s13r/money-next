@@ -12,6 +12,7 @@ import {
   bulkRemoveLabel,
   bulkSetCategory,
   bulkSetMerchant,
+  bulkSetTaxYear,
   createLabelForBulk,
   loadPickerCatalog,
 } from "@/app/w/[workspace]/transactions/actions/bulk";
@@ -34,6 +35,11 @@ export function TransactionBulkBar({ ids, clear }: { ids: string[]; clear: () =>
   const router = useRouter();
   const [catalog, setCatalog] = useState<Catalog | null>(null);
   const [linking, startLinking] = useTransition();
+  // What the last tax-year write skipped, if anything. See `bulkSetTaxYear`: the
+  // years on offer are the ones around today, and a selected row far enough from
+  // them cannot take one. Held here rather than swallowed so a partial write says
+  // so instead of looking like a whole one.
+  const [taxYearSkipped, setTaxYearSkipped] = useState(0);
 
   useEffect(() => {
     let live = true;
@@ -59,6 +65,7 @@ export function TransactionBulkBar({ ids, clear }: { ids: string[]; clear: () =>
     label: c.name,
     hint: c.groupName ?? undefined,
   }));
+  const taxYearOptions = catalog?.taxYears ?? [];
 
   return (
     <div className="sticky bottom-2 z-20 mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-border bg-background/95 p-2 shadow-lg backdrop-blur">
@@ -125,6 +132,25 @@ export function TransactionBulkBar({ ids, clear }: { ids: string[]; clear: () =>
           }}
         />
 
+        {/* Which tax year the selection is *for*. The rows keep the months their
+            dates name — only the tax-year breakdowns read this. */}
+        <SearchableSelect
+          ariaLabel="Set tax year on selected"
+          options={taxYearOptions}
+          value={null}
+          valueLabel={null}
+          placeholder="Set tax year…"
+          clearLabel="Use each transaction's date"
+          onSelect={async (year) => {
+            const result = await bulkSetTaxYear(ids, year, path);
+            setTaxYearSkipped(result.skipped);
+            // Kept selected when some rows were declined, so the reader can see
+            // which ones they were and choose a year that suits them.
+            if (result.skipped === 0) done();
+            else router.refresh();
+          }}
+        />
+
         {/* One leg is not a transfer, so this needs two rows before it means
             anything; it stays visible but disabled below that, rather than
             appearing and disappearing as the reader ticks. */}
@@ -151,6 +177,14 @@ export function TransactionBulkBar({ ids, clear }: { ids: string[]; clear: () =>
       <Button variant="ghost" size="sm" className="ml-auto" onClick={clear}>
         Clear
       </Button>
+
+      {taxYearSkipped > 0 ? (
+        <p role="status" className="w-full px-1 text-xs text-status-critical">
+          {taxYearSkipped} {taxYearSkipped === 1 ? "transaction is" : "transactions are"} dated
+          too far from that tax year to be moved to it, and {taxYearSkipped === 1 ? "was" : "were"}{" "}
+          left alone.
+        </p>
+      ) : null}
     </div>
   );
 }

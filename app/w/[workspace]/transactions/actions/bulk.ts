@@ -3,12 +3,14 @@
 import { revalidateWorkspacePath } from "@/lib/server/workspace";
 import { mintId } from "@/lib/ids";
 import { recordUserChanges } from "@/lib/server/changes";
-import { applyEnrichment } from "@/lib/server/enrichment";
+import { applyEnrichment, applyTaxYear } from "@/lib/server/enrichment";
 import { requireRole } from "@/lib/server/auth/session";
 import { getDb } from "@/lib/server/db/request";
 import { withScopedTx } from "@/lib/server/db";
 import { getCategories, getLabels, getMerchants } from "@/lib/server/queries/lookups";
+import { getTaxYear } from "@/lib/server/queries/tax-year";
 import { clearCategoryGroup } from "@/lib/server/matching/transfers";
+import { formatPeriodKey, taxYearChoices } from "@/lib/periods";
 
 // The bulk counterparts of the single-row enrichment actions, driven by the
 // transaction table's row-selection checkboxes. Each takes the selected ids and
@@ -23,15 +25,26 @@ import { clearCategoryGroup } from "@/lib/server/matching/transfers";
 /** Load the option sets the bulk bar's pickers need, on demand (first open). */
 export async function loadPickerCatalog() {
   await requireRole({ enrichment: ["update"] });
-  const [labels, merchants, categories] = await Promise.all([
+  const [labels, merchants, categories, taxYear] = await Promise.all([
     getLabels(),
     getMerchants(),
     getCategories(),
+    getTaxYear(),
   ]);
+
+  // The tax years on offer are the ones around *today*, not around any particular
+  // selected row: the bar is loaded once, before anything is ticked, and the
+  // selection can span years anyway. `bulkSetTaxYear` re-checks each row against
+  // its own allowed set, which is what makes an offer that doesn't fit a given row
+  // a skip rather than a bad write.
   return {
     labels,
     merchants: merchants.map((m) => ({ id: m.id, name: m.name })),
     categories: categories.map((c) => ({ id: c.id, name: c.name, groupName: c.groupName })),
+    taxYears: taxYearChoices(new Date(), taxYear).map((year) => ({
+      value: String(year),
+      label: formatPeriodKey(`FY${year}`, "taxyear", taxYear),
+    })),
   };
 }
 
@@ -125,6 +138,55 @@ export async function bulkSetMerchant(
  * group and everything else is folded into it, which is four statements whether
  * the reader ticked two rows or two hundred.
  */
+/**
+ * Say which tax year a whole selection belongs to, or clear the override back to
+ * each row's own date (`year: null`).
+ *
+ * The one bulk action that can decline part of its selection, and the reason is
+ * the field: a tax year is only meaningful within a few years of when the money
+ * moved (`taxYearChoices`), and a selection can span any span of dates. So this
+ * applies the choice to every row it is a legitimate choice *for* and reports the
+ * rest as skipped, rather than either refusing the whole batch over one stray row
+ * or writing a year onto a transaction a decade away from it.
+ *
+ * Saying so is the point of the return value. A silent partial write is the worst
+ * of the three options: it looks like it worked and the reader never learns which
+ * rows it missed.
+ */
+export async function bulkSetTaxYear(
+  transactionIds: string[],
+  year: string | null,
+  path: string,
+): Promise<{ written: number; skipped: number }> {
+  await requireRole({ enrichment: ["update"] });
+
+  const db = await getDb();
+  if (transactionIds.length === 0) return { written: 0, skipped: 0 };
+
+  const taxYear = year === null ? null : Number(year);
+
+  // Scoped, so ids from another workspace are simply absent — and so are neither
+  // written nor counted as skipped, matching what the write would refuse to touch.
+  const owned = await db.transaction.findMany({
+    where: { id: { in: transactionIds } },
+    select: { id: true, date: true },
+  });
+
+  // Clearing is always allowed: handing a row back to its own date cannot put it
+  // anywhere its date does not already say.
+  const config = await getTaxYear();
+  const eligible =
+    taxYear === null
+      ? owned
+      : owned.filter((tx) => taxYearChoices(tx.date, config).includes(taxYear));
+
+  await applyTaxYear(db, eligible.map((tx) => tx.id), taxYear);
+
+  await revalidateWorkspacePath(path);
+
+  return { written: eligible.length, skipped: owned.length - eligible.length };
+}
+
 export async function bulkLinkTransfer(transactionIds: string[], path: string) {
   await requireRole({ enrichment: ["update"] });
 

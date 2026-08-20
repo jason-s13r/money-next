@@ -5,6 +5,7 @@ import { displayConverter, getDisplayCurrency } from "../../currency";
 import { money } from "../../money";
 import { occurrencesIn, type Lifespan, type Frequency } from "../../../budget/recurrence";
 import { periodEnd, periodKey, periodStart, periodWindow, type Period } from "../../../periods";
+import { taxYearFor } from "../../tax-year";
 import {
   UNCATEGORISED,
   UNKNOWN_MERCHANT,
@@ -75,15 +76,21 @@ export async function buildBudgetComparison(
 ): Promise<BudgetComparison> {
   const db = await getDb();
 
-  const keys = periodWindow(now, period, count, offset);
-  const currentKey = periodKey(now, period);
+  // The same tax year the historic side buckets against — read from the same
+  // place, so a budget column and an actual column cannot disagree about where
+  // FY27 starts. A plan has no per-occurrence override to go with it: see
+  // `amountInPeriod` in lib/budget/recurrence.ts.
+  const taxYear = await taxYearFor(db);
+
+  const keys = periodWindow(now, period, count, offset, taxYear);
+  const currentKey = periodKey(now, period, taxYear);
   const periods = new Map(keys.map((key) => [key, blank(key, currentKey)]));
 
   // The window's exact span. Unlike the historic builder, which overfetches and
   // lets the key decide membership, occurrences are *generated* — so the range is
   // the precise one and every date produced belongs to some bucket.
-  const from = periodStart(keys[0], period);
-  const fullTo = periodEnd(keys[keys.length - 1], period);
+  const from = periodStart(keys[0], period, taxYear);
+  const fullTo = periodEnd(keys[keys.length - 1], period, taxYear);
 
   // `clipToNow` stops the plan at today instead of running to the end of the
   // period in progress. It exists for the variance view and only for it.
@@ -196,7 +203,7 @@ export async function buildBudgetComparison(
       );
 
       for (const date of occurrences) {
-        const key = periodKey(date, period);
+        const key = periodKey(date, period, taxYear);
         const bucket = periods.get(key);
         if (!bucket) continue;
 
@@ -256,6 +263,7 @@ export async function buildBudgetComparison(
 
   return {
     period,
+    taxYear,
     periods: ordered,
     spendCategories: ranked(spendTotals),
     incomeSubcategories,
@@ -308,9 +316,10 @@ export async function budgetsInWindow(
   now: Date,
 ): Promise<BudgetRef[]> {
   const db = await getDb();
-  const keys = periodWindow(now, period, count, offset);
-  const from = periodStart(keys[0], period);
-  const to = periodEnd(keys[keys.length - 1], period);
+  const taxYear = await taxYearFor(db);
+  const keys = periodWindow(now, period, count, offset, taxYear);
+  const from = periodStart(keys[0], period, taxYear);
+  const to = periodEnd(keys[keys.length - 1], period, taxYear);
 
   const rows = await db.budget.findMany({
     where: { baseBudgetId: null, ...overlapsWindow(from, to) },
@@ -339,9 +348,10 @@ export async function baseWithActiveLayers(
   now: Date,
 ): Promise<string[]> {
   const db = await getDb();
-  const keys = periodWindow(now, period, count, offset);
-  const from = periodStart(keys[0], period);
-  const to = periodEnd(keys[keys.length - 1], period);
+  const taxYear = await taxYearFor(db);
+  const keys = periodWindow(now, period, count, offset, taxYear);
+  const from = periodStart(keys[0], period, taxYear);
+  const to = periodEnd(keys[keys.length - 1], period, taxYear);
 
   // Resolved through the scoped client, so a base id naming another workspace's
   // budget finds nothing and layers nothing.

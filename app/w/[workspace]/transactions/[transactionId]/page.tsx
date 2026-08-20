@@ -12,8 +12,11 @@ import {
 } from "@/lib/server/matching/matching";
 import { accountLabel } from "@/lib/account-name";
 import { formatDateTime, formatMoney } from "@/lib/format";
+import { formatPeriodKey, taxYearChoices, taxYearOf } from "@/lib/periods";
+import { getTaxYear } from "@/lib/server/queries/tax-year";
 import { slugify } from "@/lib/slug";
 import { setTransactionCategory } from "./actions/category";
+import { setTransactionTaxYear } from "./actions/tax-year";
 import {
   createMerchantAndSetForTransaction,
   setTransactionMerchant,
@@ -58,7 +61,7 @@ export default async function TransactionPage(
   // Options for the enrichment pickers. Loaded here so the page stays one server
   // round-trip; both are small enough to hand to the client whole (see
   // SearchableSelect). The bound actions carry this transaction's id.
-  const [categories, merchants, labelOptions, similar, transferLegs, transferCandidates, rulesForTx, history] =
+  const [categories, merchants, labelOptions, similar, transferLegs, transferCandidates, rulesForTx, history, taxYear] =
     await Promise.all([
       getCategories(),
       getMerchants(),
@@ -68,6 +71,7 @@ export default async function TransactionPage(
       getTransferCandidates(tx, account.currency),
       getRulesForTransaction({ type: tx.type, description: tx.description }),
       getTransactionHistory(transactionId),
+      getTaxYear(),
     ]);
 
   const categoryOptions: SelectOption[] = categories.map((c) => ({
@@ -82,6 +86,17 @@ export default async function TransactionPage(
 
   const categoryConflict = tx.conflicts.find((c) => c.field === "category");
   const merchantConflict = tx.conflicts.find((c) => c.field === "merchant");
+
+  // The tax year this row's own date falls in, and the ones it may be moved to.
+  // Both are spelled out with their spans — `FY27` alone is not something a
+  // reader can check a tax notice against.
+  const ownTaxYear = taxYearOf(tx.date, taxYear);
+  const taxYearLabel = (year: number) => formatPeriodKey(`FY${year}`, "taxyear", taxYear);
+  const taxYearOptions: SelectOption[] = taxYearChoices(tx.date, taxYear).map((year) => ({
+    value: String(year),
+    label: taxYearLabel(year),
+    hint: year === ownTaxYear ? "this transaction's date" : undefined,
+  }));
 
   return (
     <main className="mx-auto w-full max-w-3xl p-2">
@@ -215,6 +230,28 @@ export default async function TransactionPage(
           value={tx.categoryGroup?.name ?? null}
           href={tx.categoryGroup ? `/categories/${slugify(tx.categoryGroup.name)}` : null}
         />
+        {/* Which tax year the money is *for*, which is usually but not always the
+            year it moved in — a terminal tax payment or a refund settles a year
+            that has already closed. Only the tax-year breakdowns read it; the row
+            stays in the month its date names. */}
+        <EditableField label="Tax year" href={null} value={null}>
+          <SearchableSelect
+            ariaLabel="Tax year"
+            options={taxYearOptions}
+            value={tx.taxYear === null ? null : String(tx.taxYear)}
+            valueLabel={tx.taxYear === null ? null : taxYearLabel(tx.taxYear)}
+            placeholder={taxYearLabel(ownTaxYear)}
+            clearLabel={`Use the transaction date (${taxYearLabel(ownTaxYear)})`}
+            onSelect={setTransactionTaxYear.bind(null, tx.id)}
+            readOnly={!canEdit}
+          />
+          {tx.taxYear !== null && tx.taxYear !== ownTaxYear ? (
+            <p className="text-xs text-muted">
+              Overridden: the date falls in {taxYearLabel(ownTaxYear)}.
+            </p>
+          ) : null}
+        </EditableField>
+
         <dt className="opacity-60">Labels</dt>
         <dd>
           <LabelCatalogProvider initial={labelOptions}>

@@ -58,7 +58,7 @@ export function PeriodCard({
   breakdown: PeriodBreakdown;
   comparison: Comparison;
 }) {
-  const { incomeSubcategories, spendCategories, period } = comparison;
+  const { incomeSubcategories, spendCategories, period, taxYear } = comparison;
   const max = Math.max(breakdown.incomeTotal, breakdown.spendTotal);
   const net = netOf(breakdown);
 
@@ -70,7 +70,7 @@ export function PeriodCard({
     <Card size="sm">
       <CardHeader>
         <CardTitle className="flex items-baseline gap-2">
-          {formatPeriodKey(breakdown.key, period)}
+          {formatPeriodKey(breakdown.key, period, taxYear)}
           {breakdown.partial ? (
             <Badge variant="outline" className="font-normal text-secondary">
               partial

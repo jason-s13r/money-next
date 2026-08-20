@@ -2,7 +2,14 @@ import { INCOME_GROUP_IDS, INCOME_GROUP_NAMES } from "../../../categories";
 import { displayFxFor } from "../../budget/fx";
 import type { ScopedDb } from "../../db";
 import { money, moneySum } from "../../money";
-import { fetchCutoff, periodKey, periodWindow, type Period } from "../../../periods";
+import {
+  fetchCutoff,
+  periodKey,
+  periodWindow,
+  transactionPeriodKey,
+  type Period,
+} from "../../../periods";
+import { taxYearFor } from "../../tax-year";
 import {
   UNCATEGORISED,
   UNKNOWN_MERCHANT,
@@ -54,6 +61,13 @@ export async function buildComparison(
   offset = 0,
   now: Date = new Date(),
 ): Promise<Comparison> {
+  // Where this household's tax year starts. Read before anything is bucketed:
+  // every key below is computed against it, and the `taxyear` ones are wrong
+  // without it.
+  const taxYear = await taxYearFor(db);
+
+  const keys = periodWindow(now, period, count, offset, taxYear);
+
   // Only the window's rows are ever bucketed — every other row falls through the
   // `periods.get(key)` miss below — so don't read them. The bound is deliberately
   // generous and `offset` is folded into the count so that paging back still
@@ -61,16 +75,30 @@ export async function buildComparison(
   // transaction stamped before the window's first UTC midnight can still belong to
   // it. Exact membership stays with the key; this only spares the read.
   //
+  // The second branch is the tax-year override's doing. A date bound alone assumes
+  // a row's bucket follows from its date, which is exactly what `Transaction.taxYear`
+  // breaks: a payment dated before the cutoff and marked as belonging to a year
+  // inside the window would be pruned here and silently never counted. Rows moved
+  // the other way — inside the date bound, marked as another year's — need no help;
+  // they simply miss their bucket below, which is the intended outcome.
+  //
   // The rankings and the `hasOlder`/`through` probes below run their own queries
   // over all of history and are unaffected.
+  const overrides =
+    period === "taxyear" ? keys.map((key) => Number(key.slice(2))) : [];
+
   const rows = await db.transaction.findMany({
     where: {
       type: { notIn: ["TRANSFER"] },
       transferGroupId: null,
-      date: { gte: fetchCutoff(now, period, count + offset) },
+      OR: [
+        { date: { gte: fetchCutoff(now, period, count + offset) } },
+        ...(overrides.length ? [{ taxYear: { in: overrides } }] : []),
+      ],
     },
     select: {
       date: true,
+      taxYear: true,
       amount: true,
       categoryGroup: { select: { name: true } },
       category: { select: { name: true } },
@@ -101,8 +129,7 @@ export async function buildComparison(
     .map((r) => (r.categoryGroupId ? groupName.get(r.categoryGroupId) : undefined))
     .filter((name): name is string => name != null);
 
-  const keys = periodWindow(now, period, count, offset);
-  const currentKey = periodKey(now, period);
+  const currentKey = periodKey(now, period, taxYear);
   const periods = new Map(keys.map((key) => [key, blank(key, currentKey)]));
 
   const incomeGroupOf = new Map<string, string | null>();
@@ -110,17 +137,19 @@ export async function buildComparison(
 
   const newest = await db.transaction.aggregate({ _max: { date: true } });
   const latest = newest._max.date;
-  const through = latest && periodKey(latest, period) === currentKey ? latest : null;
+  const through = latest && periodKey(latest, period, taxYear) === currentKey ? latest : null;
 
   const oldest = await db.transaction.aggregate({
     where: { amount: { not: 0 } },
     _min: { date: true },
   });
   const earliest = oldest._min.date;
-  const hasOlder = earliest !== null && periodKey(earliest, period) < keys[0];
+  const hasOlder = earliest !== null && periodKey(earliest, period, taxYear) < keys[0];
 
   for (const row of rows) {
-    const key = periodKey(row.date, period);
+    // Not `periodKey`: a row someone has assigned to another tax year belongs to
+    // that one, and this is the only bucketing in the historic view.
+    const key = transactionPeriodKey(row, period, taxYear);
     const bucket = periods.get(key);
     if (!bucket) continue;
 
@@ -226,6 +255,7 @@ export async function buildComparison(
 
   return {
     period,
+    taxYear,
     periods: ordered,
     spendCategories: present(ordered, (p) => p.spend, UNCATEGORISED)
       ? [...spendBase, UNCATEGORISED]

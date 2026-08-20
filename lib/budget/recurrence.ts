@@ -23,7 +23,7 @@
 // NZ leads UTC by 12–13 hours and so UTC midnight always resolves back to the
 // same NZ calendar day.
 
-import { nzDate, periodKey, type Period, type YMD } from "../periods";
+import { nzDate, periodKey, type Period, type TaxYear, type YMD } from "../periods";
 
 /**
  * How often a budget item recurs.
@@ -318,6 +318,11 @@ export function occurrencesIn(
  * in most months and $1,500 in a three-payday month, which is what actually
  * happens — rather than a smoothed $1,083 that matches no month there has ever
  * been.
+ *
+ * `tax` is where the household's year starts, needed for the `taxyear` bucket and
+ * for that one alone. A plan has no `Transaction.taxYear` counterpart and wants
+ * none: an override says a transaction that *happened* is relevant to another
+ * year, and a planned occurrence has not happened.
  */
 export function amountInPeriod(
   recurrence: Recurrence,
@@ -327,10 +332,11 @@ export function amountInPeriod(
   period: Period,
   from: Date,
   to: Date,
+  tax: TaxYear,
 ): number {
   let total = 0;
   for (const date of occurrencesIn(recurrence, lifespan, from, to)) {
-    if (periodKey(date, period) === key) total += amount;
+    if (periodKey(date, period, tax) === key) total += amount;
   }
   return total;
 }
