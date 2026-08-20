@@ -21,4 +21,4 @@ done
 # specifier, so node resolves it against the working directory. No command takes
 # a path argument, so nothing else depends on where it was invoked.
 cd -- "$(CDPATH= cd -- "$(dirname -- "$self")/.." && pwd)"
-exec node --import tsx --env-file-if-exists=.env cli/index.ts "$@"
+exec bin/with-env node --import tsx cli/index.ts "$@"

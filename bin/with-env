@@ -1,0 +1,16 @@
+#!/bin/sh
+# Run a node/tsx command with `.env` loaded, and say nothing when there isn't one.
+#
+#   bin/with-env node --import tsx --test tests/*.test.ts
+#   bin/with-env tsx scripts/worker.ts
+#
+# `node --env-file-if-exists=.env` was doing this job, but it announces a missing file on stderr
+set -e
+
+runner=$1
+shift
+
+if [ -f .env ]; then
+  exec "$runner" --env-file=.env "$@"
+fi
+exec "$runner" "$@"

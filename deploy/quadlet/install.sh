@@ -138,9 +138,11 @@ prompt for a secret, hence -it. Worth an alias in ~/.bashrc:
   moneycli user create --email you@example.com --name "Your Name"
   moneycli link token --list
 
-Tab completion, once:
+Tab completion — re-run after any upgrade that adds a command:
 
-  moneycli completion bash > ~/.bashrc.d/moneycli.sh
+  podman exec -i --env-file ~/.config/money/db-owner.env money-worker \
+    money completion bash > ~/.bashrc.d/moneycli.sh
+
 
 An older alias ending in `pnpm` keeps working — `moneycli money:cli user create` —
 so upgrading the box and re-sourcing your shell profile are not the same step.
