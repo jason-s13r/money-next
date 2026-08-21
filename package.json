@@ -19,6 +19,7 @@
     "db:setup": "prisma migrate deploy && bin/with-env tsx scripts/db-roles.ts",
     "db:studio": "prisma studio",
     "db:refresh-dev": "scripts/refresh-dev-workspace.sh",
+    "db:seed-demo": "bin/with-env tsx scripts/seed-demo-workspace.ts",
     "worker:start": "bin/with-env tsx scripts/worker.ts",
     "money:cli": "./bin/money"
   },
