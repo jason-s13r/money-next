@@ -12,6 +12,13 @@ overrides:
   # require('uuid'), and uuid 13+ is ESM-only. The floor is 11.1.1 because the same
   # advisory covers uuid 12.0.0 and 13.0.0.
   akahu>uuid: ^11.1.1
+  # Same shape: @prisma/config pins deepmerge-ts to an exact 7.1.5, and prisma 7.9.1
+  # is the latest release, so the advisory (GHSA-ggr8-5vv4-36mx: deepmerge() recurses
+  # forever on a self-referential object graph and blows the stack) has to be forced
+  # forward here. Nothing in the app feeds user input to it — it merges the loaded
+  # prisma config — so again hygiene rather than a live fix. 8.x is API-compatible
+  # for the one call site, which imports deepmerge and hands it to c12 as its merger.
+  '@prisma/config>deepmerge-ts': ^8.0.1
   # Not advisories — deduplication, added by the Next 16 upgrade. Half the UI tree
   # (base-ui, the radix packages under shadcn) declares @types/react as a peer with
   # a range like ^18 || ^19, and pnpm is free to satisfy those with copies that are
