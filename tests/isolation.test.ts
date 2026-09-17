@@ -412,6 +412,12 @@ describe("the unscoped client stays unreachable", () => {
       // `authDb`; the link rename, being a tenant-table write, goes through
       // `scopedDb`.
       "cli/commands/unhook-bootstrap-ids.ts",
+      // Seeding the demo workspace. Resolves it by slug — the same control-plane
+      // read `cli/lib/membership.ts` is allowed above, and for the same reason:
+      // the script is outside every workspace and is asking which one to write
+      // to. Everything it then writes (accounts, transactions, categories) goes
+      // through `scopedDb`, one workspace at a time.
+      "scripts/seed-demo-workspace.ts",
       // Queuing mail, and the worker draining that queue. An `EmailOutbox` row has
       // no workspace to scope it by: a password reset belongs to a person, and
       // `/account` can ask for one with no workspace in scope at all. Control

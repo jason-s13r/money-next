@@ -54,7 +54,14 @@ export const getAccount = cache(async (id: string) => {
   const db = await getDb();
   const account = await db.account.findUnique({
     where: { id },
-    include: { connection: { select: { id: true, name: true, logo: true } } },
+    include: {
+      connection: { select: { id: true, name: true, logo: true } },
+      // The account that replaced this one, when a bank migration merged it
+      // away. Loaded here rather than by the page because a tombstone's page is
+      // mostly *about* its successor: it holds no transactions of its own, so
+      // the one useful thing it can say is where they went.
+      supersededBy: { select: { id: true, name: true, displayName: true } },
+    },
   });
   return account && accountMoney(account);
 });

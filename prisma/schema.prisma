@@ -492,6 +492,16 @@ model Transaction {
   connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
 
   date        DateTime @db.Timestamptz(3)
+  /// When the institution *posted* the transaction, where `date` is when it was
+  /// made. They disagree on nearly every row that has both — a day or two
+  /// apart, up to a week — so it is kept rather than assumed equal, and a bank
+  /// statement that does not line up with this ledger becomes explicable.
+  ///
+  /// Only official open-banking connections report it: a classic connection
+  /// sends nothing, so this stays null for them and fills in as institutions
+  /// migrate. Absent from the `akahu` package's types (2.5.1) though the API
+  /// sends it — see `postedDate` in ingest/transactions.ts.
+  postedDate  DateTime? @db.Timestamptz(3)
   description String
   /// Negative for money out, positive for money in.
   amount      Decimal  @db.Decimal(19, 4)

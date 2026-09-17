@@ -11,7 +11,7 @@ import {
   getTransferGroupLegs,
 } from "@/lib/server/matching/matching";
 import { accountLabel } from "@/lib/account-name";
-import { formatDateTime, formatMoney } from "@/lib/format";
+import { formatDate, formatDateTime, formatMoney } from "@/lib/format";
 import { formatPeriodKey, taxYearChoices, taxYearOf } from "@/lib/periods";
 import { getTaxYear } from "@/lib/server/queries/tax-year";
 import { slugify } from "@/lib/slug";
@@ -101,7 +101,16 @@ export default async function TransactionPage(
   return (
     <main className="mx-auto w-full max-w-3xl p-2">
       <header className="mb-8">
-        <p className="text-sm opacity-60">{formatDateTime(tx.date)}</p>
+        <p className="text-sm opacity-60">
+          {formatDateTime(tx.date)}
+          {/* Shown only when the bank posted it on another day, which is the
+              only time the distinction explains anything — and it is most of
+              them. Silent when the two agree, rather than printing the same
+              date twice. */}
+          {tx.postedDate && tx.postedDate.getTime() !== tx.date.getTime() ? (
+            <span className="opacity-70"> · posted {formatDate(tx.postedDate)}</span>
+          ) : null}
+        </p>
         <h1 className="mt-1 text-2xl font-semibold">
           {tx.merchant?.name ?? tx.description}
         </h1>
@@ -304,6 +313,10 @@ export default async function TransactionPage(
         <Field label="Account id" value={tx.accountId} mono />
         <Field label="Connection id" value={tx.connectionId} mono />
         <Field label="Hash" value={tx.hash} mono />
+        <Field
+          label="Posted (bank)"
+          value={tx.postedDate ? formatDateTime(tx.postedDate) : "— not reported"}
+        />
         <Field label="Created (Akahu)" value={formatDateTime(tx.createdAt)} />
         <Field label="Updated (Akahu)" value={formatDateTime(tx.updatedAt)} />
         <Field

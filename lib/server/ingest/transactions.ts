@@ -18,6 +18,22 @@ const DEFAULT_LOOKBACK_DAYS = 2 * 365;
  */
 const OVERLAP_DAYS = 7;
 
+/**
+ * Akahu's `posted_date` — when the institution posted the transaction, as
+ * against `date`, when it was made.
+ *
+ * Read through a cast because the `akahu` package's types do not declare it at
+ * 2.5.1 even though the API sends it on every official open-banking row. The
+ * cast is narrow and local on purpose: it admits one field this file has seen
+ * in live payloads (and which `AkahuRecord` keeps the evidence of), rather than
+ * loosening the transaction type everywhere. Delete it when the package catches
+ * up.
+ */
+function postedDate(tx: AkahuTransaction): Date | null {
+  const value = (tx as { posted_date?: unknown }).posted_date;
+  return typeof value === "string" ? new Date(value) : null;
+}
+
 /** `EnrichedTransaction` adds merchant/category/meta; raw transactions lack them. */
 function isEnriched(
   tx: AkahuTransaction,
@@ -149,6 +165,7 @@ function reconcileTransaction(tx: AkahuTransaction, ctx: ReconcileContext): void
     accountId: tx._account,
     connectionId: tx._connection,
     date,
+    postedDate: postedDate(tx),
     description: tx.description,
     amount: tx.amount,
     balance: tx.balance ?? null,

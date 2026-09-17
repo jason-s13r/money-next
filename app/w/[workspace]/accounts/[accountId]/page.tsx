@@ -5,6 +5,7 @@ import { StatList } from "@/ui/primitives/stat-list";
 import { TransactionTable } from "@/ui/transactions/transaction-table";
 import { PendingTable } from "@/ui/transactions/pending-table";
 import { AccountHeading } from "@/ui/accounts/account-name";
+import { Link } from "@/ui/chrome/workspace-context";
 import { requireWorkspace } from "@/lib/server/auth/session";
 import { getAccount } from "@/lib/server/queries/accounts";
 import { getAccountPendingTransactions } from "@/lib/server/queries/pending";
@@ -31,6 +32,8 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
 
   const account = await getAccount(accountId);
   if (!account) notFound();
+
+  const superseded = account.supersededBy;
 
   // Renaming an account is `account.update`, which a viewer does not hold. The
   // button is hidden for them; the action checks for itself (T9).
@@ -76,8 +79,14 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
         <StatList
           className="mt-4"
           stats={[
-            { label: "Balance", value: formatMoney(account.balanceCurrent, account.currency) },
-            { label: "Available", value: formatMoney(account.balanceAvailable, account.currency) },
+            {
+              label: superseded ? "Balance at merge" : "Balance",
+              value: formatMoney(account.balanceCurrent, account.currency),
+            },
+            {
+              label: superseded ? "Available at merge" : "Available",
+              value: formatMoney(account.balanceAvailable, account.currency),
+            },
             ...(account.balanceLimit !== null
               ? [{ label: "Limit", value: formatMoney(account.balanceLimit, account.currency) }]
               : []),
@@ -94,9 +103,29 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
 
       {total === 0 ? (
         pending.length === 0 ? (
-          <p className="py-8 text-center text-sm opacity-60">
-            No transactions for this account.
-          </p>
+          superseded ? (
+            // "No transactions" is true and useless here: it reads as data loss
+            // when what happened is that the history was moved somewhere better.
+            // Say where, and link to it.
+            <div className="py-8 text-center text-sm">
+              <p className="opacity-60">
+                {account.connection?.name ?? "This bank"} replaced this account when it moved to
+                open banking. Its transactions were merged into{" "}
+                <Link href={`/accounts/${superseded.id}`} className="underline underline-offset-2">
+                  {accountLabel(superseded)}
+                </Link>
+                , which now holds the full history.
+              </p>
+              <p className="mt-2 opacity-40">
+                Kept so the old id cannot come back, and so the balances above still
+                explain what this account was worth when it was merged.
+              </p>
+            </div>
+          ) : (
+            <p className="py-8 text-center text-sm opacity-60">
+              No transactions for this account.
+            </p>
+          )
         ) : null
       ) : (
         <>
