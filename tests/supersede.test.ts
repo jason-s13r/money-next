@@ -10,9 +10,14 @@
  * down rather than eyeballed once on real data and assumed ever after.
  *
  * The invariant everything else rests on, and the reason the merge is worth its
- * risk: **a superseded account ends up with zero transactions**. That is what
- * lets every spend, flow and budget query stay ignorant of supersession, and a
- * regression here would put silent double counting back into all of them.
+ * risk: **a superseded account holds nothing that exists elsewhere**. That is
+ * what lets every spend, flow and budget query stay ignorant of supersession,
+ * and a regression here would put silent double counting back into all of them.
+ *
+ * Its other half is that a row Akahu never re-issued is *not* deleted and *not*
+ * moved: it stays on the old account and goes on counting. Akahu backfills over
+ * days, so the pair has to stay re-runnable to catch what arrives later — the
+ * cases below pin both halves down.
  *
  * Seeds its own `ws_test_supersede` workspace and drops it afterwards.
  */
@@ -244,13 +249,20 @@ describe("planSupersession", () => {
     assert.ok(plan.duplicates.every((p) => p.via === "migrated"));
   });
 
-  test("history predating the successor is a move, not a duplicate", async () => {
+  test("by default nothing unpaired is moved or deleted", async () => {
     const plan = await planSupersession(db, { oldId: OLD, newId: NEW });
-    assert.deepEqual(plan.moves.map((m) => m.id), ["trans_old_only"]);
+    // Both kinds of leftover stay put: the one predating the successor and the
+    // one inside its range. Neither is a duplicate of anything.
+    assert.deepEqual(plan.retained.map((m) => m.id).sort(), [
+      "trans_old_only",
+      "trans_old_unclaimed",
+    ]);
+    assert.deepEqual(plan.moves, []);
   });
 
-  test("an unpaired row inside the overlap is reported, not guessed at", async () => {
+  test("but the overlap leftover is singled out, being the one that may yet clash", async () => {
     const plan = await planSupersession(db, { oldId: OLD, newId: NEW });
+    // `trans_old_only` predates the successor, so its absence is just history.
     assert.deepEqual(plan.unclaimed.map((m) => m.id), ["trans_old_unclaimed"]);
   });
 
@@ -261,12 +273,18 @@ describe("planSupersession", () => {
     assert.deepEqual(guessed.map((p) => `${p.old.id}->${p.next.id}`), [
       "trans_old_unclaimed->trans_new_unclaimed",
     ]);
+    // The row predating the successor is never a shape candidate — there is
+    // nothing in range for it to be a duplicate of — so it is still retained.
+    assert.deepEqual(plan.retained.map((m) => m.id), ["trans_old_only"]);
   });
 
-  test("--fallback move treats it as history instead", async () => {
+  test("--fallback move consolidates instead of deleting", async () => {
     const plan = await planSupersession(db, { oldId: OLD, newId: NEW, fallback: "move" });
-    assert.deepEqual(plan.unclaimed, []);
+    assert.deepEqual(plan.retained, []);
     assert.deepEqual(plan.moves.map((m) => m.id).sort(), ["trans_old_only", "trans_old_unclaimed"]);
+    // Moving one does not make it accounted for: it is still the row Akahu may
+    // re-issue, and the report has to be able to say so.
+    assert.deepEqual(plan.unclaimed.map((m) => m.id), ["trans_old_unclaimed"]);
   });
 
   test("refuses a self-merge, and a successor that is itself a tombstone", async () => {
@@ -279,21 +297,28 @@ describe("planSupersession", () => {
 });
 
 describe("applySupersession", () => {
-  test("refuses while anything in the overlap is unaccounted for", async () => {
+  test("merges: the duplicates go, the unmatched history stays", async (t) => {
     const plan = await planSupersession(db, { oldId: OLD, newId: NEW });
-    await assert.rejects(() => applySupersession(db, plan), /Moving them blind/);
-  });
-
-  test("merges: the tombstone empties and the survivor holds everything", async (t) => {
-    const plan = await planSupersession(db, { oldId: OLD, newId: NEW, fallback: "heuristic" });
     const result = await applySupersession(db, plan);
 
-    assert.equal(result.duplicatesRemoved, 7);
-    assert.equal(result.transactionsMoved, 1);
+    assert.equal(result.duplicatesRemoved, 6);
+    assert.equal(result.transactionsRetained, 2);
+    assert.equal(result.transactionsMoved, 0);
 
-    await t.test("the superseded account has no transactions at all", async () => {
-      // The invariant every untouched aggregation query depends on.
-      assert.equal(await db.transaction.count({ where: { accountId: OLD } }), 0);
+    await t.test("the superseded account keeps exactly what nothing claimed", async () => {
+      // The invariant every untouched aggregation query depends on: what is left
+      // here exists nowhere else, so counting it is right rather than double.
+      const left = await db.transaction.findMany({
+        where: { accountId: OLD },
+        select: { id: true },
+        orderBy: { id: "asc" },
+      });
+      assert.deepEqual(left.map((r) => r.id), ["trans_old_only", "trans_old_unclaimed"]);
+    });
+
+    await t.test("and they keep the old account's connection, not the survivor's", async () => {
+      const kept = await db.transaction.findFirst({ where: { id: "trans_old_only" } });
+      assert.equal(kept?.connectionId, CONN_OLD);
     });
 
     await t.test("and is marked, so balance queries can drop it", async () => {
@@ -302,15 +327,14 @@ describe("applySupersession", () => {
       assert.ok(old?.supersededAt instanceof Date);
     });
 
-    await t.test("the survivor holds old + new - duplicates", async () => {
-      // 10 of its own + 1 moved across.
-      assert.equal(await db.transaction.count({ where: { accountId: NEW } }), 11);
+    await t.test("the survivor keeps every row of its own, and gains none", async () => {
+      // Its 10, untouched: a merge only ever deletes on the old side.
+      assert.equal(await db.transaction.count({ where: { accountId: NEW } }), 10);
     });
 
-    await t.test("a moved row keeps its id and takes the survivor's connection", async () => {
-      const moved = await db.transaction.findFirst({ where: { id: "trans_old_only" } });
-      assert.equal(moved?.accountId, NEW);
-      assert.equal(moved?.connectionId, CONN_NEW);
+    await t.test("nothing the workspace held is lost", async () => {
+      // 8 old + 10 new, less the 6 Akahu itself called the same row twice.
+      assert.equal(await db.transaction.count({}), 12);
     });
 
     await t.test("user and rule enrichment carries onto the successor", async () => {
@@ -386,7 +410,43 @@ describe("applySupersession", () => {
     });
   });
 
-  test("is not offered twice for the same pair", async () => {
-    assert.deepEqual(await proposeSupersessions(db), []);
+  // The reason a merge can be run against a half-finished backfill at all: what
+  // it could not resolve today, it resolves on the next pass.
+  test("a re-run deletes a successor that only arrived later", async (t) => {
+    // Akahu finally re-issues the row that had no successor at the first merge.
+    await tx({
+      id: "trans_new_latecomer", account: NEW, connection: CONN_NEW, date: "2025-03-04",
+      amount: -5, description: "UNCLAIMED", migratedFromId: "trans_old_unclaimed",
+    });
+
+    await t.test("--auto offers the pair again while the tombstone holds rows", async () => {
+      assert.deepEqual(await proposeSupersessions(db), [{ oldId: OLD, newId: NEW }]);
+    });
+
+    const before = await db.account.findFirst({ where: { id: OLD } });
+    const plan = await planSupersession(db, { oldId: OLD, newId: NEW });
+    assert.deepEqual(plan.duplicates.map((p) => p.old.id), ["trans_old_unclaimed"]);
+    const result = await applySupersession(db, plan);
+    assert.equal(result.duplicatesRemoved, 1);
+
+    await t.test("only the row nothing ever claimed is still there", async () => {
+      const left = await db.transaction.findMany({ where: { accountId: OLD }, select: { id: true } });
+      assert.deepEqual(left.map((r) => r.id), ["trans_old_only"]);
+      // And it is no longer flagged: it predates the successor, so no backfill
+      // is ever going to produce a twin for it.
+      assert.deepEqual(plan.unclaimed, []);
+    });
+
+    await t.test("the merge keeps its original date", async () => {
+      const after = await db.account.findFirst({ where: { id: OLD } });
+      assert.deepEqual(after?.supersededAt, before?.supersededAt);
+    });
+  });
+
+  test("refuses a pair whose predecessor was merged somewhere else", async () => {
+    await assert.rejects(
+      () => planSupersession(db, { oldId: OLD, newId: DANGLING }),
+      /already superseded by/,
+    );
   });
 });

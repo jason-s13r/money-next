@@ -72,10 +72,11 @@ export function AccountsTable({
       </thead>
       <tbody>
         {accounts.map((account) => (
-          // A superseded account is a tombstone: no transactions, and a balance
-          // frozen wherever the merge left it. Still listed, because this is
-          // where you come to see that a bank migration happened — but dimmed,
-          // so a stale figure never reads as a live one.
+          // A superseded account is a tombstone: a balance frozen wherever the
+          // merge left it, and at most the history its successor never re-issued.
+          // Still listed, because this is where you come to see that a bank
+          // migration happened — but dimmed, so its stale balance never reads as
+          // a live one. The transaction count beside it is real and stays plain.
           <tr
             key={account.id}
             className={`border-b border-current/10${account.supersededById ? " opacity-45" : ""}`}

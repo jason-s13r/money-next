@@ -98,6 +98,22 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
         />
       </header>
 
+      {/* A tombstone that still has a ledger needs saying so above it, not in an
+          empty state it will never reach: these rows are the part of the history
+          the migration never re-issued, and without a word here the page looks
+          like a live account that has quietly stopped updating. */}
+      {superseded && total > 0 ? (
+        <p className="mb-4 rounded border border-current/15 px-3 py-2 text-sm opacity-60">
+          {account.connection?.name ?? "This bank"} replaced this account when it moved to open
+          banking, and its newer transactions now live on{" "}
+          <Link href={`/accounts/${superseded.id}`} className="underline underline-offset-2">
+            {accountLabel(superseded)}
+          </Link>
+          . What is left here was never re-issued under the new account, so it stays — and it is
+          still counted in search, spending and budgets.
+        </p>
+      ) : null}
+
       {/* Every row is this account, so the Account column is dropped. */}
       {pending.length > 0 ? <PendingTable items={pending} showAccount={false} /> : null}
 
@@ -110,7 +126,7 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
             <div className="py-8 text-center text-sm">
               <p className="opacity-60">
                 {account.connection?.name ?? "This bank"} replaced this account when it moved to
-                open banking. Its transactions were merged into{" "}
+                open banking. Every transaction it had was re-issued under{" "}
                 <Link href={`/accounts/${superseded.id}`} className="underline underline-offset-2">
                   {accountLabel(superseded)}
                 </Link>

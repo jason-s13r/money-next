@@ -16,10 +16,13 @@ import type { Prisma } from "../../generated/prisma/client";
  *   retired account would otherwise sit in net worth forever, counting money the
  *   successor beside it is already counting.
  *
- * Only balance queries need this. Transactions do not: merging a superseded
- * account moves every row onto the survivor, so the tombstone has none left to
- * contribute. That asymmetry is deliberate — see lib/server/accounts/supersede.ts
- * for why the duplication is resolved by merging rather than by filtering.
+ * Only balance queries need this, and the asymmetry with transactions is
+ * deliberate. A merge deletes the rows the migration re-issued, so nothing a
+ * tombstone still holds exists anywhere else — those rows are history, they are
+ * not double counted, and every spend, flow and budget query is right to keep
+ * counting them. A *balance* is the opposite: it is one current figure the
+ * successor already reports, so counting the tombstone's frozen copy of it would
+ * be counting the same money twice. See lib/server/accounts/supersede.ts.
  */
 export const LIVE_ACCOUNT = {
   status: "ACTIVE",

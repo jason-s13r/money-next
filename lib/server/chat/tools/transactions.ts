@@ -417,14 +417,24 @@ const named = (name: string) => ({ name: { equals: name, mode: "insensitive" as 
  * matchable because that is what the household may say out loud when reading their
  * bank's app.
  */
-const namedAccount = (name: string) => ({
-  OR: [{ name: { equals: name, mode: "insensitive" as const } }, { displayName: { equals: name, mode: "insensitive" as const } }],
+const namedAccount = (name: string) => {
+  const matches = {
+    OR: [
+      { name: { equals: name, mode: "insensitive" as const } },
+      { displayName: { equals: name, mode: "insensitive" as const } },
+    ],
+  };
   // A superseded account keeps the name its successor now also answers to, so
-  // without this "Transactions" is two accounts and the model is told its own
-  // filter is ambiguous. The tombstone holds no rows either way; what this
-  // prevents is the *conversation* about an account that no longer exists.
-  supersededById: null,
-});
+  // matching on the name alone makes "Transactions" two accounts, and the model
+  // is told its own filter is ambiguous. Only the survivor answers to the name —
+  // but a merge deletes only the rows the migration re-issued, so the tombstone
+  // can still hold history nothing claimed. Reaching it through `supersededBy`
+  // keeps the name unambiguous while still finding those rows: asking about an
+  // account means asking about everything that account has ever been.
+  return {
+    OR: [{ ...matches, supersededById: null }, { supersededBy: { is: matches } }],
+  };
+};
 
 /** Whether a name the model filtered on exists at all, as an error with the real list
  *  when it does not. Null when it is fine. */
@@ -503,7 +513,17 @@ async function nameExists(
 /** The one column any of these lookups reads, and the one order they read it in. */
 const NAME = { name: true } as const;
 const LIST = { orderBy: { name: "asc" } } as const;
-type NameWhere = { name?: Prisma.StringFilter | string; OR?: NameWhere[]; displayName?: Prisma.StringFilter | string };
+// One shape for all five lookups, so `nameExists` can hold them in a single
+// table. The last two are Account's alone and ride along here rather than
+// splitting that table per delegate: `namedAccount` needs them to reach the rows
+// a merge left on a tombstone.
+type NameWhere = {
+  name?: Prisma.StringFilter | string;
+  OR?: NameWhere[];
+  displayName?: Prisma.StringFilter | string;
+  supersededById?: null;
+  supersededBy?: { is: NameWhere };
+};
 
 /** Rows as the model reads them: display currency, names instead of ids for everything
  *  except the row itself, which it needs an id for in order to change it. */

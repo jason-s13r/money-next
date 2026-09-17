@@ -9,10 +9,22 @@
 // The fix is to merge rather than to filter. A filtered tombstone would need a
 // `supersededById: null` predicate in every aggregation in the app — a dozen
 // files, each building its own `where`, where one omission double-counts in
-// silence. A *merged* tombstone holds no transactions at all, so the arithmetic
-// is right whether or not a query remembers it exists. That is the whole reason
-// this module is destructive: the invariant it buys is "a superseded account has
-// zero transactions", and nothing weaker is worth having.
+// silence. Merging means the arithmetic comes out right whether or not a query
+// remembers supersession exists, which is why none of them had to learn.
+//
+// What it deletes is only what Akahu itself calls the same row twice. A
+// transaction the migration never re-issued is a duplicate of nothing, so it
+// stays where it is — on the old account, still counting in search, spend and
+// budgets exactly as it did before. The invariant is therefore "a superseded
+// account holds nothing that exists elsewhere", not "a superseded account is
+// empty". The weaker-sounding one is what the arithmetic actually needs, and it
+// is the one that can be kept without guessing.
+//
+// So a run is a sweep, not a one-shot. Akahu backfills over days: a row with no
+// successor today may have one next week, and the delete that resolves it is
+// only correct once that successor exists. `planSupersession` accordingly
+// accepts a pair it has already merged, and `--auto` keeps offering one while
+// the tombstone still holds rows to examine.
 //
 // Pairing is exact, not heuristic. Akahu's `_migrated` names each row's
 // predecessor by id (mirrored here as `migratedFromId`), so there is no date
@@ -28,8 +40,15 @@ import { changeRows, type FieldChangeEntry } from "../changes";
 import { scopedBatch, type ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
 
-/** What to do with an old row in the overlap that no successor claimed. */
-export type FallbackMode = "report" | "heuristic" | "move";
+/**
+ * What to do with an old row no successor claimed.
+ *
+ * `keep` leaves it on the old account, which is right by default: it is nobody's
+ * duplicate. The other two are opt-in, and both are preferences rather than
+ * fixes — `heuristic` trades Akahu's certainty for a shape guess, `move`
+ * consolidates the history under one account.
+ */
+export type FallbackMode = "keep" | "heuristic" | "move";
 
 /** How close two rows' dates may be and still be the same payment. */
 const HEURISTIC_DAY_TOLERANCE = 2;
@@ -54,6 +73,7 @@ type AccountRef = {
   formattedAccount: string | null;
   connectionId: string;
   supersededById: string | null;
+  supersededAt: Date | null;
   migratedFromId: string | null;
 };
 
@@ -104,12 +124,21 @@ export type SupersessionPlan = {
   fallback: FallbackMode;
   /** Old rows whose successor is known: metadata moves across, then they go. */
   duplicates: DuplicatePair[];
-  /** Old rows with no successor: they carry history the new account never got. */
+  /**
+   * Old rows nothing claimed, left on the old account. They keep counting in
+   * every transaction query, none of which filters on supersession — which is
+   * the point: they are history this workspace holds and the successor does not.
+   */
+  retained: OldRow[];
+  /** Old rows moved onto the survivor. Only `--fallback move` asks for this. */
   moves: OldRow[];
   /**
-   * Old rows dated inside the new account's range that nothing claimed. Empty in
-   * a clean migration. Non-empty means the backfill has a hole, and moving them
-   * blind would put a duplicate back — so `apply` refuses until told how.
+   * The unclaimed rows dated inside the successor's range, wherever they ended
+   * up. Not an error, but the one set worth reading: before the successor's
+   * first transaction a gap is just history the backfill never reached, while
+   * inside its range the backfill has a hole. These are the rows that turn into
+   * a real duplicate if Akahu fills that hole later, and the reason re-running a
+   * merged pair has to stay possible.
    */
   unclaimed: OldRow[];
 };
@@ -291,6 +320,7 @@ const ACCOUNT_SELECT = {
   formattedAccount: true,
   connectionId: true,
   supersededById: true,
+  supersededAt: true,
   migratedFromId: true,
 } as const;
 
@@ -302,7 +332,7 @@ const ACCOUNT_SELECT = {
  */
 export async function planSupersession(
   db: ScopedDb,
-  { oldId, newId, fallback = "report" }: { oldId: string; newId: string; fallback?: FallbackMode },
+  { oldId, newId, fallback = "keep" }: { oldId: string; newId: string; fallback?: FallbackMode },
 ): Promise<SupersessionPlan> {
   if (oldId === newId) {
     throw new Error("An account cannot supersede itself.");
@@ -317,8 +347,13 @@ export async function planSupersession(
 
   if (!old) throw new Error(`No account ${oldId} in this workspace.`);
   if (!next) throw new Error(`No account ${newId} in this workspace.`);
-  if (old.supersededById) {
-    throw new Error(`${oldId} is already superseded by ${old.supersededById}.`);
+  // Re-running a pair this has already merged is the normal way to catch a
+  // backfill that landed late, so only a *different* successor is an error —
+  // that is two accounts both claiming the same history, which no sweep can mean.
+  if (old.supersededById && old.supersededById !== newId) {
+    throw new Error(
+      `${oldId} is already superseded by ${old.supersededById}, not ${newId}.`,
+    );
   }
   // Chains would make "which account holds this history?" a walk rather than a
   // lookup, and there is no case for one: a second migration supersedes the
@@ -367,38 +402,47 @@ export async function planSupersession(
     else leftovers.push(old);
   }
 
-  // Anything before the successor's first transaction is history the new account
-  // was never given — it moves across whatever the fallback says. Only the
-  // overlap is ambiguous, because only there could a duplicate be hiding.
+  // Only the overlap could be hiding a duplicate. Before the successor's first
+  // transaction there is nothing to be a duplicate *of*, so a shape match there
+  // could only ever invent one.
   const newStart = newRows[0]?.date;
   const inOverlap = (row: OldRow) => newStart !== undefined && row.date >= newStart;
 
-  const moves: OldRow[] = leftovers.filter((row) => !inOverlap(row));
-  let unclaimed: OldRow[] = leftovers.filter(inOverlap);
-
-  if (fallback === "heuristic" && unclaimed.length > 0) {
+  let unmatched = leftovers;
+  if (fallback === "heuristic") {
     const free = newRows.filter((row) => !row.migratedFromId);
-    const paired = heuristicPairs(unclaimed, free);
-    const stillUnclaimed: OldRow[] = [];
-    for (const old of unclaimed) {
+    const paired = heuristicPairs(unmatched.filter(inOverlap), free);
+    const rest: OldRow[] = [];
+    for (const old of unmatched) {
       const match = paired.get(old.id);
       if (match)
         duplicates.push({ old, next: match, via: "heuristic", ...carryOver(old, match, transferAuthors) });
-      else stillUnclaimed.push(old);
+      else rest.push(old);
     }
-    unclaimed = stillUnclaimed;
+    unmatched = rest;
   }
 
-  if (fallback === "move" || fallback === "heuristic") {
-    moves.push(...unclaimed);
-    unclaimed = [];
-  }
+  // Whatever is left is nobody's duplicate, so it stays put unless asked
+  // otherwise. `move` is about reading the history in one place, not about
+  // correctness — these rows count the same either way.
+  const moves = fallback === "move" ? unmatched : [];
+  const retained = fallback === "move" ? [] : unmatched;
 
-  return { old, next, fallback, duplicates, moves, unclaimed };
+  return {
+    old,
+    next,
+    fallback,
+    duplicates,
+    retained,
+    moves,
+    unclaimed: unmatched.filter(inOverlap),
+  };
 }
 
 export type SupersessionResult = {
   duplicatesRemoved: number;
+  /** Left on the old account, being nobody's duplicate. */
+  transactionsRetained: number;
   transactionsMoved: number;
   enrichmentCarried: number;
   labelsCarried: number;
@@ -420,14 +464,6 @@ export async function applySupersession(
   db: ScopedDb,
   plan: SupersessionPlan,
 ): Promise<SupersessionResult> {
-  if (plan.unclaimed.length > 0) {
-    throw new Error(
-      `${plan.unclaimed.length} transaction(s) on ${plan.old.id} sit inside ` +
-        `${plan.next.id}'s date range with no successor. Moving them blind would ` +
-        `restore a duplicate; re-run with --fallback heuristic or --fallback move.`,
-    );
-  }
-
   const oldDupIds = plan.duplicates.map((pair) => pair.old.id);
   const successorOf = new Map(plan.duplicates.map((pair) => [pair.old.id, pair.next.id]));
 
@@ -525,11 +561,13 @@ export async function applySupersession(
     ops.push(db.transaction.deleteMany({ where: { id: { in: oldDupIds } } }));
   }
 
-  // 6. Everything with no successor moves across, keeping its id and every edit
-  //    on it. `connectionId` is normalised to the survivor's on the way: after a
-  //    migration Akahu reports backfilled rows under the *old* connection, so
-  //    leaving it would file this history under an institution row the account no
-  //    longer belongs to.
+  // 6. `--fallback move` only: rows with no successor go to the survivor,
+  //    keeping their id and every edit on them. `connectionId` is normalised on
+  //    the way, because after a migration Akahu reports backfilled rows under the
+  //    *old* connection — leaving it would file this history under an institution
+  //    row the account no longer belongs to. Without the flag `plan.moves` is
+  //    empty and these rows simply stay where they are, which is the default:
+  //    they are not duplicates, and the tombstone is a real place for them.
   if (plan.moves.length > 0) {
     ops.push(
       db.transaction.updateMany({
@@ -565,11 +603,16 @@ export async function applySupersession(
   //    good.
   ops.push(db.pendingTransaction.deleteMany({ where: { accountId: plan.old.id } }));
 
-  // 9. The tombstone itself.
+  // 9. The tombstone itself. `supersededAt` records when the two accounts were
+  //    declared one, which a later sweep does not change — it only clears up
+  //    rows the backfill had not delivered by then.
   ops.push(
     db.account.update({
       where: { id: plan.old.id },
-      data: { supersededById: plan.next.id, supersededAt: new Date() },
+      data: {
+        supersededById: plan.next.id,
+        supersededAt: plan.old.supersededAt ?? new Date(),
+      },
     }),
   );
 
@@ -601,6 +644,7 @@ export async function applySupersession(
 
   return {
     duplicatesRemoved: oldDupIds.length,
+    transactionsRetained: plan.retained.length,
     transactionsMoved: plan.moves.length,
     enrichmentCarried,
     labelsCarried: labelRows.length,
@@ -623,7 +667,12 @@ export async function proposeSupersessions(
   db: ScopedDb,
 ): Promise<{ oldId: string; newId: string }[]> {
   const accounts = await db.account.findMany({
-    select: { id: true, migratedFromId: true, supersededById: true },
+    select: {
+      id: true,
+      migratedFromId: true,
+      supersededById: true,
+      _count: { select: { transactions: true } },
+    },
   });
   const byId = new Map(accounts.map((a) => [a.id, a]));
 
@@ -632,9 +681,19 @@ export async function proposeSupersessions(
     .flatMap((a) => {
       const predecessor = byId.get(a.migratedFromId!);
       // Not held: the migration happened before this workspace ever connected
-      // the institution, so there is nothing here to merge. Already superseded:
-      // a previous run did this pair.
-      if (!predecessor || predecessor.supersededById) return [];
+      // the institution, so there is nothing here to merge.
+      if (!predecessor) return [];
+
+      if (predecessor.supersededById) {
+        // Merged somewhere else entirely — not this pair's business, and
+        // `planSupersession` would refuse it anyway.
+        if (predecessor.supersededById !== a.id) return [];
+        // Merged into this very account, and still holding rows: offered again
+        // because Akahu backfills over days, and the successor may since have
+        // claimed some of them. Once the tombstone is empty there is nothing
+        // left to examine and `--auto` goes quiet.
+        if (predecessor._count.transactions === 0) return [];
+      }
       return [{ oldId: predecessor.id, newId: a.id }];
     });
 }

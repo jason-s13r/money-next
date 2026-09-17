@@ -31,8 +31,9 @@ export async function getAccounts() {
   return accounts.toSorted((a, b) => {
     // Superseded accounts stay listed — this page is where you see that a merge
     // happened and what it left behind — but they sort below everything real,
-    // ahead of even the status leg. They hold no transactions and a frozen
-    // balance, so anywhere higher is a row that looks live and is not.
+    // ahead of even the status leg. Their balance is frozen and their successor
+    // reports the live one, so anywhere higher is a row that looks live and is
+    // not, whatever history it may still hold.
     const aDead = a.supersededById ? 1 : 0;
     const bDead = b.supersededById ? 1 : 0;
     if (aDead !== bDead) return aDead - bDead;
