@@ -105,15 +105,53 @@ DROP SCHEMA IF EXISTS src CASCADE;
 CREATE SCHEMA src;
 IMPORT FOREIGN SCHEMA public FROM SERVER refresh_src INTO src;
 
+-- A dump taken before a migration is missing columns dev has since gained, so
+-- every copy runs on the intersection and lets the target's defaults fill in.
+CREATE FUNCTION pg_temp.src_missing(tbl text) RETURNS text[] AS $fn$
+DECLARE rel oid := format('public.%I', tbl)::regclass; missing text[]; blocking text[];
+BEGIN
+  SELECT array_agg(a.attname::text ORDER BY a.attnum) INTO missing
+    FROM pg_attribute a
+   WHERE a.attrelid = rel AND a.attnum > 0 AND NOT a.attisdropped
+     AND NOT EXISTS (SELECT 1 FROM information_schema.columns c
+                      WHERE c.table_schema = 'src' AND c.table_name = tbl
+                        AND c.column_name = a.attname);
+  missing := coalesce(missing, '{}');
+
+  -- Required with nothing to put in it: name it, rather than fail on the insert.
+  SELECT array_agg(a.attname::text ORDER BY a.attnum) INTO blocking
+    FROM pg_attribute a
+   WHERE a.attrelid = rel AND a.attname::text = ANY (missing)
+     AND a.attnotnull AND NOT a.atthasdef AND a.attidentity = '';
+  IF blocking IS NOT NULL THEN
+    RAISE EXCEPTION '%.% is absent from the source and NOT NULL without a default — take a newer dump',
+      tbl, array_to_string(blocking, ', ');
+  END IF;
+
+  IF missing <> '{}' THEN
+    RAISE NOTICE '% <- default for % (absent from source)', rpad(tbl, 20), array_to_string(missing, ', ');
+  END IF;
+  RETURN missing;
+END
+$fn$ LANGUAGE plpgsql;
+
 -- Merge, not replace: dev's other workspaces reference these same rows.
 CREATE FUNCTION pg_temp.merge_rows(tbl text, filter text) RETURNS void AS $fn$
-DECLARE rel oid; cols text; pks text; upd text;
+DECLARE rel oid; cols text; pks text; upd text; skip text[];
 BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.tables
+                  WHERE table_schema = 'src' AND table_name = tbl) THEN
+    RAISE NOTICE '% <- skipped (absent from source)', rpad(tbl, 20);
+    RETURN;
+  END IF;
+
   rel := format('public.%I', tbl)::regclass;
+  skip := pg_temp.src_missing(tbl);
 
   SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY a.attnum) INTO cols
     FROM pg_attribute a
-   WHERE a.attrelid = rel AND a.attnum > 0 AND NOT a.attisdropped;
+   WHERE a.attrelid = rel AND a.attnum > 0 AND NOT a.attisdropped
+     AND NOT a.attname::text = ANY (skip);
 
   SELECT string_agg(quote_ident(a.attname), ', ' ORDER BY k.ord) INTO pks
     FROM pg_constraint f
@@ -124,6 +162,7 @@ BEGIN
   SELECT string_agg(format('%I = EXCLUDED.%I', a.attname, a.attname), ', ' ORDER BY a.attnum) INTO upd
     FROM pg_attribute a
    WHERE a.attrelid = rel AND a.attnum > 0 AND NOT a.attisdropped
+     AND NOT a.attname::text = ANY (skip)
      AND NOT a.attnum = ANY (SELECT unnest(f.conkey) FROM pg_constraint f
                               WHERE f.conrelid = rel AND f.contype = 'p');
 
@@ -148,7 +187,7 @@ DECLARE
 
   src_ws text; dst_ws text; owner_id text;
   tenant text[]; copied text[]; stray text[];
-  rel oid; t text; cols text; sel text; pks text; upd text; expr text;
+  rel oid; t text; cols text; sel text; pks text; upd text; expr text; skip text[];
   rec record; n bigint;
 BEGIN
   SELECT id INTO src_ws FROM src."Workspace" WHERE slug = ws_slug;
@@ -217,7 +256,14 @@ BEGIN
   END LOOP;
 
   FOREACH t IN ARRAY copied LOOP
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables
+                    WHERE table_schema = 'src' AND table_name = t) THEN
+      RAISE NOTICE '% <- skipped (absent from source)', rpad(t, 20);
+      CONTINUE;
+    END IF;
+
     rel := format('public.%I', t)::regclass;
+    skip := pg_temp.src_missing(t);
 
     cols := NULL;
     sel := NULL;
@@ -234,6 +280,8 @@ BEGIN
     LOOP
       -- Counter-assigned ids are per-instance: the other dev workspaces already
       -- hold these numbers, so let the target mint its own.
+      IF rec.attname::text = ANY (skip) THEN CONTINUE; END IF;
+
       IF rec.generated THEN
         IF rec.referenced THEN
           RAISE EXCEPTION '%.% is generated and referenced by a foreign key — needs an id remap', t, rec.attname;
