@@ -1,6 +1,7 @@
 import { FX_BASE_CURRENCY } from "../fx";
 import { DEFAULT_CURRENCY } from "../../format";
 import type { ScopedDb } from "../db";
+import { LIVE_ACCOUNT } from "../accounts/scope";
 
 // Display-currency conversion for budget inference, worker-safe.
 //
@@ -26,7 +27,7 @@ export async function displayFxFor(db: ScopedDb): Promise<DisplayFx> {
   // uses.
   const grouped = await db.account.groupBy({
     by: ["currency"],
-    where: { status: "ACTIVE", currency: { not: null } },
+    where: { ...LIVE_ACCOUNT, currency: { not: null } },
     _count: { _all: true },
     orderBy: { _count: { currency: "desc" } },
   });

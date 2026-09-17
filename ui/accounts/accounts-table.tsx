@@ -1,5 +1,6 @@
 import Image from "next/image";
 
+import { Badge } from "@/components/ui/badge";
 import { Link } from "@/ui/chrome/workspace-context";
 import { accountLabel } from "@/lib/account-name";
 import { formatMoney } from "@/lib/format";
@@ -24,6 +25,8 @@ type AccountRow = {
   overdrawn: boolean | null;
   currency: string | null;
   refreshedAt: Date | null;
+  /** Set when this account has been merged into the one that replaced it. */
+  supersededById?: string | null;
   transactionCount: number;
   pendingCount: number;
 };
@@ -69,7 +72,14 @@ export function AccountsTable({
       </thead>
       <tbody>
         {accounts.map((account) => (
-          <tr key={account.id} className="border-b border-current/10">
+          // A superseded account is a tombstone: no transactions, and a balance
+          // frozen wherever the merge left it. Still listed, because this is
+          // where you come to see that a bank migration happened — but dimmed,
+          // so a stale figure never reads as a live one.
+          <tr
+            key={account.id}
+            className={`border-b border-current/10${account.supersededById ? " opacity-45" : ""}`}
+          >
             <td className={td}>
               {/* Bank logo beside the account name (which wraps freely), then a
                   muted line of the transaction counts. */}
@@ -88,6 +98,11 @@ export function AccountsTable({
                 <Link href={`/accounts/${account.id}`} className={link}>
                   {accountLabel(account)}
                 </Link>
+                {account.supersededById ? (
+                  <Badge variant="outline" className="mt-0.5 shrink-0">
+                    superseded
+                  </Badge>
+                ) : null}
               </div>
               <div className="mt-0.5 font-mono text-xs opacity-50">
                 <span className="tabular-nums">

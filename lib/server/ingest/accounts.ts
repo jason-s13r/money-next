@@ -2,6 +2,7 @@ import type { Account as AkahuAccount, ConnectionInfo as AkahuConnection } from 
 import type { AkahuContext } from "../akahu";
 import { catalogDb, scopedBatch, type ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
+import { archiveOps } from "./archive";
 import { parseDate } from "./shared";
 
 export async function fetchAccounts(akahu: AkahuContext): Promise<AkahuAccount[]> {
@@ -55,7 +56,9 @@ export async function syncAccounts(
   link: { id: string; workspaceId: string },
   accounts: AkahuAccount[],
   capturedAt: Date,
-): Promise<void> {
+  runId: string,
+  superseded: ReadonlySet<string>,
+): Promise<number> {
   // Built up front and committed as one batch, the way `syncTransactions` commits
   // a page: an account and the balance snapshot taken from it are the same fact
   // recorded twice, so a run that writes one without the other leaves the
@@ -65,7 +68,44 @@ export async function syncAccounts(
   // awaited here.
   const ops: Prisma.PrismaPromise<unknown>[] = [];
 
+  // Everything Akahu said, before the projection below throws most of it away.
+  // Accounts *and* the institutions embedded in them: `syncConnections` mirrors
+  // those through the unscoped catalog client, which by design has no workspace
+  // to file an archive row under, so the copy is taken here where one exists.
+  ops.push(
+    ...archiveOps(
+      db,
+      "account",
+      accounts.map((account) => ({ id: account._id, payload: account })),
+      runId,
+    ),
+    ...archiveOps(
+      db,
+      "connection",
+      [...new Map(accounts.map((a) => [a.connection._id, a.connection])).entries()].map(
+        ([id, connection]) => ({ id, payload: connection }),
+      ),
+      runId,
+    ),
+  );
+
+  let skipped = 0;
+
   for (const account of accounts) {
+    // A superseded account is a tombstone: its transactions have been merged
+    // into the survivor and its balance is deliberately frozen where the merge
+    // left it. Writing either back would resurrect the double count the merge
+    // removed. Akahu stops returning a migrated account, so in the case this was
+    // built for we never get here — but nothing guarantees that, and the cost of
+    // being wrong is silently wrong numbers on the dashboard.
+    //
+    // The archive above is *not* skipped: knowing what Akahu still says about an
+    // account we have retired is exactly the sort of thing that table is for.
+    if (superseded.has(account._id)) {
+      skipped++;
+      continue;
+    }
+
     const balance = account.balance;
     const attributes = new Set(account.attributes);
     const refreshed = account.refreshed;
@@ -97,6 +137,9 @@ export async function syncAccounts(
       refreshedTransactions: parseDate(refreshed?.transactions),
       refreshedParty: parseDate(refreshed?.party),
       refreshedAt: refreshed?.balance ? new Date(refreshed.balance) : null,
+      // Akahu's, so it belongs in the mirrored set and not beside `displayName`
+      // below: if Akahu revises which account this one succeeded, it is right.
+      migratedFromId: account._migrated ?? null,
     };
 
     ops.push(
@@ -141,5 +184,13 @@ export async function syncAccounts(
 
   await scopedBatch(db, ops);
 
-  console.log(`accounts:     ${accounts.length} synced`);
+  // Returned, not recomputed by the caller from `accounts.length`: the run record
+  // and this line have to be the same number, and they stopped being the same
+  // number the moment a returned account could be skipped.
+  const synced = accounts.length - skipped;
+  console.log(
+    `accounts:     ${synced} synced` +
+      (skipped > 0 ? ` (${skipped} skipped — superseded)` : ""),
+  );
+  return synced;
 }

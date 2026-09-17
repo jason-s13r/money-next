@@ -2,6 +2,7 @@ import type { Account as AkahuAccount, Transaction as AkahuTransaction } from "a
 import type { AkahuContext } from "../akahu";
 import { changeRows, type FieldChangeEntry } from "../changes";
 import { scopedBatch, type ScopedDb } from "../db";
+import { archiveOps } from "./archive";
 import { reconcileConflict } from "./conflicts";
 import type { Prisma } from "../../generated/prisma/client";
 import { OTHER_INCOME_GROUP } from "./nzfcc";
@@ -153,6 +154,10 @@ function reconcileTransaction(tx: AkahuTransaction, ctx: ReconcileContext): void
     balance: tx.balance ?? null,
     type: tx.type,
     hash: tx.hash ?? null,
+    // What `hash` cannot do: name the same real transaction across an
+    // open-banking migration. Akahu's, so it is mirrored plainly and is not one
+    // of the fields `defended()` protects — nobody edits it.
+    migratedFromId: tx._migrated ?? null,
     merchantId,
     categoryId: enriched?.category?._id ?? null,
     categoryGroupId,
@@ -250,8 +255,16 @@ export async function syncTransactions(
   accounts: AkahuAccount[],
   akahu: AkahuContext,
   runId: string,
+  superseded: ReadonlySet<string>,
 ): Promise<string[]> {
-  const knownAccountIds = new Set(accounts.map((a) => a._id));
+  // A superseded account is excluded the same way an unknown one is — by simply
+  // not being known. Its rows were merged into the survivor, so ingesting them
+  // again would recreate the duplicates the merge resolved, and the existing
+  // `skipped` branch below already does exactly the right thing with a
+  // transaction it has no account for.
+  const knownAccountIds = new Set(
+    accounts.map((a) => a._id).filter((id) => !superseded.has(id)),
+  );
   const token = akahu.userToken;
 
   // Per-link high-water mark: two links refresh at different times and reach
@@ -364,6 +377,16 @@ export async function syncTransactions(
     // records a change the crash rolled back is worse than no log, because it is
     // the thing you would consult to find out what happened.
     await scopedBatch(db, [
+      // Every row the page carried, including the ones the filter above dropped:
+      // the archive records what Akahu said, not what we chose to keep, and a
+      // transaction skipped for an account we retired is precisely the kind of
+      // thing you would later want to be able to look up.
+      ...archiveOps(
+        db,
+        "transaction",
+        page.items.map((tx) => ({ id: tx._id, payload: tx })),
+        runId,
+      ),
       ...[...categoryGroups].map(([id, name]) =>
         db.categoryGroup.upsert({ where: { id }, create: { id, name }, update: { name } }),
       ),

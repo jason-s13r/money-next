@@ -170,6 +170,16 @@ async function seed(ws: string, link: string, tag: string) {
       toLabel: `Now ${tag}`,
     },
   });
+  // The Akahu payload archive. Holds whole transaction bodies — the same data as
+  // `Transaction` and then some — so it has to be as unreachable as the rest.
+  await catalogDb.akahuRecord.create({
+    data: {
+      workspaceId: ws,
+      entityType: "transaction",
+      entityId: `trans_${tag}`,
+      payload: { _id: `trans_${tag}`, description: `Transaction ${tag}` },
+    },
+  });
 }
 
 async function drop(ws: string) {
@@ -557,6 +567,21 @@ describe("Row-Level Security enforces isolation at the database, not just the ap
 
     // And fail closed with no scope set, like every other tenant table.
     const unscoped = await asWorkspace<{ count: number }>(null, `SELECT count(*)::int AS count FROM "Budget"`);
+    assert.equal(Number(unscoped[0].count), 0);
+  });
+
+  test("the Akahu payload archive carries the policy too", async () => {
+    // Same reason the budget case above exists — TENANT_MODELS and the
+    // migration's policy list are separate edits — and it matters more here:
+    // this table holds whole Akahu transaction payloads, so a missing policy
+    // leaks the raw bodies of rows the projection beside it guards properly.
+    const mine = await asWorkspace<{ entityId: string }>(A, `SELECT "entityId" FROM "AkahuRecord"`);
+    assert.deepEqual(mine.map((r) => r.entityId), ["trans_a"]);
+
+    const unscoped = await asWorkspace<{ count: number }>(
+      null,
+      `SELECT count(*)::int AS count FROM "AkahuRecord"`,
+    );
     assert.equal(Number(unscoped[0].count), 0);
   });
 

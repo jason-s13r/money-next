@@ -15,7 +15,13 @@ export const metadata = {
 export default async function AccountsPage() {
   const accounts = await getAccounts();
 
-  const activeAccounts = accounts.filter((a) => a.status === "ACTIVE");
+  // `status` alone is not enough any more. Akahu stops returning an account it
+  // has migrated, which freezes its status at ACTIVE for good — so a superseded
+  // account would keep its stale balance in both figures below, which is the
+  // double count the merge exists to remove. See lib/server/accounts/scope.ts.
+  const activeAccounts = accounts.filter(
+    (a) => a.status === "ACTIVE" && !a.supersededById,
+  );
   const displayCurrency = await getDisplayCurrency();
   const rates = await loadRates([
     ...accounts.map((a) => a.currency),

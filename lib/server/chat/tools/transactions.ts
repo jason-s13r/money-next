@@ -419,6 +419,11 @@ const named = (name: string) => ({ name: { equals: name, mode: "insensitive" as 
  */
 const namedAccount = (name: string) => ({
   OR: [{ name: { equals: name, mode: "insensitive" as const } }, { displayName: { equals: name, mode: "insensitive" as const } }],
+  // A superseded account keeps the name its successor now also answers to, so
+  // without this "Transactions" is two accounts and the model is told its own
+  // filter is ambiguous. The tombstone holds no rows either way; what this
+  // prevents is the *conversation* about an account that no longer exists.
+  supersededById: null,
 });
 
 /** Whether a name the model filtered on exists at all, as an error with the real list
@@ -462,7 +467,9 @@ async function nameExists(
         (
           await ctx.db.account.findMany({
             ...LIST,
-            where,
+            // Same reason as `namedAccount`: listing the names that exist must
+            // not offer one that has been merged away.
+            where: { ...where, supersededById: null },
             select: { name: true, displayName: true },
           })
         )

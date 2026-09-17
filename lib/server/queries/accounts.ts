@@ -4,6 +4,7 @@ import { cache } from "react";
 import { getDb } from "../db/request";
 import { accountMoney, moneySum } from "../money";
 import { accountLabel } from "@/lib/account-name";
+import { LIVE_ACCOUNT } from "../accounts/scope";
 
 // Account reads, and the net-worth roll-up across them. Like the rest of the read
 // layer these touch only the database (never Akahu) and await `connection()` first,
@@ -28,6 +29,13 @@ export async function getAccounts() {
   // the name leg follow the *displayed* label — a renamed account sorts where the
   // reader sees it, not where the provider's wording would have put it.
   return accounts.toSorted((a, b) => {
+    // Superseded accounts stay listed — this page is where you see that a merge
+    // happened and what it left behind — but they sort below everything real,
+    // ahead of even the status leg. They hold no transactions and a frozen
+    // balance, so anywhere higher is a row that looks live and is not.
+    const aDead = a.supersededById ? 1 : 0;
+    const bDead = b.supersededById ? 1 : 0;
+    if (aDead !== bDead) return aDead - bDead;
     if (a.status !== b.status) return a.status.localeCompare(b.status);
     const aHasTx = a._count.transactions > 0 ? 1 : 0;
     const bHasTx = b._count.transactions > 0 ? 1 : 0;
@@ -57,7 +65,7 @@ export async function getNetWorth() {
   const db = await getDb();
   const grouped = await db.account.groupBy({
     by: ["currency"],
-    where: { status: "ACTIVE", currency: { not: null } },
+    where: { ...LIVE_ACCOUNT, currency: { not: null } },
     _sum: { balanceCurrent: true },
   });
 

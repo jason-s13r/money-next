@@ -5,6 +5,7 @@ import { drawableCredit, spendFloor } from "../../accounts";
 import { LIQUID_TYPES, LOCKED_TYPES } from "../../categories";
 import { displayConverter, getDisplayCurrency } from "../currency";
 import { accountMoney } from "../money";
+import { LIVE_ACCOUNT } from "../accounts/scope";
 
 // Net worth, split by how reachable it is. Every account is valued in the display
 // currency (see lib/currency.ts); a balance has no transaction date, so it converts
@@ -53,7 +54,7 @@ export async function getBalanceSummary(): Promise<BalanceSummary> {
   const db = await getDb();
   // Converted out of `Decimal` at the read, so everything below is plain float
   // arithmetic — which is what FX conversion and utilisation ratios are anyway.
-  const accounts = (await db.account.findMany({ where: { status: "ACTIVE" } })).map(accountMoney);
+  const accounts = (await db.account.findMany({ where: LIVE_ACCOUNT })).map(accountMoney);
 
   // Every account is valued in the display currency. A balance has no transaction
   // date, so it converts at the currency's latest rate — the nearest on or before

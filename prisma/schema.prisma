@@ -81,6 +81,7 @@ model Workspace {
   fieldChanges            FieldChange[]
   syncStates              SyncState[]
   syncRuns                SyncRun[]
+  akahuRecords            AkahuRecord[]
   chatThreads             ChatThread[]
   chatMessages            ChatMessage[]
 }
@@ -392,6 +393,15 @@ model Account {
   type             String
   formattedAccount String?
 
+  /// Akahu's `_migrated`: the id this account carried on a classic connection
+  /// before the institution moved to official open banking. Akahu mints a new
+  /// `acc_...`, backfills the history under it and stops returning the old one,
+  /// so without this the same real account is simply two unrelated rows here.
+  /// Mirrored like any other provider field — it is Akahu's to say, not ours.
+  /// It may name an account this workspace never ingested, which is not an error:
+  /// ASB migrated before any of its accounts were connected.
+  migratedFromId String?
+
   /// The institution the account is held at.
   connectionId String
   connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
@@ -421,12 +431,28 @@ model Account {
   refreshedAt DateTime? @db.Timestamptz(3)
   syncedAt    DateTime  @updatedAt @db.Timestamptz(3)
 
+  /// The account that replaced this one, set once its transactions have been
+  /// merged into that survivor. Distinct from `migratedFromId`, which is Akahu
+  /// saying two ids are one account: this says *we* have resolved the
+  /// duplication, and this row is now a tombstone holding no transactions.
+  ///
+  /// Kept rather than deleted because Akahu stops returning a migrated account
+  /// entirely — which freezes its `status` at ACTIVE, the value every balance
+  /// query filters on. Without a column of our own the row would sit in net
+  /// worth forever with no provider signal left to exclude it by. A sync must
+  /// never write this, the way it never writes `displayName`.
+  supersededById String?
+  supersededBy   Account?  @relation("AccountSupersession", fields: [supersededById], references: [id], onDelete: Restrict)
+  supersedes     Account[] @relation("AccountSupersession")
+  supersededAt   DateTime? @db.Timestamptz(3)
+
   transactions Transaction[]
   pending      PendingTransaction[]
   balances     BalanceSnapshot[]
 
   @@index([status])
   @@index([connectionId])
+  @@index([workspaceId, supersededById])
 }
 
 /// A financial institution, built from the `connection` object embedded in each
@@ -474,6 +500,17 @@ model Transaction {
   /// DEBIT | CREDIT | TRANSFER | EFTPOS | FEE | ...
   type        String
   hash        String?
+
+  /// Akahu's `_migrated`: this row's id on the classic connection it was
+  /// backfilled from, when its institution moved to official open banking. The
+  /// only exact way to tell that two `trans_...` rows are one real transaction —
+  /// `hash` cannot, being prefixed with the account id it was fetched under, so
+  /// the same payment hashes differently on either side of a migration.
+  ///
+  /// Absent on a row that has no predecessor, which is the normal case: every
+  /// transaction that arrived after the cutover, and every one on a connection
+  /// that never migrated.
+  migratedFromId String?
 
   merchantId      String?
   merchant        Merchant?      @relation(fields: [merchantId], references: [id], onDelete: SetNull)
@@ -562,6 +599,9 @@ model Transaction {
   @@index([transferGroupId])
   @@index([connectionId])
   @@index([syncRunId])
+  // The join the supersession merge runs: every row on the new account whose
+  // predecessor sits on the old one. Sparse — only a migrated row carries it.
+  @@index([workspaceId, migratedFromId])
   // The override is a sparse column read by exactly one query: "which rows has
   // someone pushed into this tax year?", which the comparison builder asks so a
   // row dated outside the window still reaches its bucket.
@@ -1123,9 +1163,69 @@ model SyncRun {
   /// What this run brought in, and what it changed on rows it already held.
   transactions Transaction[]
   changes      FieldChange[]
+  akahuRecords AkahuRecord[]
 
   @@index([workspaceId, startedAt])
   @@index([startedAt])
+}
+
+/// Everything Akahu returns for an entity, kept verbatim beside the narrow
+/// columns that mirror part of it.
+///
+/// The models here are a *projection* of Akahu's, and a projection can only be
+/// as good as what was known when it was written. `_migrated` — the field that
+/// names an account's predecessor across an open-banking migration, and the only
+/// exact way to reconcile the duplicate rows one leaves behind — was in every
+/// payload ever fetched and in none of these tables. Recovering it meant
+/// re-syncing two years of history. This table is the standing answer to that
+/// class of problem: mirror what the code reads, keep the whole payload so that
+/// a field we turn out to need later is a `UPDATE ... SET x = payload->>'...'`
+/// rather than another full re-fetch.
+///
+/// The latest payload per entity, upserted — not a version history. What this is
+/// for is recovering a field the projection missed, and that only ever needs the
+/// current answer; keeping every version would add ~8,000 rows a sync saying
+/// nothing changed, to answer a question (`when did Akahu revise this?`) that
+/// `FieldChange` already answers for every field anyone can edit.
+model AkahuRecord {
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// account | transaction | connection. No pending rows: Akahu gives them no
+  /// `_id`, so there is no key to file one under — the same reason
+  /// `PendingTransaction` has an autoincrement id and is replaced wholesale.
+  entityType String
+
+  /// The Akahu id — `acc_...`, `trans_...`, `conn_...`. A plain column and not a
+  /// relation, for both of the reasons `FieldChange.transactionId` gives: it is
+  /// polymorphic, and an archive has to outlive the row it describes. The second
+  /// is load-bearing here — resolving a migration deletes thousands of superseded
+  /// transactions, and their payloads are exactly what someone would want back.
+  entityId String
+
+  /// The payload as fetched. `jsonb`, unlike `RuleDocument.document` which is
+  /// text precisely because nothing queries into it: querying into this one is
+  /// the entire point. The cost is that Postgres normalises key order, duplicate
+  /// keys and number formatting away — a faithful record of the data, not of the
+  /// bytes.
+  payload Json
+
+  /// The run this version came from, and when it landed. `SetNull` rather than
+  /// `Cascade`, like `FieldChange.syncRunId`: pruning an audit row must not take
+  /// the archive with it.
+  syncRunId String?
+  syncRun   SyncRun? @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+
+  fetchedAt DateTime @updatedAt @db.Timestamptz(3)
+
+  /// One row per entity — the upsert key. Workspace-free on purpose, matching
+  /// what `Account` and `Transaction` already do by taking the Akahu id as their
+  /// primary key: one `trans_...` cannot belong to two workspaces there either.
+  @@unique([entityType, entityId])
+  @@index([workspaceId, entityType])
+  @@index([syncRunId])
 }
 
 /// A GoRules JDM decision graph, executed by the Zen engine to automate

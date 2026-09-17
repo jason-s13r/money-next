@@ -6,6 +6,7 @@ import {
   isFrequency,
 } from "../../../budget/recurrence";
 import { accountLabel } from "../../../account-name";
+import { LIVE_ACCOUNT } from "../../accounts/scope";
 import { money, moneyOrNull } from "../../money";
 import { MAX_TOOL_ROWS } from "../client";
 import type { Area } from "./history";
@@ -311,7 +312,7 @@ export const listAccounts: Tool = {
   parameters: { type: "object", properties: {}, required: [] },
   async handler(_args, ctx) {
     const accounts = await ctx.db.account.findMany({
-      where: { status: "ACTIVE" },
+      where: LIVE_ACCOUNT,
       orderBy: { name: "asc" },
       select: {
         name: true,

@@ -32,6 +32,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "FieldChange",
   "SyncState",
   "SyncRun",
+  "AkahuRecord",
   // Workspace-scoped like the rest. The *further* narrowing to one user — a
   // chat thread is private to its author — is application code, not RLS, which
   // only knows the workspace.

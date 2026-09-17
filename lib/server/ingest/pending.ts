@@ -30,9 +30,16 @@ export async function syncPendingTransactions(
   link: { id: string; workspaceId: string },
   accounts: AkahuAccount[],
   akahu: AkahuContext,
+  superseded: ReadonlySet<string>,
 ): Promise<void> {
   try {
-    const knownAccountIds = new Set(accounts.map((a) => a._id));
+    // Superseded accounts are excluded by not being known, exactly as in
+    // `syncTransactions`: the row below already drops anything it has no account
+    // for, and a tombstone is an account we have deliberately stopped holding
+    // rows against.
+    const knownAccountIds = new Set(
+      accounts.map((a) => a._id).filter((id) => !superseded.has(id)),
+    );
     const pending = await akahu.client.transactions.listPending(akahu.userToken);
 
     const rows: Prisma.PendingTransactionCreateManyInput[] = [];

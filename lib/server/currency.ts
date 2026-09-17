@@ -2,6 +2,7 @@ import "server-only";
 import { getDb } from "./db/request";
 import { DEFAULT_CURRENCY } from "../format";
 import { FX_BASE_CURRENCY } from "./fx";
+import { LIVE_ACCOUNT } from "./accounts/scope";
 
 // One home for turning the mixed-currency ledger into a single comparable figure.
 // Accounts and transactions are held in AUD/CHF/EUR/USD as well as NZD, so a raw
@@ -26,7 +27,7 @@ export async function getDisplayCurrency(): Promise<string> {
   const db = await getDb();
   const grouped = await db.account.groupBy({
     by: ["currency"],
-    where: { status: "ACTIVE", currency: { not: null } },
+    where: { ...LIVE_ACCOUNT, currency: { not: null } },
     _count: { _all: true },
     orderBy: { _count: { currency: "desc" } },
   });

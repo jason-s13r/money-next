@@ -36,7 +36,7 @@ export type SyncLink = TokenLink & { workspaceId: string };
  * showing a different count from the log it came from would make both suspect.
  */
 export type SyncCounts = {
-  /** Accounts Akahu returned for this link and this pass upserted. */
+  /** Accounts this pass upserted — what Akahu returned, less any superseded. */
   accountsSynced: number;
   /** Transactions upserted — the fetched window, not the rows that changed. */
   transactionsSynced: number;
@@ -74,13 +74,31 @@ export async function runSync(
   // *different* link's than the sync is for.
   const akahu = akahuFor(link);
 
+  // Which accounts this workspace has retired into a successor. Read once and
+  // handed to each step rather than re-queried by all three, and read *before*
+  // the first write so that one answer governs the whole pass.
+  //
+  // Normally empty, and normally moot even when it isn't: Akahu stops returning
+  // a migrated account, so the steps below would never see one anyway. It is
+  // here for the case where that stops being true — a connection re-appearing
+  // would otherwise quietly re-ingest the rows a merge had folded into the
+  // survivor, and nothing about the resulting double count would look like a bug.
+  const superseded = new Set(
+    (
+      await db.account.findMany({
+        where: { supersededById: { not: null } },
+        select: { id: true },
+      })
+    ).map((a) => a.id),
+  );
+
   await syncCategories();
   const accounts = await fetchAccounts(akahu);
   await syncConnections(accounts);
 
-  await syncAccounts(db, link, accounts, capturedAt);
-  const syncedIds = await syncTransactions(db, link, args, accounts, akahu, runId);
-  await syncPendingTransactions(db, link, accounts, akahu);
+  const accountsSynced = await syncAccounts(db, link, accounts, capturedAt, runId, superseded);
+  const syncedIds = await syncTransactions(db, link, args, accounts, akahu, runId, superseded);
+  await syncPendingTransactions(db, link, accounts, akahu, superseded);
 
   await syncFxRates();
 
@@ -102,5 +120,5 @@ export async function runSync(
   // unless a rule genuinely changed.
   await enqueueRules(db, { trigger: "sync" });
 
-  return { accountsSynced: accounts.length, transactionsSynced: syncedIds.length };
+  return { accountsSynced, transactionsSynced: syncedIds.length };
 }

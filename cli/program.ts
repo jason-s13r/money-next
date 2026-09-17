@@ -23,6 +23,8 @@
  */
 import { Command } from "commander";
 
+import { register as account } from "./commands/account";
+import { register as akahu } from "./commands/akahu";
 import { register as completion } from "./commands/completion";
 import { register as email } from "./commands/email";
 import { register as link } from "./commands/link";
@@ -43,6 +45,8 @@ export function buildProgram(): Command {
   user(program);
   workspace(program);
   link(program);
+  account(program);
+  akahu(program);
   email(program);
   sync(program);
   unhookBootstrapIds(program);
