@@ -19,6 +19,13 @@ overrides:
   # prisma config — so again hygiene rather than a live fix. 8.x is API-compatible
   # for the one call site, which imports deepmerge and hands it to c12 as its merger.
   '@prisma/config>deepmerge-ts': ^8.0.1
+  # Same again: prisma pins mysql2 to an exact 3.15.3 (still true on 7.10.0), and
+  # better-auth's optional mysql2 peer resolves to whatever prisma brought, so both
+  # advisories against it (GHSA auth-plugin downgrade to mysql_clear_password, and
+  # an unbounded zlib inflate in the compressed-protocol handler) have to be forced
+  # forward here. This app talks to postgres only — mysql2 is never loaded — so it
+  # is hygiene, not a live fix. Floor is 3.23.1, the first release past both.
+  prisma>mysql2: ^3.23.1
   # Not advisories — deduplication, added by the Next 16 upgrade. Half the UI tree
   # (base-ui, the radix packages under shadcn) declares @types/react as a peer with
   # a range like ^18 || ^19, and pnpm is free to satisfy those with copies that are
