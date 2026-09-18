@@ -67,6 +67,7 @@ model Workspace {
   accounts                Account[]
   transactions            Transaction[]
   pendingTransactions     PendingTransaction[]
+  pendingDismissals       PendingDismissal[]
   balanceSnapshots        BalanceSnapshot[]
   transferGroups          TransferGroup[]
   conflicts               TransactionConflict[]
@@ -469,6 +470,7 @@ model Connection {
   accounts     Account[]
   transactions Transaction[]
   pending      PendingTransaction[]
+  dismissals   PendingDismissal[]
 
   syncedAt DateTime @updatedAt @db.Timestamptz(3)
 
@@ -674,6 +676,48 @@ model PendingTransaction {
   @@index([workspaceId, date])
   @@index([accountId, date])
   @@index([date])
+}
+
+/// A standing instruction to hide pending rows that match it — a bank plus the
+/// words that must appear in the description.
+///
+/// It is a rule rather than a dismissed-row marker because a pending row has no
+/// stable id to mark: the table is emptied and rewritten on every sync (see
+/// `syncPendingTransactions`), so anything keyed on `PendingTransaction.id`
+/// would come back a few minutes later. A rule survives that, and survives the
+/// same hold being re-reported under a new id — which is the case this exists
+/// for. Wise posts a `Cashback` hold per currency account that never settles and
+/// never leaves.
+///
+/// Display-only, like the rows it hides: nothing here reaches a balance, a spend
+/// figure or the rules engine. Dismissing is not deleting — the row stays in the
+/// database and the listing can still show it.
+model PendingDismissal {
+  /// A cuid rather than a counter, like `TransferGroup`: this id travels to the
+  /// browser and back through a server action, and a sequential one would
+  /// publish how many dismissals exist across every workspace on the instance.
+  id String @id @default(cuid())
+
+  workspaceId String
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  /// The bank whose holds this hides, not the account: Wise's cashback arrives
+  /// on whichever currency account earned it, and a person dismissing it means
+  /// "these, from this bank", not "these, from this one of my four Wise
+  /// accounts". `Restrict` like every other reference to a shared catalog row.
+  connectionId String
+  connection   Connection @relation(fields: [connectionId], references: [id], onDelete: Restrict)
+
+  /// Lowercased substrings that must *all* appear in the description — the same
+  /// shape a learned rule's predicate has (see `buildExpression`), minus the ZEN
+  /// expression, which only the decision engine can read and nothing evaluates
+  /// here. Empty would match every hold at the bank, so nothing may write it.
+  tokens String[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([workspaceId])
+  @@index([connectionId])
 }
 
 /// A user-defined grouping of transactions that together make up one internal

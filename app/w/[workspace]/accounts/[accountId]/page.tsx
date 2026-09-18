@@ -43,7 +43,11 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
   const { items, total } = await getAccountTransactions(accountId, page, sort);
   // Pending holds sit atop the first page only, so they aren't repeated on every
   // paginated page of this account's settled ledger below.
-  const pending = page === 1 ? await getAccountPendingTransactions(accountId) : [];
+  const pending = page === 1 ? await getAccountPendingTransactions(accountId) : null;
+  // The stat and the empty state below count what is *shown*: a dismissed hold is
+  // one the household has said it does not want to hear about, and counting it
+  // would put it back in front of them in a number they cannot dismiss.
+  const shownPending = pending?.items.length ?? 0;
   const basePath = `/accounts/${accountId}`;
   const totalPages = await paginate(total, page, pageHref(withSort(basePath, sort)));
 
@@ -91,8 +95,8 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
               ? [{ label: "Limit", value: formatMoney(account.balanceLimit, account.currency) }]
               : []),
             { label: "Transactions", value: total.toLocaleString("en-NZ") },
-            ...(pending.length > 0
-              ? [{ label: "Pending", value: pending.length.toLocaleString("en-NZ") }]
+            ...(shownPending > 0
+              ? [{ label: "Pending", value: shownPending.toLocaleString("en-NZ") }]
               : []),
           ]}
         />
@@ -115,10 +119,10 @@ export default async function AccountPage(props: PageProps<"/w/[workspace]/accou
       ) : null}
 
       {/* Every row is this account, so the Account column is dropped. */}
-      {pending.length > 0 ? <PendingTable items={pending} showAccount={false} /> : null}
+      {pending ? <PendingTable pending={pending} showAccount={false} /> : null}
 
       {total === 0 ? (
-        pending.length === 0 ? (
+        shownPending === 0 ? (
           superseded ? (
             // "No transactions" is true and useless here: it reads as data loss
             // when what happened is that the history was moved somewhere better.

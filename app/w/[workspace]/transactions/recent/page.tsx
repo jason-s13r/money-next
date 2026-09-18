@@ -23,7 +23,7 @@ export default async function RecentPage(props: PageProps<"/w/[workspace]/transa
   const { items, total, net } = await getRecentTransactions(page, sort);
   // Pending holds sit atop the first page only, so they aren't repeated on every
   // paginated page of the settled ledger below.
-  const pending = page === 1 ? await getPendingTransactions() : [];
+  const pending = page === 1 ? await getPendingTransactions() : null;
 
   const basePath = "/transactions/recent";
   const totalPages = await paginate(total, page, pageHref(withSort(basePath, sort)));
@@ -43,7 +43,7 @@ export default async function RecentPage(props: PageProps<"/w/[workspace]/transa
       totalPages={totalPages}
       empty="No transactions yet."
     >
-      {pending.length > 0 ? <PendingTable items={pending} /> : null}
+      {pending ? <PendingTable pending={pending} /> : null}
       <TransactionTable items={items} sort={sort} sortBase={basePath} />
     </Listing>
   );

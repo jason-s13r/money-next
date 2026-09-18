@@ -118,6 +118,12 @@ async function seed(ws: string, link: string, tag: string) {
       akahuUpdatedAt: new Date("2026-01-02T00:00:00Z"),
     },
   });
+  // A dismissal, which names a bank and the words it hides. Scoped like the rows
+  // it acts on: one workspace's "stop showing me this" must not silently blank a
+  // block of somebody else's listing.
+  await catalogDb.pendingDismissal.create({
+    data: { workspaceId: ws, connectionId: CONN, tokens: [`pending-${tag}`] },
+  });
   await catalogDb.balanceSnapshot.create({
     data: {
       workspaceId: ws,
@@ -454,6 +460,9 @@ describe("a client scoped to A cannot see B", () => {
     const pending = await dbA.pendingTransaction.findMany();
     assert.deepEqual(pending.map((p) => p.description), ["Pending a"]);
 
+    const dismissals = await dbA.pendingDismissal.findMany();
+    assert.deepEqual(dismissals.map((d) => d.tokens), [["pending-a"]]);
+
     const snapshots = await dbA.balanceSnapshot.findMany();
     assert.equal(snapshots.length, 1);
 
@@ -573,6 +582,21 @@ describe("Row-Level Security enforces isolation at the database, not just the ap
 
     // And fail closed with no scope set, like every other tenant table.
     const unscoped = await asWorkspace<{ count: number }>(null, `SELECT count(*)::int AS count FROM "Budget"`);
+    assert.equal(Number(unscoped[0].count), 0);
+  });
+
+  test("pending dismissals carry the policy too", async () => {
+    // Same split edit as the cases above — `TENANT_MODELS` and the migration's
+    // policy are written separately — and this table is the one that decides what
+    // a listing *omits*, so an unscoped write is a way to hide rows in a
+    // workspace you cannot otherwise touch.
+    const mine = await asWorkspace<{ tokens: string[] }>(A, `SELECT tokens FROM "PendingDismissal"`);
+    assert.deepEqual(mine.map((r) => r.tokens), [["pending-a"]]);
+
+    const unscoped = await asWorkspace<{ count: number }>(
+      null,
+      `SELECT count(*)::int AS count FROM "PendingDismissal"`,
+    );
     assert.equal(Number(unscoped[0].count), 0);
   });
 

@@ -19,6 +19,7 @@ export const TENANT_MODELS: ReadonlySet<string> = new Set([
   "Account",
   "Transaction",
   "PendingTransaction",
+  "PendingDismissal",
   "BalanceSnapshot",
   "TransferGroup",
   "TransactionConflict",
