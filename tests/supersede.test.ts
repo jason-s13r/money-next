@@ -393,6 +393,46 @@ describe("applySupersession", () => {
       assert.deepEqual(legs.map((l) => l.id), ["trans_new_rich", "trans_new_rich2"]);
     });
 
+    await t.test("its log rows say the merge wrote them, not a person", async () => {
+      const rows = await db.fieldChange.findMany({
+        where: { transactionId: { in: ["trans_new_rich", "trans_new_userlink"] } },
+        select: { source: true, carriedSource: true, actorUserId: true },
+      });
+
+      // A successor ends up holding two kinds of row: the predecessor's own
+      // history, repointed and still a person's, and the ones this merge wrote.
+      // Only the second kind is under test.
+      const written = rows.filter((r) => r.source === "supersession");
+      assert.ok(written.length > 0, "the merge carried values, so it logged them");
+
+      // The bug this guards: these rows used to be written as `user`, and the
+      // history panel reads `source` to say who acted — so a batch of machine
+      // writes rendered as a person's own edits.
+      //
+      // `carriedSource` answers the other half, whose claim the value carries,
+      // which is what precedence reads — so splitting the two costs it nothing.
+      for (const row of written) {
+        assert.notEqual(row.source, "user");
+        assert.equal(row.actorUserId, null);
+        assert.ok(
+          row.carriedSource === "user" || row.carriedSource === "rule" || row.carriedSource === "akahu",
+          `carried standing should be recorded, got ${row.carriedSource}`,
+        );
+      }
+    });
+
+    await t.test("a carried category names what it moved, rather than reading as cleared", async () => {
+      const row = await db.fieldChange.findFirst({
+        where: { transactionId: "trans_new_rich", field: "category" },
+        select: { toId: true, toLabel: true },
+      });
+      // The panel renders the label and draws null as an em dash, so a carry that
+      // filled only the id said "cleared" about a value it had faithfully moved.
+      if (row?.toId) {
+        assert.ok(row.toLabel, "a carried category must record the name it moved");
+      }
+    });
+
     await t.test("a user's transfer link beats a rule's on the successor", async () => {
       const row = await db.transaction.findFirst({ where: { id: "trans_new_userlink" } });
       assert.equal(

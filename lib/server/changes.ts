@@ -40,11 +40,25 @@ export const CHANGE_FIELDS = ["category", "merchant", "transfer", "label", "taxY
 export type ChangeField = (typeof CHANGE_FIELDS)[number];
 
 /**
- * What made a change. The same vocabulary as `Transaction.categorySource` /
- * `merchantSource`, and the same precedence: `user` beats `rule` beats `akahu`.
+ * Who made a change. The first three share their vocabulary with
+ * `Transaction.categorySource` / `merchantSource`; `supersession` is a writer
+ * this log has and those columns do not, because a merge is an event rather than
+ * a standing claim about a value.
+ *
+ * Precedence — `user` beats `rule` beats `akahu` — is a property of the *value*,
+ * so it is not read from here when a row carries someone else's: see
+ * `carriedSource` on `ChangeContext` and `AUTHORITY_SOURCES` below.
  */
-export const CHANGE_SOURCES = ["akahu", "user", "rule"] as const;
+export const CHANGE_SOURCES = ["akahu", "user", "rule", "supersession"] as const;
 export type ChangeSource = (typeof CHANGE_SOURCES)[number];
+
+/**
+ * The sources that can be a value's author, which is the subset precedence is
+ * defined over. A merge is not among them: it never originates a claim, it moves
+ * one, and the claim it moves keeps whichever of these it arrived with.
+ */
+export const AUTHORITY_SOURCES = ["akahu", "user", "rule"] as const;
+export type AuthoritySource = (typeof AUTHORITY_SOURCES)[number];
 
 /**
  * One change, as a writer describes it. Ids are for joining back, labels for
@@ -62,6 +76,13 @@ export type FieldChangeEntry = {
   fromLabel?: string | null;
   toId?: string | null;
   toLabel?: string | null;
+  /**
+   * Per-entry override of `ChangeContext.carriedSource`, for a writer whose
+   * batch carries claims of differing standing — a merge moving one row's
+   * `user` category and another's `rule` merchant in the same pass, where a
+   * single value for the batch would have to lie about one of them.
+   */
+  carriedSource?: AuthoritySource | null;
 };
 
 /** Who or what to attribute a batch to, beyond its `source`. */
@@ -69,6 +90,13 @@ export type ChangeContext = {
   actorUserId?: string | null;
   ruleRunId?: string | null;
   syncRunId?: string | null;
+  /**
+   * The standing of the value written, when the writer is not its author — a
+   * merge carrying a person's category onto a successor row. Readers that ask
+   * "whose claim is this?" read this first and fall back to `source`, so a
+   * writer that originates its own values leaves it unset.
+   */
+  carriedSource?: AuthoritySource | null;
 };
 
 /**
@@ -91,6 +119,7 @@ export function changeRows(
     actorUserId: ctx?.actorUserId ?? null,
     ruleRunId: ctx?.ruleRunId ?? null,
     syncRunId: ctx?.syncRunId ?? null,
+    carriedSource: ctx?.carriedSource ?? null,
     ...entry,
   }));
 }

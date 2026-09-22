@@ -1519,10 +1519,25 @@ model FieldChange {
   /// tag a rule was configured to apply).
   field String
 
-  /// What made the change: `akahu` (the sync) | `user` (a person) | `rule` (the
-  /// rules engine). The same vocabulary as `Transaction.categorySource`, and the
-  /// same precedence: user beats rule beats akahu.
+  /// Who made the change: `akahu` (the sync) | `user` (a person) | `rule` (the
+  /// rules engine) | `supersession` (an account merge carrying a value across).
+  ///
+  /// This answers "who wrote this row", which is not the same question as "whose
+  /// claim does the value carry" — see `carriedSource`. They were one column
+  /// once, and a merge that stamped its writes `user` to preserve their standing
+  /// then rendered in the history panel as though a person had made them.
   source String
+
+  /// The standing of the value written, when that is not the writer's own.
+  ///
+  /// Only a `supersession` row sets it: the merge copies a value the *old* row
+  /// held and must not silently promote or demote it, so the authority travels
+  /// beside the write instead of being inferred from it. Null everywhere else,
+  /// where the writer is the author and `source` answers both questions.
+  ///
+  /// Precedence (`user` beats `rule` beats `akahu`) is read from this when
+  /// present and from `source` otherwise.
+  carriedSource String?
 
   /// The person who made it, when `source` is `user`. Null for `akahu` and `rule`
   /// changes, which have no person behind them — a *manually* triggered rule run

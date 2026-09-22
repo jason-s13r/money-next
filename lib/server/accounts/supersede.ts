@@ -36,7 +36,7 @@
 // `matching/transfers.ts`: `money account supersede` is the primary caller and
 // it runs in plain Node, where that module throws on load.
 
-import { changeRows, type FieldChangeEntry } from "../changes";
+import { changeRows, type AuthoritySource, type FieldChangeEntry } from "../changes";
 import { scopedBatch, type ScopedDb } from "../db";
 import type { Prisma } from "../../generated/prisma/client";
 
@@ -64,6 +64,23 @@ const DAY_MS = 24 * 60 * 60 * 1000;
  */
 function rank(source: string): number {
   return source === "user" ? 2 : source === "rule" ? 1 : 0;
+}
+
+/**
+ * The same name, narrowed to the sources a *value* can be authored by.
+ *
+ * The columns this reads (`categorySource`, and the log's own `source`) are
+ * plain strings, so nothing stops an unrecognised one arriving; it ranks as
+ * `akahu` above and is written down as `akahu` here, which keeps the recorded
+ * standing and the one precedence actually used saying the same thing.
+ */
+/** A stored name for an id, or null — which the panel draws as "—", meaning cleared. */
+function label(names: ReadonlyMap<string, string>, id: string | null): string | null {
+  return id === null ? null : (names.get(id) ?? null);
+}
+
+function authority(source: string): AuthoritySource {
+  return source === "user" ? "user" : source === "rule" ? "rule" : "akahu";
 }
 
 type AccountRef = {
@@ -154,11 +171,24 @@ export type SupersessionPlan = {
  */
 type TransferAuthors = ReadonlyMap<string, string>;
 
+/**
+ * Names for the rows a carried value points at, so the log can be read without
+ * joining back to tables the entry may outlive.
+ *
+ * The log stores an id *and* a label for exactly that reason (see `changes.ts`),
+ * and the carry used to fill only the id — leaving `toLabel` null on every
+ * category and merchant it moved. The history panel renders the label, so a
+ * carry that faithfully moved "Tax payments" drew an em dash, which reads as
+ * "cleared" and is the opposite of what happened.
+ */
+type Names = { categories: ReadonlyMap<string, string>; merchants: ReadonlyMap<string, string> };
+
 /** Which enrichment `next` should inherit from `old`, and the log rows for it. */
 function carryOver(
   old: OldRow,
   next: NewRow,
   transferAuthors: TransferAuthors,
+  names: Names,
 ): Pick<DuplicatePair, "carry" | "changes"> {
   const carry: Prisma.TransactionUpdateInput = {};
   const changes: FieldChangeEntry[] = [];
@@ -177,9 +207,10 @@ function carryOver(
       transactionId: next.id,
       field: "category",
       fromId: next.categoryId,
-      fromLabel: null,
+      fromLabel: label(names.categories, next.categoryId),
       toId: old.categoryId,
-      toLabel: null,
+      toLabel: label(names.categories, old.categoryId),
+      carriedSource: authority(old.categorySource),
     });
   }
 
@@ -190,9 +221,10 @@ function carryOver(
       transactionId: next.id,
       field: "merchant",
       fromId: next.merchantId,
-      fromLabel: null,
+      fromLabel: label(names.merchants, next.merchantId),
       toId: old.merchantId,
-      toLabel: null,
+      toLabel: label(names.merchants, old.merchantId),
+      carriedSource: authority(old.merchantSource),
     });
   }
 
@@ -208,6 +240,9 @@ function carryOver(
       fromLabel: null,
       toId: null,
       toLabel: `FY${old.taxYear}`,
+      // Only a person ever writes a tax year (see the schema), so there is no
+      // other standing it could have arrived with.
+      carriedSource: "user",
     });
   }
 
@@ -254,6 +289,7 @@ function carryOver(
       fromLabel: null,
       toId: null,
       toLabel: old.description,
+      carriedSource: authority(transferAuthors.get(old.id) ?? "akahu"),
     });
   }
 
@@ -362,7 +398,7 @@ export async function planSupersession(
     throw new Error(`${newId} is itself superseded by ${next.supersededById} — merge into that instead.`);
   }
 
-  const [oldRows, newRows, transferLog] = await Promise.all([
+  const [oldRows, newRows, transferLog, categoryNames, merchantNames] = await Promise.all([
     db.transaction.findMany({
       where: { accountId: oldId },
       select: OLD_SELECT,
@@ -379,13 +415,30 @@ export async function planSupersession(
     // and its own log row is not what decides the outcome.
     db.fieldChange.findMany({
       where: { field: "transfer" },
-      select: { transactionId: true, source: true },
+      select: { transactionId: true, source: true, carriedSource: true },
       orderBy: { createdAt: "asc" },
     }),
+    // Whole tables rather than the ids this merge turns out to touch: both are
+    // small and bounded by the workspace's own vocabulary, and narrowing them
+    // would mean knowing the pairs before the pairs have been worked out.
+    db.category.findMany({ select: { id: true, name: true } }),
+    db.merchant.findMany({ select: { id: true, name: true } }),
   ]);
 
+  const names: Names = {
+    categories: new Map(categoryNames.map((c) => [c.id, c.name])),
+    merchants: new Map(merchantNames.map((m) => [m.id, m.name])),
+  };
+
+  // `carriedSource` first: a merge writes `source: "supersession"` and records the
+  // claim it moved separately, so reading `source` here would read *this* pass's
+  // own footprints and rank every link it has ever touched as unauthored. Before
+  // the two were split it did the opposite — it stamped `user` — and a second
+  // merge would then have seen its own guesses outrank a rule's real ones.
   const transferAuthors = new Map<string, string>();
-  for (const row of transferLog) transferAuthors.set(row.transactionId, row.source);
+  for (const row of transferLog) {
+    transferAuthors.set(row.transactionId, row.carriedSource ?? row.source);
+  }
 
   // Akahu's own answer first: every successor that names a predecessor.
   const claimed = new Map<string, NewRow>();
@@ -398,7 +451,7 @@ export async function planSupersession(
   for (const old of oldRows) {
     const match = claimed.get(old.id);
     if (match)
-      duplicates.push({ old, next: match, via: "migrated", ...carryOver(old, match, transferAuthors) });
+      duplicates.push({ old, next: match, via: "migrated", ...carryOver(old, match, transferAuthors, names) });
     else leftovers.push(old);
   }
 
@@ -416,7 +469,7 @@ export async function planSupersession(
     for (const old of unmatched) {
       const match = paired.get(old.id);
       if (match)
-        duplicates.push({ old, next: match, via: "heuristic", ...carryOver(old, match, transferAuthors) });
+        duplicates.push({ old, next: match, via: "heuristic", ...carryOver(old, match, transferAuthors, names) });
       else rest.push(old);
     }
     unmatched = rest;
@@ -619,11 +672,14 @@ export async function applySupersession(
   if (changes.length > 0) {
     ops.push(
       db.fieldChange.createMany({
-        // `user`, not `akahu`: a person decided these two accounts were one, and
-        // this is that decision reaching the rows. Attributing it to the sync
-        // would say Akahu changed its mind, which is the opposite of what
-        // happened — Akahu's own values are the ones being overwritten.
-        data: changeRows(db.$workspaceId, "user", changes),
+        // `supersession`, not `user`: a person decided these two accounts were
+        // one, but they did not make these edits, and the history panel reads
+        // this column to say who did. It used to say `user` — reasoning that the
+        // decision was a person's — and the panel duly rendered a batch of 1,481
+        // machine writes as "By hand", which sent a real investigation looking
+        // for a click nobody had made. What each row *carries* is recorded on
+        // the entry itself, so precedence loses nothing by the split.
+        data: changeRows(db.$workspaceId, "supersession", changes),
       }),
     );
   }

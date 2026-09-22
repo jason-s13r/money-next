@@ -29,15 +29,20 @@ function runHref(entry: HistoryEntry) {
 /**
  * Who made the change, in the reader's terms.
  *
- * `By hand` rather than a name — or a guessed "You" — while `actorUserId` is
- * null on every row: before phase 3 this instance had no idea who anyone was, and
- * saying so is better than implying it was the reader. Once auth ships the rows
- * carry a real person and this shows their name.
+ * A `user` row with no actor used to mean "before auth shipped, and we cannot
+ * name anyone" — it rendered `By hand`. That reading is now wrong and actively
+ * misleading: the log begins after auth, so every change a person made carries
+ * them, and the only rows left without one are written by a process that copies
+ * someone else's authorship onto a row it is rewriting (see `rank` in
+ * lib/server/accounts/supersede.ts, where `user` means "this value was
+ * user-authored", not "a user did this"). Claiming those were done by hand sent
+ * a real investigation looking for a person who never clicked anything.
  */
 function sourceLabel(entry: HistoryEntry) {
   if (entry.source === "akahu") return "Akahu";
   if (entry.source === "rule") return "Rule";
-  return entry.actorName ?? "By hand";
+  if (entry.source === "supersession") return "Account merge";
+  return entry.actorName ?? "Unattributed";
 }
 
 function Change({ entry }: { entry: HistoryEntry }) {
