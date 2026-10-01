@@ -64,7 +64,7 @@ export async function buildComparison(
   now: Date = new Date(),
 ): Promise<Comparison> {
   // Where this household's tax year starts. Read before anything is bucketed:
-  // every key below is computed against it, and the `taxyear` ones are wrong
+  // every key below is computed against it, and the tax-year ones are wrong
   // without it.
   const taxYear = await taxYearFor(db);
 
@@ -86,8 +86,9 @@ export async function buildComparison(
   //
   // The rankings and the `hasOlder`/`through` probes below run their own queries
   // over all of history and are unaffected.
-  const overrides =
-    period === "taxyear" ? keys.map((key) => Number(key.slice(2))) : [];
+  const overrides = period.startsWith("tax")
+    ? [...new Set(keys.map((key) => Number(key.slice(2, 6))))]
+    : [];
 
   const rows = await db.transaction.findMany({
     where: {

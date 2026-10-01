@@ -1,16 +1,17 @@
 import { getComparison } from "@/lib/server/metrics/comparison";
 import { getTaxYear } from "@/lib/server/queries/tax-year";
 import {
-  isPeriod,
   offsetForStartDate,
   periodStart,
   periodWindow,
-  type Period,
+  flippedFrom,
+  readPeriodParams,
+  type FixedPeriod,
   type TaxYear,
 } from "@/lib/periods";
 import { firstParam } from "@/lib/search-params";
 import { ComparisonSection } from "@/ui/dashboard/comparison";
-import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
+import { basisParam, flipped, PeriodSelector } from "@/ui/dashboard/comparison/selector";
 import { connection } from "next/server";
 
 // TODO: Cache Components adoption. Refactor this route so this opt-out can be removed.
@@ -19,7 +20,7 @@ export const instant = false;
 
 export const metadata = { title: "Income and spending" };
 
-const DEFAULT_PERIOD: Period = "month";
+const DEFAULT_PERIOD: FixedPeriod = "month";
 const WINDOW = 6;
 const STEP = 3;
 
@@ -30,10 +31,12 @@ function parseWindow(
   now: Date,
   taxYear: TaxYear,
 ) {
-  const rawPeriod = firstParam(searchParams.period);
   const rawFrom = firstParam(searchParams.from);
-
-  const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
+  const { view, basis, period } = readPeriodParams(
+    firstParam(searchParams.period),
+    firstParam(searchParams.basis),
+    DEFAULT_PERIOD,
+  );
 
   const from = rawFrom ? new Date(rawFrom) : null;
   const offset =
@@ -41,7 +44,7 @@ function parseWindow(
       ? offsetForStartDate(now, period, WINDOW, from, taxYear)
       : 0;
 
-  return { period, offset };
+  return { view, basis, period, offset };
 }
 
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
@@ -51,13 +54,16 @@ export default async function BreakdownPage(props: PageProps<"/w/[workspace]/bre
   await connection();
   const now = new Date();
   const taxYear = await getTaxYear();
-  const { period, offset } = parseWindow(await props.searchParams, now, taxYear);
+  const { view, basis, period, offset } = parseWindow(await props.searchParams, now, taxYear);
 
   const comparison = await getComparison(period, WINDOW, offset, now);
 
-  const base = `/breakdown?period=${period}`;
+  const base = `/breakdown?period=${view}${basisParam(basis)}`;
   const windowStart = (o: number) =>
     periodStart(periodWindow(now, period, WINDOW, o, taxYear)[0], period, taxYear);
+  const flipFrom = flippedFrom(now, view, basis, WINDOW, offset, taxYear);
+  const at = flipFrom ? `&from=${isoDate(flipFrom)}` : "";
+  const basisHref = `/breakdown?period=${view}${at}${basisParam(flipped(basis))}`;
   const earlierHref = comparison.hasOlder
     ? `${base}&from=${isoDate(windowStart(offset + STEP))}`
     : null;
@@ -72,7 +78,7 @@ export default async function BreakdownPage(props: PageProps<"/w/[workspace]/bre
     <main className="mx-auto mb-10 w-full max-w-5xl p-2">
       <h1 className="sr-only">Income and spending</h1>
 
-      <PeriodSelector period={period} href="/breakdown" />
+      <PeriodSelector view={view} basis={basis} href="/breakdown" basisHref={basisHref} />
       <ComparisonSection
         comparison={comparison}
         earlierHref={earlierHref}

@@ -70,7 +70,7 @@ export function ComparisonTable({
             </th>
             {periods.map((p) => (
               <th key={p.key} scope="col" className={HEAD}>
-                {formatPeriodShort(p.key, period)}
+                {formatPeriodShort(p.key, period, comparison.taxYear)}
                 {p.key === partialKey ? <span className="text-muted"> *</span> : null}
               </th>
             ))}

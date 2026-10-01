@@ -16,6 +16,9 @@ import {
   periodWindow,
   taxYearChoices,
   taxYearOf,
+  counterpartStart,
+  flippedFrom,
+  readPeriodParams,
   transactionPeriodKey,
   type Period,
   type TaxYear,
@@ -183,8 +186,65 @@ describe("the tax year", () => {
   test("the key carries the full ending year so it sorts with the rest", () => {
     assert.ok("FY2027" < "FY2028");
     // The abbreviated label is only for display.
-    assert.equal(formatPeriodShort("FY2027", "taxyear"), "FY27");
+    assert.equal(formatPeriodShort("FY2027", "taxyear", NZ), "FY27");
     assert.equal(formatPeriodKey("FY2027", "taxyear", NZ), "FY27 (Apr 2026 – Mar 2027)");
+  });
+});
+
+describe("tax months and quarters", () => {
+  test("are counted from the start of the tax year", () => {
+    assert.equal(periodKey(nzDay("2026-04-01"), "taxquarter", NZ), "FY2027-Q1");
+    assert.equal(periodKey(nzDay("2026-05-20"), "taxmonth", NZ), "FY2027-M02");
+    assert.equal(periodKey(nzDay("2027-03-31"), "taxquarter", NZ), "FY2027-Q4");
+    assert.equal(periodKey(nzDay("2027-03-31"), "taxmonth", NZ), "FY2027-M12");
+  });
+
+  test("span the same days as the calendar ones under NZ's 1 April", () => {
+    assert.equal(periodStart("FY2027-Q1", "taxquarter", NZ).toISOString(), "2026-04-01T00:00:00.000Z");
+    assert.equal(periodEnd("FY2027-Q1", "taxquarter", NZ).toISOString(), "2026-07-01T00:00:00.000Z");
+    assert.equal(periodStart("FY2027-Q4", "taxquarter", NZ).toISOString(), "2027-01-01T00:00:00.000Z");
+    assert.equal(periodStart("FY2027-M12", "taxmonth", NZ).toISOString(), "2027-03-01T00:00:00.000Z");
+  });
+
+  test("are named for the tax year", () => {
+    assert.equal(formatPeriodKey("FY2027-Q1", "taxquarter", NZ), "Q1 FY27");
+    assert.equal(formatPeriodKey("FY2027-M02", "taxmonth", NZ), "May FY27");
+    assert.equal(formatPeriodShort("FY2027-M02", "taxmonth", NZ), "May");
+  });
+
+  test("a window steps back across the start of the year", () => {
+    const now = nzDay("2026-05-20");
+    assert.deepEqual(periodWindow(now, "taxquarter", 3, 0, NZ), ["FY2026-Q3", "FY2026-Q4", "FY2027-Q1"]);
+    assert.deepEqual(periodWindow(now, "taxmonth", 3, 0, NZ), ["FY2026-M12", "FY2027-M01", "FY2027-M02"]);
+  });
+
+  test("flipping the basis lands on the most-overlapping period, and flips back", () => {
+    const iso = (d: Date) => d.toISOString().slice(0, 10);
+    // 2025 shares nine months with FY26 and three with FY25.
+    assert.equal(iso(counterpartStart("2025", "year", "taxyear", NZ)), "2025-04-01");
+    assert.equal(iso(counterpartStart("FY2026", "taxyear", "year", NZ)), "2025-01-01");
+    assert.equal(iso(counterpartStart("2026-Q2", "quarter", "taxquarter", NZ)), "2026-04-01");
+    assert.equal(iso(counterpartStart("FY2027-Q1", "taxquarter", "quarter", NZ)), "2026-04-01");
+    assert.equal(iso(counterpartStart("FY2027-M02", "taxmonth", "month", NZ)), "2026-05-01");
+  });
+
+  test("flipping from the tax year in progress goes to its counterpart, not this year", () => {
+    // February 2026: FY26 is in progress, and its counterpart is 2025.
+    const now = nzDay("2026-02-15");
+    assert.equal(flippedFrom(now, "year", "tax", 1, 0, NZ)?.toISOString().slice(0, 10), "2025-01-01");
+    // 2026's counterpart, FY27, has not opened, so it goes to the one that has.
+    assert.equal(flippedFrom(now, "year", "calendar", 1, 0, NZ), null);
+  });
+
+  test("a url's tab and basis pick the period, and the old taxyear link still reads", () => {
+    assert.equal(readPeriodParams("quarter", "tax", "month").period, "taxquarter");
+    assert.equal(readPeriodParams("quarter", undefined, "month").period, "quarter");
+    assert.equal(readPeriodParams("week", "tax", "month").period, "week");
+    assert.deepEqual(readPeriodParams("taxyear", undefined, "month"), {
+      view: "year",
+      basis: "tax",
+      period: "taxyear",
+    });
   });
 });
 
@@ -279,6 +339,18 @@ describe("a transaction's own tax year", () => {
         `${period} should ignore the override`,
       );
     }
+  });
+
+  test("within a tax year, a moved row lands at the close of the year it settles", () => {
+    // A year-end adjustment: FY26's last quarter and month, so FY26's quarters
+    // and months still sum to FY26.
+    assert.equal(transactionPeriodKey({ date, taxYear: 2026 }, "taxquarter", NZ), "FY2026-Q4");
+    assert.equal(transactionPeriodKey({ date, taxYear: 2026 }, "taxmonth", NZ), "FY2026-M12");
+  });
+
+  test("an override naming the row's own year moves nothing", () => {
+    assert.equal(transactionPeriodKey({ date, taxYear: 2027 }, "taxquarter", NZ), "FY2027-Q1");
+    assert.equal(transactionPeriodKey({ date, taxYear: 2027 }, "taxmonth", NZ), "FY2027-M02");
   });
 
   test("the years on offer bracket the row's own, and include it", () => {
@@ -444,7 +516,7 @@ describe("formatting", () => {
     for (const period of PERIODS) {
       for (const key of periodWindow(now, period, 3, 0, NZ)) {
         assert.ok(formatPeriodKey(key, period, NZ).length > 0, `${period} ${key} long form`);
-        assert.ok(formatPeriodShort(key, period).length > 0, `${period} ${key} short form`);
+        assert.ok(formatPeriodShort(key, period, NZ).length > 0, `${period} ${key} short form`);
       }
     }
   });

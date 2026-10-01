@@ -6,16 +6,17 @@ import { getComparison } from "@/lib/server/metrics/comparison";
 import { getTaxYear } from "@/lib/server/queries/tax-year";
 import { getBalanceSeries } from "@/lib/server/metrics/balance-series";
 import {
-  isPeriod,
   offsetForStartDate,
   periodStart,
   periodWindow,
-  type Period,
+  flippedFrom,
+  readPeriodParams,
+  type FixedPeriod,
   type TaxYear,
 } from "@/lib/periods";
 import { firstParam } from "@/lib/search-params";
 import { ComparisonCards } from "@/ui/dashboard/comparison";
-import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
+import { basisParam, flipped, PeriodSelector } from "@/ui/dashboard/comparison/selector";
 import { CurrencyBreakdown } from "@/ui/dashboard/currency-breakdown";
 import { ReviewBanner } from "@/ui/dashboard/review-banner";
 import { BalanceChart } from "@/ui/dashboard/balance-chart";
@@ -30,7 +31,7 @@ export const instant = false;
 
 export const metadata = { title: "Dashboard" };
 
-const DEFAULT_PERIOD: Period = "month";
+const DEFAULT_PERIOD: FixedPeriod = "month";
 const WINDOW = 3;
 const STEP = 3;
 
@@ -41,10 +42,12 @@ function parseWindow(
   now: Date,
   taxYear: TaxYear,
 ) {
-  const rawPeriod = firstParam(searchParams.period);
   const rawFrom = firstParam(searchParams.from);
-
-  const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
+  const { view, basis, period } = readPeriodParams(
+    firstParam(searchParams.period),
+    firstParam(searchParams.basis),
+    DEFAULT_PERIOD,
+  );
 
   const from = rawFrom ? new Date(rawFrom) : null;
   const offset =
@@ -52,7 +55,7 @@ function parseWindow(
       ? offsetForStartDate(now, period, WINDOW, from, taxYear)
       : 0;
 
-  return { period, offset };
+  return { view, basis, period, offset };
 }
 
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
@@ -62,7 +65,7 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
   await connection();
   const now = new Date();
   const taxYear = await getTaxYear();
-  const { period, offset } = parseWindow(await props.searchParams, now, taxYear);
+  const { view, basis, period, offset } = parseWindow(await props.searchParams, now, taxYear);
 
   const [balances, spend, comparison, review] = await Promise.all([
     getBalanceSummary(),
@@ -71,9 +74,12 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
     getReviewQueue(),
   ]);
 
-  const base = `/breakdown?period=${period}`;
+  const base = `/breakdown?period=${view}${basisParam(basis)}`;
   const windowStart = (o: number) =>
     periodStart(periodWindow(now, period, WINDOW, o, taxYear)[0], period, taxYear);
+  const flipFrom = flippedFrom(now, view, basis, WINDOW, offset, taxYear);
+  const at = flipFrom ? `&from=${isoDate(flipFrom)}` : "";
+  const basisHref = `/?period=${view}${at}${basisParam(flipped(basis))}`;
   const earlierHref = comparison.hasOlder ? `${base}&from=${isoDate(windowStart(offset + STEP))}` : null;
   const moreRecentHref =
     offset > 0 ? (offset - STEP <= 0 ? base : `${base}&from=${isoDate(windowStart(offset - STEP))}`) : null;
@@ -148,7 +154,7 @@ export default async function DashboardPage(props: PageProps<"/w/[workspace]">) 
 
       <section>
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-3">
-          <PeriodSelector period={period} href="/" />
+          <PeriodSelector view={view} basis={basis} href="/" basisHref={basisHref} />
           <Link href={base} className="text-sm text-secondary hover:text-foreground">
             Full breakdown →
           </Link>

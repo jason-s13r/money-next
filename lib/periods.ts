@@ -1,31 +1,36 @@
 // Time bucketing for the comparison view. "Month" is only the default: the same
 // machinery slices by week, quarter, or year.
 //
-// Five of the six periods are decided by the calendar alone. The sixth, `taxyear`,
-// is decided by the household — where its year starts is a workspace setting — so
-// every function that can produce or read a tax-year key takes a `TaxYear`, and
-// the overloads make that a compile error to forget rather than a quietly-NZ
-// answer. Callers naming a fixed period (`"day"`, `"month"`) pass nothing.
+// Five periods are decided by the calendar alone. The other three — `taxmonth`,
+// `taxquarter`, `taxyear` — are cut from the household's tax year, whose start is
+// a workspace setting, so every function that can produce or read one takes a
+// `TaxYear`, and the overloads make that a compile error to forget rather than a
+// quietly-NZ answer. Callers naming a fixed period (`"day"`, `"month"`) pass nothing.
 //
 // Every bucket is computed against an explicit NZ timezone rather than the
 // server's. Banks stamp most transactions at midday UTC, which is evening in
 // Auckland, so hundreds of rows land in a different bucket under UTC — enough to
 // visibly move a monthly total.
 
-export const PERIODS = ["day", "week", "month", "quarter", "year", "taxyear"] as const;
+export const FIXED_PERIODS = ["day", "week", "month", "quarter", "year"] as const;
+export const PERIODS = [...FIXED_PERIODS, "taxmonth", "taxquarter", "taxyear"] as const;
 export type Period = (typeof PERIODS)[number];
 
 /**
- * Every period whose span the calendar alone decides. The one that is left out is
- * `taxyear`, which depends on where the household put the start of its year — and
- * that distinction is load-bearing rather than decorative: the overloads below use
- * it so a caller naming `"day"` needs no configuration, while a caller holding a
- * `Period` variable cannot compile without one.
+ * Every period whose span the calendar alone decides — and the five a reader picks
+ * between; the tax ones are reached through a `Basis`. The distinction is
+ * load-bearing rather than decorative: the overloads below use it so a caller
+ * naming `"day"` needs no configuration, while a caller holding a `Period`
+ * variable cannot compile without one.
  */
-export type FixedPeriod = Exclude<Period, "taxyear">;
+export type FixedPeriod = (typeof FIXED_PERIODS)[number];
 
 export function isPeriod(value: string): value is Period {
   return (PERIODS as readonly string[]).includes(value);
+}
+
+export function isFixedPeriod(value: string): value is FixedPeriod {
+  return (FIXED_PERIODS as readonly string[]).includes(value);
 }
 
 /**
@@ -57,15 +62,57 @@ function yearsSpanned(tax: TaxYear): number {
   return tax.startMonth === 1 && tax.startDay === 1 ? 0 : 1;
 }
 
-/** Button text for the period selector. "taxyear" is the only key whose plain
- *  form ("Taxyear") reads wrong; the rest are just their capitalised selves. */
-export const PERIOD_LABELS: Record<Period, string> = {
+/**
+ * Which year a month, quarter or year is cut from. `tax` swaps each for its tax
+ * year form — Apr–Jun 2026 is "Q2 2026" on one and "Q1 FY27" on the other — and
+ * with it which year an overridden row is counted in. Day and week have no tax
+ * form; a basis on them is carried but changes nothing.
+ */
+export const BASES = ["calendar", "tax"] as const;
+export type Basis = (typeof BASES)[number];
+export const DEFAULT_BASIS: Basis = "calendar";
+
+export function isBasis(value: string): value is Basis {
+  return (BASES as readonly string[]).includes(value);
+}
+
+const TAX_FORM: Partial<Record<FixedPeriod, Period>> = {
+  month: "taxmonth",
+  quarter: "taxquarter",
+  year: "taxyear",
+};
+
+/** Whether a basis means anything for this choice — what decides if the toggle shows. */
+export const hasTaxForm = (view: FixedPeriod) => view in TAX_FORM;
+
+/** The period a reader's choice of tab and basis buckets by. */
+export function resolvePeriod(view: FixedPeriod, basis: Basis): Period {
+  return (basis === "tax" && TAX_FORM[view]) || view;
+}
+
+/**
+ * The tab, basis and period a url asks for. `?period=taxyear` predates the basis,
+ * so it is read as Year on the tax basis rather than refused — old links keep
+ * working, and every link built from here on is the new form.
+ */
+export function readPeriodParams(
+  rawPeriod: string | undefined,
+  rawBasis: string | undefined,
+  fallback: FixedPeriod,
+): { view: FixedPeriod; basis: Basis; period: Period } {
+  if (rawPeriod === "taxyear") return { view: "year", basis: "tax", period: "taxyear" };
+  const view = rawPeriod && isFixedPeriod(rawPeriod) ? rawPeriod : fallback;
+  const basis = rawBasis && isBasis(rawBasis) ? rawBasis : DEFAULT_BASIS;
+  return { view, basis, period: resolvePeriod(view, basis) };
+}
+
+/** Button text for the period selector. */
+export const PERIOD_LABELS: Record<FixedPeriod, string> = {
   day: "Day",
   week: "Week",
   month: "Month",
   quarter: "Quarter",
   year: "Year",
-  taxyear: "Tax year",
 };
 
 const NZ_TIMEZONE = "Pacific/Auckland";
@@ -124,7 +171,29 @@ function taxYearEnd({ year, month, day }: YMD, tax: TaxYear): number {
   return (onOrAfterStart ? year : year - 1) + yearsSpanned(tax);
 }
 
-/** A sortable bucket key: `2026-07-14`, `2026-W28`, `2026-07`, `2026-Q3`, `2026`, `FY2027`. */
+/**
+ * Where a date sits in its tax year: the year, as `taxYearEnd` names it, and the
+ * whole tax months since it opened (0–11). A tax month runs from the start day to
+ * the day before it a month on — the calendar month itself under NZ's 1 April.
+ */
+function taxMonthOf(ymd: YMD, tax: TaxYear): { fy: number; m: number } {
+  const fy = taxYearEnd(ymd, tax);
+  const startYear = fy - yearsSpanned(tax);
+  const m =
+    ymd.year * 12 + ymd.month - (startYear * 12 + tax.startMonth) - (ymd.day < tax.startDay ? 1 : 0);
+  return { fy, m };
+}
+
+/** `FY2027-M02`, `FY2027-Q1` — numbered from the tax year's start, so they sort. */
+const taxMonthKey = (fy: number, m: number) => `FY${fy}-M${pad(m + 1)}`;
+const taxQuarterKey = (fy: number, q: number) => `FY${fy}-Q${q + 1}`;
+
+/** The year in a `FY####-…` key, and the 1-based number after it. */
+const fyOf = (key: string) => Number(key.slice(2, 6));
+const ordinalOf = (key: string) => Number(key.slice(8));
+
+/** A sortable bucket key: `2026-07-14`, `2026-W28`, `2026-07`, `2026-Q3`, `2026`,
+ *  `FY2027-M04`, `FY2027-Q2`, `FY2027`. */
 export function periodKey(date: Date, period: FixedPeriod): string;
 export function periodKey(date: Date, period: Period, tax: TaxYear): string;
 export function periodKey(date: Date, period: Period, tax: TaxYear = DEFAULT_TAX_YEAR): string {
@@ -142,6 +211,14 @@ export function periodKey(date: Date, period: Period, tax: TaxYear = DEFAULT_TAX
       return `${ymd.year}-Q${Math.ceil(ymd.month / 3)}`;
     case "year":
       return String(ymd.year);
+    case "taxmonth": {
+      const { fy, m } = taxMonthOf(ymd, tax);
+      return taxMonthKey(fy, m);
+    }
+    case "taxquarter": {
+      const { fy, m } = taxMonthOf(ymd, tax);
+      return taxQuarterKey(fy, Math.floor(m / 3));
+    }
     case "taxyear":
       return `FY${taxYearEnd(ymd, tax)}`;
   }
@@ -191,9 +268,13 @@ export function taxYearChoices(date: Date, tax: TaxYear): number[] {
  * row is relevant to a different tax year and the tax year is what we are slicing
  * by. See `Transaction.taxYear` in the schema for why that override exists.
  *
- * Only `taxyear` consults it, deliberately. A tax payment settling a closed year
- * still happened in the month it happened in, and moving it out of that month
+ * Only the tax periods consult it, deliberately. A tax payment settling a closed
+ * year still happened in the month it happened in, and moving it out of that month
  * would misreport the month to fix the year.
+ *
+ * The override names a year, not a time in it, so under `taxmonth`/`taxquarter` a
+ * moved row lands in that year's last month or quarter — a year-end adjustment.
+ * Anywhere else and the year's months would no longer sum to the year.
  *
  * This is the one place the two are reconciled, so a caller that buckets rows
  * calls this and never `periodKey` directly.
@@ -203,7 +284,11 @@ export function transactionPeriodKey(
   period: Period,
   tax: TaxYear,
 ): string {
-  if (period === "taxyear" && row.taxYear !== null) return `FY${row.taxYear}`;
+  if (row.taxYear !== null && row.taxYear !== taxYearOf(row.date, tax)) {
+    if (period === "taxyear") return `FY${row.taxYear}`;
+    if (period === "taxquarter") return taxQuarterKey(row.taxYear, 3);
+    if (period === "taxmonth") return taxMonthKey(row.taxYear, 11);
+  }
   return periodKey(row.date, period, tax);
 }
 
@@ -238,6 +323,17 @@ function periodBack(now: Date, period: Period, i: number, tax: TaxYear): string 
 
   // Whole tax years step like calendar years, off the tax year `now` falls in.
   if (period === "taxyear") return `FY${taxYearEnd(ymd, tax) - i}`;
+
+  // Tax months and quarters count back from now's place in its year, as one
+  // running index so a step can cross into the year before.
+  if (period === "taxmonth" || period === "taxquarter") {
+    const { fy, m } = taxMonthOf(ymd, tax);
+    const per = period === "taxmonth" ? 12 : 4;
+    const n = fy * per + (period === "taxmonth" ? m : Math.floor(m / 3)) - i;
+    const at = ((n % per) + per) % per;
+    const year = (n - at) / per;
+    return period === "taxmonth" ? taxMonthKey(year, at) : taxQuarterKey(year, at);
+  }
 
   const step = period === "quarter" ? 3 : 1;
   // Snap to the start of the current period, then walk back `i` steps.
@@ -277,7 +373,7 @@ export function periodWindow(
 
 /** Generous lower bound for the fetch. Exact membership is decided by key. */
 export function fetchCutoff(now: Date, period: Period, count: number): Date {
-  const days = { day: 1, week: 7, month: 31, quarter: 93, year: 366, taxyear: 366 }[period];
+  const days = { day: 1, week: 7, month: 31, quarter: 93, year: 366, taxmonth: 31, taxquarter: 93, taxyear: 366 }[period];
   return new Date(now.getTime() - (count + 2) * days * 86_400_000);
 }
 
@@ -309,6 +405,13 @@ export function periodStart(key: string, period: Period, tax: TaxYear = DEFAULT_
       const end = Number(key.slice(2));
       return new Date(Date.UTC(end - yearsSpanned(tax), tax.startMonth - 1, tax.startDay));
     }
+    case "taxmonth":
+    case "taxquarter": {
+      // `Date.UTC` carries a month past December into the next year.
+      const months = (ordinalOf(key) - 1) * (period === "taxmonth" ? 1 : 3);
+      const startYear = fyOf(key) - yearsSpanned(tax);
+      return new Date(Date.UTC(startYear, tax.startMonth - 1 + months, tax.startDay));
+    }
   }
 }
 
@@ -326,9 +429,45 @@ export function periodEnd(key: string, period: Period, tax: TaxYear): Date;
 export function periodEnd(key: string, period: Period, tax: TaxYear = DEFAULT_TAX_YEAR): Date {
   const start = periodStart(key, period, tax);
   // Comfortably longer than the period, comfortably shorter than two of them.
-  const skip = { day: 1, week: 7, month: 32, quarter: 93, year: 366, taxyear: 366 }[period];
+  const skip = { day: 1, week: 7, month: 32, quarter: 93, year: 366, taxmonth: 32, taxquarter: 93, taxyear: 366 }[period];
   const inside = new Date(start.getTime() + skip * 86_400_000);
   return periodStart(periodKey(inside, period, tax), period, tax);
+}
+
+/**
+ * Where the period `key` names starts once it is cut the other way — the start of
+ * the `to` period that shares the most days with it. Read off its midpoint rather
+ * than its start, because a start sits in the counterpart that overlaps it *least*:
+ * 1 Jan 2025 is in FY25, which shares three months with 2025, where FY26 shares
+ * nine. And the midpoint maps back, so flipping a basis twice lands where it began.
+ */
+export function counterpartStart(key: string, period: Period, to: Period, tax: TaxYear): Date {
+  const start = periodStart(key, period, tax).getTime();
+  const mid = new Date((start + periodEnd(key, period, tax).getTime()) / 2);
+  return periodStart(periodKey(mid, to, tax), to, tax);
+}
+
+/**
+ * The `?from=` for the same window on the other basis: its first period's
+ * counterpart, or null when that is the window in progress — or would be, had it
+ * begun: in February calendar 2026's counterpart is FY27, not open yet.
+ *
+ * Taken from the current window too, not only from one paged back. Otherwise the
+ * current FY26 in February would flip to the current 2026 rather than to 2025,
+ * the year it is the counterpart of, and each round trip would shift a year.
+ */
+export function flippedFrom(
+  now: Date,
+  view: FixedPeriod,
+  basis: Basis,
+  count: number,
+  offset: number,
+  tax: TaxYear,
+): Date | null {
+  const period = resolvePeriod(view, basis);
+  const to = resolvePeriod(view, basis === "tax" ? "calendar" : "tax");
+  const from = counterpartStart(periodWindow(now, period, count, offset, tax)[0], period, to, tax);
+  return offsetForStartDate(now, to, count, from, tax) === 0 ? null : from;
 }
 
 /**
@@ -443,6 +582,12 @@ export function formatPeriodKey(
       const last = new Date(periodEnd(key, period, tax).getTime() - 86_400_000);
       return `FY${key.slice(4)} (${MONTH_YEAR.format(first)} – ${MONTH_YEAR.format(last)})`;
     }
+    // `May FY27`: the month its span opens in, which is the whole of it under a
+    // 1st-of-the-month start.
+    case "taxmonth":
+      return `${MONTH_SHORT.format(periodStart(key, period, tax))} FY${key.slice(4, 6)}`;
+    case "taxquarter":
+      return `Q${ordinalOf(key)} FY${key.slice(4, 6)}`;
   }
 }
 
@@ -452,9 +597,15 @@ export function formatPeriodKey(
  * two different quarters the same thing. Six months or six weeks are each unique
  * within their window, so they don't need one.
  */
-export function formatPeriodShort(key: string, period: Period): string {
-  // No `TaxYear` overload: `FY27` is the key's own last two digits, and where the
-  // year starts changes nothing about how it is abbreviated.
+export function formatPeriodShort(key: string, period: FixedPeriod): string;
+export function formatPeriodShort(key: string, period: Period, tax: TaxYear): string;
+export function formatPeriodShort(
+  key: string,
+  period: Period,
+  tax: TaxYear = DEFAULT_TAX_YEAR,
+): string {
+  // `FY27` is the key's own last two digits, and where the year starts changes
+  // nothing about how it is abbreviated. A tax month's name is another matter.
   switch (period) {
     case "day":
       return DAY_SHORT.format(periodStart(key, period));
@@ -472,5 +623,9 @@ export function formatPeriodShort(key: string, period: Period): string {
       return key;
     case "taxyear":
       return `FY${key.slice(4)}`;
+    case "taxmonth":
+      return MONTH_SHORT.format(periodStart(key, period, tax));
+    case "taxquarter":
+      return `Q${ordinalOf(key)} FY${key.slice(4, 6)}`;
   }
 }

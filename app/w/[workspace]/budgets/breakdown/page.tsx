@@ -1,9 +1,11 @@
 import {
-  isPeriod,
   offsetForStartDate,
   periodStart,
   periodWindow,
-  type Period,
+  flippedFrom,
+  readPeriodParams,
+  type Basis,
+  type FixedPeriod,
 } from "@/lib/periods";
 import { firstParam } from "@/lib/search-params";
 import {
@@ -17,7 +19,7 @@ import { getTaxYear } from "@/lib/server/queries/tax-year";
 import { Link } from "@/ui/chrome/workspace-context";
 import { ComparisonTable } from "@/ui/dashboard/comparison/table";
 import { WindowPager } from "@/ui/dashboard/comparison/pager";
-import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
+import { flipped, PeriodSelector } from "@/ui/dashboard/comparison/selector";
 import { BudgetSelector, ViewSelector } from "./selectors";
 import { connection } from "next/server";
 
@@ -32,7 +34,7 @@ export const instant = false;
 
 export const metadata = { title: "Budget vs actual" };
 
-const DEFAULT_PERIOD: Period = "month";
+const DEFAULT_PERIOD: FixedPeriod = "month";
 const WINDOW = 6;
 const STEP = 3;
 
@@ -46,8 +48,11 @@ export default async function BudgetBreakdownPage(
   const now = new Date();
   const searchParams = await props.searchParams;
 
-  const rawPeriod = firstParam(searchParams.period);
-  const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
+  const { view: periodView, basis, period } = readPeriodParams(
+    firstParam(searchParams.period),
+    firstParam(searchParams.basis),
+    DEFAULT_PERIOD,
+  );
 
   // Read before the window is parsed: snapping `?from=` onto a tax-year window
   // needs to know where the household's year starts.
@@ -91,9 +96,14 @@ export default async function BudgetBreakdownPage(
 
   // Every link keeps the rest of the query intact, so switching one filter never
   // silently resets another.
-  const query = (over: { view?: BudgetView; base?: string; from?: string | null }) => {
+  const query = (over: {
+    view?: BudgetView;
+    base?: string;
+    from?: string | null;
+    basis?: Basis;
+  }) => {
     const params = new URLSearchParams();
-    params.set("period", period);
+    params.set("period", periodView);
     params.set("view", over.view ?? view);
 
     const chosen = over.base ?? base?.id;
@@ -101,6 +111,8 @@ export default async function BudgetBreakdownPage(
 
     const start = over.from === undefined ? rawFrom : over.from;
     if (start) params.set("from", start);
+
+    if ((over.basis ?? basis) === "tax") params.set("basis", "tax");
 
     return `/budgets/breakdown?${params}`;
   };
@@ -115,12 +127,20 @@ export default async function BudgetBreakdownPage(
       ? query({ from: offset - STEP <= 0 ? null : isoDate(windowStart(offset - STEP)) })
       : null;
 
+  const flipFrom = flippedFrom(now, periodView, basis, WINDOW, offset, taxYear);
+  const basisHref = query({ basis: flipped(basis), from: flipFrom && isoDate(flipFrom) });
+
   return (
     <main className="mx-auto mb-10 w-full max-w-5xl p-2">
       <h1 className="sr-only">Budget vs actual</h1>
 
       <div className="flex flex-col gap-2">
-        <PeriodSelector period={period} href="/budgets/breakdown" />
+        <PeriodSelector
+          view={periodView}
+          basis={basis}
+          href="/budgets/breakdown"
+          basisHref={basisHref}
+        />
         <ViewSelector view={view} href={(option) => query({ view: option })} />
         <BudgetSelector
           available={available}

@@ -2,15 +2,16 @@ import { getComparison } from "@/lib/server/metrics/comparison";
 import { flowSankey } from "@/lib/server/metrics/comparison/sankey";
 import {
   formatPeriodKey,
-  isPeriod,
   offsetForStartDate,
   periodStart,
   periodWindow,
-  type Period,
+  flippedFrom,
+  readPeriodParams,
+  type FixedPeriod,
   type TaxYear,
 } from "@/lib/periods";
 import { firstParam } from "@/lib/search-params";
-import { PeriodSelector } from "@/ui/dashboard/comparison/selector";
+import { basisParam, flipped, PeriodSelector } from "@/ui/dashboard/comparison/selector";
 import { SankeySection } from "@/ui/dashboard/sankey-section";
 import { getBalanceSummary } from "@/lib/server/metrics/balance";
 import { getTaxYear } from "@/lib/server/queries/tax-year";
@@ -23,7 +24,7 @@ export const instant = false;
 
 export const metadata = { title: "Money Flow" };
 
-const DEFAULT_PERIOD: Period = "month";
+const DEFAULT_PERIOD: FixedPeriod = "month";
 const WINDOW = 1;
 const STEP = 1;
 
@@ -34,10 +35,12 @@ function parseWindow(
   now: Date,
   taxYear: TaxYear,
 ) {
-  const rawPeriod = firstParam(searchParams.period);
   const rawFrom = firstParam(searchParams.from);
-
-  const period = rawPeriod && isPeriod(rawPeriod) ? rawPeriod : DEFAULT_PERIOD;
+  const { view, basis, period } = readPeriodParams(
+    firstParam(searchParams.period),
+    firstParam(searchParams.basis),
+    DEFAULT_PERIOD,
+  );
 
   const from = rawFrom ? new Date(rawFrom) : null;
   const offset =
@@ -45,7 +48,7 @@ function parseWindow(
       ? offsetForStartDate(now, period, WINDOW, from, taxYear)
       : 0;
 
-  return { period, offset };
+  return { view, basis, period, offset };
 }
 
 const isoDate = (date: Date) => date.toISOString().slice(0, 10);
@@ -55,7 +58,7 @@ export default async function BreakdownFlowPage(props: PageProps<"/w/[workspace]
   await connection();
   const now = new Date();
   const taxYear = await getTaxYear();
-  const { period, offset } = parseWindow(await props.searchParams, now, taxYear);
+  const { view, basis, period, offset } = parseWindow(await props.searchParams, now, taxYear);
 
   const [comparison, balances] = await Promise.all([getComparison(period, WINDOW, offset, now), getBalanceSummary()]);
 
@@ -67,9 +70,12 @@ export default async function BreakdownFlowPage(props: PageProps<"/w/[workspace]
     data: flowSankey(comparison, i),
   }));
 
-  const base = `/breakdown/flow?period=${period}`;
+  const base = `/breakdown/flow?period=${view}${basisParam(basis)}`;
   const windowStart = (o: number) =>
     periodStart(periodWindow(now, period, WINDOW, o, taxYear)[0], period, taxYear);
+  const flipFrom = flippedFrom(now, view, basis, WINDOW, offset, taxYear);
+  const at = flipFrom ? `&from=${isoDate(flipFrom)}` : "";
+  const basisHref = `/breakdown/flow?period=${view}${at}${basisParam(flipped(basis))}`;
   const earlierHref = comparison.hasOlder ? `${base}&from=${isoDate(windowStart(offset + STEP))}` : null;
   const moreRecentHref =
     offset > 0 ? (offset - STEP <= 0 ? base : `${base}&from=${isoDate(windowStart(offset - STEP))}`) : null;
@@ -78,7 +84,7 @@ export default async function BreakdownFlowPage(props: PageProps<"/w/[workspace]
     <main className="mx-auto mb-10 w-full flex flex-col gap-4 max-w-5xl p-2">
       <h1 className="sr-only">Money Flow</h1>
 
-      <PeriodSelector period={period} href="/breakdown/flow" />
+      <PeriodSelector view={view} basis={basis} href="/breakdown/flow" basisHref={basisHref} />
       
       <SankeySection periods={sankeyPeriods} displayCurrency={balances.displayCurrency} />
 
