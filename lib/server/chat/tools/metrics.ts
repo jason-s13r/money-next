@@ -37,7 +37,7 @@ export const getPeriodBreakdown: Tool = {
   name: "get_period_breakdown",
   description:
     "Income and spending totalled per period — the figures on the household's 'Income and spending' screen. " +
-    "Use this for questions about trends, or about a month, quarter or year as a whole, rather than paging through transactions. " +
+    "Use this for questions about trends, or about a fortnight, month, quarter or year as a whole, rather than paging through transactions. " +
     "Without `area` it returns each period's income and spending totals, spending split by area and income split by category. " +
     "With `area` it breaks that one area down into its categories and the payees beneath them. " +
     "Both income and spending are reported as positive amounts here, unlike get_transactions where spending is negative.",

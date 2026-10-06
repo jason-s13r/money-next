@@ -106,6 +106,7 @@ describe("periodKey", () => {
   test("every period's shape", () => {
     assert.equal(periodKey(date, "day"), "2026-07-14");
     assert.equal(periodKey(date, "week"), "2026-W29");
+    assert.equal(periodKey(date, "fortnight"), "2026-F15");
     assert.equal(periodKey(date, "month"), "2026-07");
     assert.equal(periodKey(date, "quarter"), "2026-Q3");
     assert.equal(periodKey(date, "year"), "2026");
@@ -166,6 +167,43 @@ describe("the ISO week year", () => {
     assert.equal(start.toISOString(), "2026-07-13T00:00:00.000Z");
     assert.equal(start.getUTCDay(), 1, "Monday");
     assert.equal(periodEnd("2026-W29", "week").toISOString(), "2026-07-20T00:00:00.000Z");
+  });
+});
+
+describe("fortnights", () => {
+  test("2026 pairs its weeks odd and even", () => {
+    assert.equal(periodStart("2026-F01", "fortnight").toISOString(), "2025-12-29T00:00:00.000Z");
+    assert.equal(periodKey(nzDay("2026-01-11"), "fortnight"), "2026-F01", "the Sunday of W02");
+    assert.equal(periodKey(nzDay("2026-01-12"), "fortnight"), "2026-F02", "the Monday of W03");
+    assert.equal(periodKey(nzDay("2026-12-27"), "fortnight"), "2026-F26", "the Sunday of W52");
+  });
+
+  test("a 53-week year's last week starts a fortnight of 14 days, not 7 or 21", () => {
+    // 2026-W53 and 2027-W01 are one fortnight; 2027's first opens in its week 2.
+    assert.equal(periodKey(nzDay("2026-12-28"), "fortnight"), "2026-F27");
+    assert.equal(periodKey(nzDay("2027-01-10"), "fortnight"), "2026-F27");
+    assert.equal(periodStart("2027-F01", "fortnight").toISOString(), "2027-01-11T00:00:00.000Z");
+    assert.equal(periodEnd("2026-F27", "fortnight").toISOString(), "2027-01-11T00:00:00.000Z");
+  });
+
+  test("every fortnight is 14 days, opens on a Monday, and the keys run on unbroken", () => {
+    const keys = periodWindow(nzDay("2033-03-01"), "fortnight", 26 * 14);
+    for (const [i, key] of keys.entries()) {
+      const start = periodStart(key, "fortnight");
+      assert.equal(start.getUTCDay(), 1, `${key} opens on a Monday`);
+      assert.equal(periodEnd(key, "fortnight").getTime() - start.getTime(), 14 * 86_400_000, key);
+      if (i > 0) assert.equal(periodEnd(keys[i - 1], "fortnight").getTime(), start.getTime(), key);
+    }
+    for (const year of [2021, 2026, 2027, 2032]) {
+      const ordinals = keys.filter((k) => k.startsWith(`${year}-F`)).map((k) => Number(k.slice(6)));
+      assert.equal(ordinals[0], 1, `${year} numbers from 1`);
+      assert.ok(ordinals.length === 26 || ordinals.length === 27, `${year} has ${ordinals.length}`);
+    }
+  });
+
+  test("is named by its Monday, like a week", () => {
+    assert.equal(formatPeriodKey("2026-F15", "fortnight"), "Fortnight of 13 Jul 2026");
+    assert.equal(formatPeriodShort("2026-F15", "fortnight"), "13 Jul");
   });
 });
 
@@ -437,6 +475,7 @@ describe("periodStart and periodEnd", () => {
   test("the end of a period is the start of the next one", () => {
     const cases: [Period, string, string][] = [
       ["day", "2026-07-14", "2026-07-15"],
+      ["fortnight", "2026-F27", "2027-F01"],
       ["month", "2026-01", "2026-02"],
       ["month", "2026-12", "2027-01"],
       ["quarter", "2026-Q4", "2027-Q1"],
@@ -490,7 +529,7 @@ describe("fetchCutoff", () => {
 describe("isPeriod", () => {
   test("accepts every period and nothing else", () => {
     for (const period of PERIODS) assert.equal(isPeriod(period), true);
-    assert.equal(isPeriod("fortnight"), false);
+    assert.equal(isPeriod("decade"), false);
     assert.equal(isPeriod("Month"), false, "case-sensitive: it is a url segment");
     assert.equal(isPeriod(""), false);
   });

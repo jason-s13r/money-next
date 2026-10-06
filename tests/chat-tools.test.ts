@@ -451,7 +451,7 @@ describe("get_period_breakdown reshapes the screen's own figures", () => {
     const execute = toolsForSdk([getPeriodBreakdown], context(ALL)).get_period_breakdown?.execute;
     assert.ok(execute);
     const options = { toolCallId: "call_1", messages: [] } as never;
-    const result = (await execute({ period: "fortnight" }, options)) as {
+    const result = (await execute({ period: "decade" }, options)) as {
       error: string;
       periods: string[];
     };

@@ -1,7 +1,7 @@
 // Time bucketing for the comparison view. "Month" is only the default: the same
-// machinery slices by week, quarter, or year.
+// machinery slices by week, fortnight, quarter, or year.
 //
-// Five periods are decided by the calendar alone. The other three — `taxmonth`,
+// Six periods are decided by the calendar alone. The other three — `taxmonth`,
 // `taxquarter`, `taxyear` — are cut from the household's tax year, whose start is
 // a workspace setting, so every function that can produce or read one takes a
 // `TaxYear`, and the overloads make that a compile error to forget rather than a
@@ -12,12 +12,12 @@
 // Auckland, so hundreds of rows land in a different bucket under UTC — enough to
 // visibly move a monthly total.
 
-export const FIXED_PERIODS = ["day", "week", "month", "quarter", "year"] as const;
+export const FIXED_PERIODS = ["day", "week", "fortnight", "month", "quarter", "year"] as const;
 export const PERIODS = [...FIXED_PERIODS, "taxmonth", "taxquarter", "taxyear"] as const;
 export type Period = (typeof PERIODS)[number];
 
 /**
- * Every period whose span the calendar alone decides — and the five a reader picks
+ * Every period whose span the calendar alone decides — and the six a reader picks
  * between; the tax ones are reached through a `Basis`. The distinction is
  * load-bearing rather than decorative: the overloads below use it so a caller
  * naming `"day"` needs no configuration, while a caller holding a `Period`
@@ -65,8 +65,8 @@ function yearsSpanned(tax: TaxYear): number {
 /**
  * Which year a month, quarter or year is cut from. `tax` swaps each for its tax
  * year form — Apr–Jun 2026 is "Q2 2026" on one and "Q1 FY27" on the other — and
- * with it which year an overridden row is counted in. Day and week have no tax
- * form; a basis on them is carried but changes nothing.
+ * with it which year an overridden row is counted in. Day, week and fortnight have
+ * no tax form; a basis on them is carried but changes nothing.
  */
 export const BASES = ["calendar", "tax"] as const;
 export type Basis = (typeof BASES)[number];
@@ -110,6 +110,7 @@ export function readPeriodParams(
 export const PERIOD_LABELS: Record<FixedPeriod, string> = {
   day: "Day",
   week: "Week",
+  fortnight: "Fortnight",
   month: "Month",
   quarter: "Quarter",
   year: "Year",
@@ -156,6 +157,46 @@ function isoWeek({ year, month, day }: YMD): { isoYear: number; week: number } {
   return { isoYear, week };
 }
 
+const FORTNIGHT_MS = 14 * 86_400_000;
+
+/**
+ * Fortnights run on one unbroken 14-day cycle rather than pairing each ISO year's
+ * weeks 1+2, 3+4, …: a 53-week year (2026, 2032) would leave its last week a
+ * fortnight of one, or fold it into one of three, and either misstates that
+ * fortnight's total by half. The cycle is anchored on 29 Dec 2025, the Monday of
+ * 2026-W01, so 2021–2026 do pair odd and even weeks; after 2026-W53 the pairing
+ * flips, and stays put until the next 53-week year.
+ */
+const FORTNIGHT_EPOCH = Date.UTC(2025, 11, 29);
+
+const utcYmd = (date: Date): YMD => ({
+  year: date.getUTCFullYear(),
+  month: date.getUTCMonth() + 1,
+  day: date.getUTCDate(),
+});
+
+/** Whole fortnights from the epoch to the one holding a day; negative before it. */
+const fortnightIndex = ({ year, month, day }: YMD) =>
+  Math.floor((Date.UTC(year, month - 1, day) - FORTNIGHT_EPOCH) / FORTNIGHT_MS);
+
+const fortnightMonday = (index: number) => new Date(FORTNIGHT_EPOCH + index * FORTNIGHT_MS);
+
+/** The first fortnight to open in an ISO year, as an index. */
+const firstFortnightOf = (isoYear: number) =>
+  Math.ceil((weekMonday(`${isoYear}-W01`).getTime() - FORTNIGHT_EPOCH) / FORTNIGHT_MS);
+
+/** `2026-F01`: numbered within the ISO year its Monday sits in, so they sort. A
+ *  year holds 26 or 27, and its first can open in week 1 or week 2. */
+function fortnightKey(index: number): string {
+  const { isoYear } = isoWeek(utcYmd(fortnightMonday(index)));
+  return `${isoYear}-F${pad(index - firstFortnightOf(isoYear) + 1)}`;
+}
+
+function fortnightIndexOfKey(key: string): number {
+  const [isoYear, n] = key.split("-F").map(Number);
+  return firstFortnightOf(isoYear) + n - 1;
+}
+
 /**
  * The tax year a date falls in, named by the calendar year it *ends* in: under
  * NZ's 1 April start the span 1 Apr 2026 – 31 Mar 2027 is "FY27". The key carries
@@ -192,7 +233,7 @@ const taxQuarterKey = (fy: number, q: number) => `FY${fy}-Q${q + 1}`;
 const fyOf = (key: string) => Number(key.slice(2, 6));
 const ordinalOf = (key: string) => Number(key.slice(8));
 
-/** A sortable bucket key: `2026-07-14`, `2026-W28`, `2026-07`, `2026-Q3`, `2026`,
+/** A sortable bucket key: `2026-07-14`, `2026-W28`, `2026-F14`, `2026-07`, `2026-Q3`, `2026`,
  *  `FY2027-M04`, `FY2027-Q2`, `FY2027`. */
 export function periodKey(date: Date, period: FixedPeriod): string;
 export function periodKey(date: Date, period: Period, tax: TaxYear): string;
@@ -205,6 +246,8 @@ export function periodKey(date: Date, period: Period, tax: TaxYear = DEFAULT_TAX
       const { isoYear, week } = isoWeek(ymd);
       return `${isoYear}-W${pad(week)}`;
     }
+    case "fortnight":
+      return fortnightKey(fortnightIndex(ymd));
     case "month":
       return `${ymd.year}-${pad(ymd.month)}`;
     case "quarter":
@@ -311,13 +354,11 @@ function periodBack(now: Date, period: Period, i: number, tax: TaxYear): string 
     // calendar date is already resolved, so no offset math is needed.
     const cursor = new Date(Date.UTC(ymd.year, ymd.month - 1, ymd.day));
     cursor.setUTCDate(cursor.getUTCDate() - i * 7);
-    const { isoYear, week } = isoWeek({
-      year: cursor.getUTCFullYear(),
-      month: cursor.getUTCMonth() + 1,
-      day: cursor.getUTCDate(),
-    });
+    const { isoYear, week } = isoWeek(utcYmd(cursor));
     return `${isoYear}-W${pad(week)}`;
   }
+
+  if (period === "fortnight") return fortnightKey(fortnightIndex(ymd) - i);
 
   if (period === "year") return String(ymd.year - i);
 
@@ -373,7 +414,7 @@ export function periodWindow(
 
 /** Generous lower bound for the fetch. Exact membership is decided by key. */
 export function fetchCutoff(now: Date, period: Period, count: number): Date {
-  const days = { day: 1, week: 7, month: 31, quarter: 93, year: 366, taxmonth: 31, taxquarter: 93, taxyear: 366 }[period];
+  const days = { day: 1, week: 7, fortnight: 14, month: 31, quarter: 93, year: 366, taxmonth: 31, taxquarter: 93, taxyear: 366 }[period];
   return new Date(now.getTime() - (count + 2) * days * 86_400_000);
 }
 
@@ -389,6 +430,8 @@ export function periodStart(key: string, period: Period, tax: TaxYear = DEFAULT_
     }
     case "week":
       return weekMonday(key);
+    case "fortnight":
+      return fortnightMonday(fortnightIndexOfKey(key));
     case "month": {
       const [year, month] = key.split("-").map(Number);
       return new Date(Date.UTC(year, month - 1, 1));
@@ -429,7 +472,7 @@ export function periodEnd(key: string, period: Period, tax: TaxYear): Date;
 export function periodEnd(key: string, period: Period, tax: TaxYear = DEFAULT_TAX_YEAR): Date {
   const start = periodStart(key, period, tax);
   // Comfortably longer than the period, comfortably shorter than two of them.
-  const skip = { day: 1, week: 7, month: 32, quarter: 93, year: 366, taxmonth: 32, taxquarter: 93, taxyear: 366 }[period];
+  const skip = { day: 1, week: 7, fortnight: 14, month: 32, quarter: 93, year: 366, taxmonth: 32, taxquarter: 93, taxyear: 366 }[period];
   const inside = new Date(start.getTime() + skip * 86_400_000);
   return periodStart(periodKey(inside, period, tax), period, tax);
 }
@@ -550,7 +593,8 @@ const MONTH_YEAR = new Intl.DateTimeFormat("en-NZ", {
   timeZone: "UTC",
 });
 
-/** `2026-07-14` → `Mon 14 Jul 2026`; `2026-07` → `Jul 2026`; `2026-Q3` → `Q3 2026`; `2026-W28` → `Week of 6 Jul 2026`. */
+/** `2026-07-14` → `Mon 14 Jul 2026`; `2026-07` → `Jul 2026`; `2026-Q3` → `Q3 2026`; `2026-W28` → `Week of 6 Jul 2026`;
+ *  `2026-F14` → `Fortnight of 29 Jun 2026`. */
 export function formatPeriodKey(key: string, period: FixedPeriod): string;
 export function formatPeriodKey(key: string, period: Period, tax: TaxYear): string;
 export function formatPeriodKey(
@@ -563,6 +607,8 @@ export function formatPeriodKey(
       return DAY_FULL.format(periodStart(key, period));
     case "week":
       return `Week of ${WEEK_MONDAY.format(weekMonday(key))}`;
+    case "fortnight":
+      return `Fortnight of ${WEEK_MONDAY.format(periodStart(key, period))}`;
     case "month": {
       const [year, month] = key.split("-").map(Number);
       return `${MONTH_SHORT.format(new Date(Date.UTC(year, month - 1, 1)))} ${year}`;
@@ -611,6 +657,8 @@ export function formatPeriodShort(
       return DAY_SHORT.format(periodStart(key, period));
     case "week":
       return WEEK_MONDAY_SHORT.format(weekMonday(key));
+    case "fortnight":
+      return WEEK_MONDAY_SHORT.format(periodStart(key, period));
     case "month": {
       const [year, month] = key.split("-").map(Number);
       return MONTH_SHORT.format(new Date(Date.UTC(year, month - 1, 1)));
